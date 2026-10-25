@@ -68,19 +68,19 @@ class MoodTests(unittest.TestCase):
         judge = Judge(change={"-2": 0, "-1": 0.04, "0": 0.45, "1": 0.4, "2": 0.11},
                       feeling={"tender": 0.94, "happy": 0.06})
         m, _ = mood(judge)
-        event = m.judge("u", [("小明", "今天考试又没考好……"), ("大肥鱼", "才不笨！")], user="小明")
+        event = m.judge("u", [("Leo", "今天考试又没考好……"), ("大肥鱼", "才不笨！")], user="Leo")
         self.assertAlmostEqual(event.delta, 0.58 * 6, places=2)
         self.assertEqual(set(event.emotions), {"tender"})  # 6% of happy is below the noise floor
-        self.assertEqual(event.reason, "小明 said “今天考试又没考好……”, felt aching for them")
+        self.assertEqual(event.reason, "Leo said “今天考试又没考好……”, felt aching for them")
         self.assertEqual(event.judge, "judge")
 
     def test_the_question_follows_who_started_it(self):
         judge = Judge(feeling={"sweet": 0.9, "happy": 0.1})
         m, _ = mood(judge)
-        m.judge("u", "大肥鱼: 想你了", source="speak-up", user="小明")
+        m.judge("u", "大肥鱼: 想你了", source="speak-up", user="Leo")
         input, questions = judge.asked[0]
-        self.assertIn("started this conversation on her own", input)
-        self.assertIn("on her own", questions["mood_change"].instructions)
+        self.assertIn("reached out to Leo on their own", input)
+        self.assertNotIn("Leo", questions["mood_change"].instructions)  # names live in the text, not the question
         self.assertIsNone(m.judge("u", "x", source="runtime"))
         self.assertEqual(len(judge.asked), 1)
 

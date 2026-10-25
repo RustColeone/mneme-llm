@@ -10,6 +10,7 @@ from mneme_llm.text import terms
 
 DAY = 86400
 UTC = timezone.utc
+NOW = datetime(2026, 10, 24, 12, tzinfo=UTC).timestamp()
 
 
 class Clock:
@@ -27,11 +28,12 @@ def memory(**options) -> tuple[Memory, Clock]:
 
 class TextTests(unittest.TestCase):
     def test_cjk_becomes_overlapping_pairs_and_latin_words_are_trimmed(self):
-        self.assertEqual(terms("考试没考好"), ["考试", "试没", "没考", "考好"])
+        self.assertEqual(terms("考试没考好"), ["考试", "试没", "没考", "考好", "考", "试"])
+        self.assertIn("猫", terms("我的猫呢"))  # one-character words count too
         self.assertEqual(terms("She likes the cats"), ["like", "cat"])
 
     def test_doubled_characters_that_are_words_stay(self):
-        self.assertEqual(terms("谢谢妈妈"), ["谢谢", "谢妈", "妈妈"])
+        self.assertEqual(terms("谢谢妈妈"), ["谢谢", "谢妈", "妈妈", "谢", "妈"])
         self.assertEqual(terms("哈哈哈"), [])
 
     def test_function_words_are_dropped(self):
@@ -48,6 +50,15 @@ class DateTests(unittest.TestCase):
         self.assertEqual(when(datetime(2026, 9, 17, tzinfo=UTC).timestamp(), now, UTC), "09-17")
         self.assertEqual(when(datetime(2025, 9, 17, tzinfo=UTC).timestamp(), now, UTC, "zh"), "去年 09-17")
         self.assertEqual(when(datetime(2023, 1, 2, tzinfo=UTC).timestamp(), now, UTC), "2023-01-02")
+
+    def test_dates_written_into_a_sentence(self):
+        from datetime import datetime as moment
+        from mneme_llm.dates import find
+        day = lambda text: moment.fromtimestamp(find(text, NOW)).strftime("%Y-%m-%d")
+        self.assertEqual(day("下周五（2026-10-30）有数学考试"), "2026-10-30")
+        self.assertEqual(day("2026年11月2日 体检"), "2026-11-02")
+        self.assertEqual(day("12月25号去看演唱会"), "2026-12-25")
+        self.assertIsNone(find("下周五考试", NOW))
 
     def test_plans_ahead(self):
         now = datetime(2026, 10, 24, 12, tzinfo=UTC).timestamp()
@@ -132,7 +143,7 @@ class RecallTests(unittest.TestCase):
         self.assertIn("nothing in common", found.explain())
 
     def test_pinned_notes_always_come(self):
-        self.notes.remember("u", "名字叫小明", kind="fact", importance=5)
+        self.notes.remember("u", "名字叫Leo", kind="fact", importance=5)
         found = self.notes.recall("u", "cello", important=0, recent=0)
         self.assertEqual(found.chosen[0].why, "pinned")
 
@@ -171,8 +182,8 @@ class RecallTests(unittest.TestCase):
     def test_context_block_has_human_dates_and_the_profile(self):
         self.clock.now += 2 * DAY
         self.notes.set_profile("u", "A cellist who is hard on herself.")
-        block = self.notes.context("u", "数学考试", name="小明")
-        self.assertIn("小明", block)
+        block = self.notes.context("u", "数学考试", name="Leo")
+        self.assertIn("Leo", block)
         self.assertIn("A cellist", block)
         self.assertIn("[2 days ago] 数学考试没考好", block)
         self.assertEqual(memory()[0].context("nobody", "hi"), "")
@@ -185,10 +196,10 @@ class MovingTests(unittest.TestCase):
         source.remember("u", "Moved to Hangzhou", kind="fact", key="user.city")
         source.memory.set_profile("u", "card")
         source.mood.apply("u", delta=5, emotions={"happy": 20})
-        data = json.loads(json.dumps(source.export(), ensure_ascii=False))
+        data = json.loads(json.dumps(source.export_data(), ensure_ascii=False))
         target = Mneme(":memory:", "b", luna=False, micro=False)
         target.remember("u", "unrelated", kind="fact")  # so ids differ from the source's
-        self.assertEqual(target.import_(data), 2)
+        self.assertEqual(target.import_data(data), 2)
         self.assertEqual([n.text for n in target.memory.notes("u", kinds=["fact"])][0], "Moved to Hangzhou")
         history = target.memory.history("u", "user.city")
         self.assertEqual(history[0].superseded_by, history[1].id)

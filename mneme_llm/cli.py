@@ -37,6 +37,8 @@ def main(argv: list[str] | None = None) -> int:
     find.add_argument("subject")
     find.add_argument("query")
     find.add_argument("--explain", action="store_true", help="also show what was skipped and why")
+    find.add_argument("--meaning", action="store_true",
+                      help="use the meaning tiers too (OpenAI embeddings with OPENAI_API_KEY)")
 
     context = commands.add_parser("context", help="the block a system prompt would get")
     context.add_argument("subject")
@@ -87,6 +89,8 @@ def main(argv: list[str] | None = None) -> int:
     serve.add_argument("--subject", help="bind every call to this person")
 
     args = parser.parse_args(argv)
+    if hasattr(sys.stdout, "reconfigure") and (sys.stdout.encoding or "").lower() not in ("utf-8", "utf8"):
+        sys.stdout.reconfigure(encoding="utf-8")  # notes are often Chinese; some consoles default to cp1252
     if args.command == "tools":
         from .tools import specs
         print(json.dumps(specs(args.style), ensure_ascii=False, indent=2))
@@ -94,7 +98,8 @@ def main(argv: list[str] | None = None) -> int:
     space = args.space
     if args.command == "import" and args.into:
         space = args.into
-    m = Mneme(args.db, space, lang=args.lang, luna=False)
+    meaning = args.command == "mcp" or getattr(args, "meaning", False)
+    m = Mneme(args.db, space, lang=args.lang, luna=False, embed=meaning, language=None)
     try:
         return _run(m, args)
     finally:
@@ -109,7 +114,11 @@ def _run(m: Mneme, args) -> int:
                                     importance=args.importance, happened_at=happened, source="cli")
         print(f"{outcome} #{note.id}" if note else outcome)
     elif args.command == "recall":
-        found = memory.recall(args.subject, args.query, log=False)
+        if args.meaning:
+            from .decide import run
+            found = run(memory.arecall(args.subject, args.query, log=False))
+        else:
+            found = memory.recall(args.subject, args.query, log=False)
         print(found.explain() if args.explain else "\n".join(f"#{r.note.id} {r.note.text}" for r in found.chosen))
     elif args.command == "context":
         print(memory.context(args.subject, args.query, name=args.name) or "(nothing to say)")
@@ -142,7 +151,7 @@ def _run(m: Mneme, args) -> int:
             print(f"  {stamp(event.at)} {event.value:5.1f} ({event.delta:+.1f}) [{event.source}/{event.judge}] "
                   f"{event.reason}")
     elif args.command == "export":
-        text = json.dumps(m.export(), ensure_ascii=False, indent=1)
+        text = json.dumps(m.export_data(), ensure_ascii=False, indent=1)
         if args.out:
             with open(args.out, "w", encoding="utf-8") as handle:
                 handle.write(text)
@@ -150,7 +159,7 @@ def _run(m: Mneme, args) -> int:
             print(text)
     elif args.command == "import":
         with open(args.file, encoding="utf-8") as handle:
-            print(f"imported {m.import_(json.load(handle))} notes")
+            print(f"imported {m.import_data(json.load(handle))} notes")
     elif args.command == "micro":
         rows = m.store.rows("select question, examples, updated_at from micro_models order by question")
         for row in rows:

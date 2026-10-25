@@ -1,8 +1,9 @@
 """Turning text into search terms, the same way for notes and for queries.
 
 Latin words are lowercased with a light plural trim; runs of Chinese, Japanese and Korean characters become
-overlapping two-character pieces ("考试没考好" → 考试 试没 没考 考好), which match without a word list. If `jieba` is
-installed and enabled, its words are added on top. Function words that would match everything are dropped.
+overlapping two-character pieces plus their single characters ("考试没考好" → 考试 试没 没考 考好 考 试), which match
+without a word list, including one-character words such as 猫 or 茶. If `jieba` is installed and enabled, its words
+are added on top. Function words and characters that would match everything are dropped.
 """
 
 from __future__ import annotations
@@ -22,6 +23,8 @@ STOP_CJK = frozenset("""
 现在 今天 一下 一点 有点 真的 这样 那样 这么 那么 自己 时候 了吧 的话 一样 好的 嗯嗯 哈哈 呜呜 嘿嘿 呵呵 嘻嘻 啊啊
 哦哦 噢噢 吗吗 了了 的的
 """.split())
+STOP_CJK_CHARS = frozenset("的了是我你他她它们这那在有就也都和与吗呢吧啊呀哦嗯哈嘿呜不没很太还又个一要会能说去来到上下"
+                           "对好么着过把被给让从向但而且或之其此该每些")
 
 _jieba = None
 
@@ -40,6 +43,11 @@ def use_jieba(enabled: bool = True) -> bool:
     jieba.setLogLevel(60)
     _jieba = jieba
     return True
+
+
+def version() -> str:
+    """Changes whenever `terms` would split text differently, so cached terms can be rebuilt."""
+    return "2+jieba" if _jieba is not None else "2"
 
 
 def normalize(text: str) -> str:
@@ -64,12 +72,13 @@ def terms(text: str) -> list[str]:
     found: dict[str, None] = {}
     for piece in _PIECES.findall(normalize(text)):
         if re.match(rf"[{CJK}]", piece):
-            if len(piece) == 1:
-                continue
             for i in range(len(piece) - 1):
                 pair = piece[i:i + 2]
                 if pair not in STOP_CJK:
                     found.setdefault(pair, None)
+            for character in piece:
+                if character not in STOP_CJK_CHARS:
+                    found.setdefault(character, None)
             if _jieba is not None:
                 for word in _jieba.cut(piece):
                     if len(word) >= 2 and word not in STOP_CJK:
@@ -79,6 +88,15 @@ def terms(text: str) -> list[str]:
             if word:
                 found.setdefault(word, None)
     return list(found)
+
+
+def script(text: str) -> str:
+    """"cjk" or "latin" by the letters that make up most of `text` ("" when it has none)."""
+    cjk = len(re.findall(rf"[{CJK}]", text))
+    latin = len(re.findall(r"[A-Za-z\u00c0-\u024f]", text))
+    if not cjk and not latin:
+        return ""
+    return "cjk" if cjk * 2 >= latin else "latin"  # a CJK character carries about two letters' worth
 
 
 def clip(text: str, limit: int) -> str:

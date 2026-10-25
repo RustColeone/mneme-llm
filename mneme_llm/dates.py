@@ -6,6 +6,7 @@ ago" obvious. Times are shown in the zone you pass (the person's own, ideally), 
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, tzinfo
 
 WORDS = {
@@ -56,3 +57,21 @@ def when(timestamp: float, now: float, zone: tzinfo | None = None, lang: str = "
 def stamp(timestamp: float, zone: tzinfo | None = None) -> str:
     """An exact local time, for logs and listings."""
     return local(timestamp, zone).strftime("%Y-%m-%d %H:%M")
+
+
+def find(text: str, now: float | None = None) -> float | None:
+    """Noon of the first date written in `text` (2026-10-30, 2026/10/30, 2026年10月30日, or 10月30日 meaning this
+    year), for notes whose day was written into the sentence; None when there is none."""
+    found = re.search(r"(20\d\d)[-/.年](\d{1,2})[-/.月](\d{1,2})", text)
+    if found:
+        year, month, day = (int(part) for part in found.groups())
+    else:
+        found = re.search(r"(?<!\d)(\d{1,2})月(\d{1,2})[日号]", text)
+        if not found:
+            return None
+        year = (datetime.fromtimestamp(now) if now else datetime.now()).year
+        month, day = (int(part) for part in found.groups())
+    try:
+        return datetime(year, month, day, 12).timestamp()
+    except ValueError:
+        return None

@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 from typing import Sequence
@@ -27,6 +28,8 @@ class Luna:
         self.model, self.base_url, self.timeout, self.max_input = model, base_url.rstrip("/"), timeout, max_input
         self.input_tokens = 0
         self.calls = 0
+        self.rest_s = 60.0  # after the network fails, skip this tier this long instead of waiting every time
+        self._resting_until = 0.0
 
     def body(self, input: str, questions: Sequence[Question]) -> dict:
         wire = []
@@ -76,7 +79,14 @@ class Luna:
     async def decide(self, input: str, questions: Sequence[Question]) -> dict[str, Answer]:
         if not self.api_key:
             raise Unavailable("no OpenAI key for the decisions API")
-        payload = await asyncio.to_thread(self._post, self.body(input, questions))
+        if time.monotonic() < self._resting_until:
+            raise Unavailable("resting after a failure")
+        try:
+            payload = await asyncio.to_thread(self._post, self.body(input, questions))
+        except Unavailable as error:
+            if "unreachable" in str(error) or "answered 5" in str(error) or "answered 429" in str(error):
+                self._resting_until = time.monotonic() + self.rest_s
+            raise
         self.calls += 1
         self.input_tokens += int(payload.get("usage", {}).get("input_tokens", 0) or 0)
         return self.parse(payload, questions)

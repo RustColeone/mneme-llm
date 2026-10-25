@@ -24,6 +24,7 @@ from typing import Callable, Mapping, Sequence
 
 from . import text as texts
 from .decide import Answer, Chain, Choice, Score
+from .i18n import say
 from .store import Store, dumps
 
 
@@ -111,14 +112,14 @@ class Mood:
         return self._state(value, emotions, row["updated_at"])
 
     def describe(self, subject: str) -> str:
-        """How she feels now, in one line (e.g. "Mood 74/100 (good); feeling: aching for them 31")."""
+        """How the companion feels now, in one line ("Mood 74/100 (good); feeling: aching for them 31")."""
         state = self.state(subject)
-        names = {e.key: (e.zh if self.lang == "zh" else e.en) for e in self.settings.emotions}
-        feelings = ("、" if self.lang == "zh" else ", ").join(f"{names.get(key, key)} {round(value)}"
-                                                              for key, value in state.strongest())
-        if self.lang == "zh":
-            return f"心情 {round(state.value)}/100（{state.face_zh}）" + (f"；{feelings}" if feelings else "")
-        return f"Mood {round(state.value)}/100 ({state.face})" + (f"; feeling: {feelings}" if feelings else "")
+        names = {e.key: self._emotion_name(e) for e in self.settings.emotions}
+        feelings = say(self.lang, "mood.separator").join(f"{names.get(key, key)} {round(value)}"
+                                                         for key, value in state.strongest())
+        line = say(self.lang, "mood.line", value=round(state.value),
+                   face=state.face_zh if self.lang == "zh" else state.face)
+        return line + (say(self.lang, "mood.feelings", feelings=feelings) if feelings else "")
 
     def news(self, subject: str, *, mark: bool = True) -> str | None:
         """The newest confident change, once (None if there is nothing new to tell or telling is off)."""
@@ -135,11 +136,10 @@ class Mood:
             self.store.execute("update moods set told_event = ? where space = ? and subject = ?",
                                (row["last_event"], self.space, subject))
         mood = self.describe(subject)
+        mood = mood if self.lang == "zh" else mood[0].lower() + mood[1:]
         if s.tell == "mood" or not event["reason"]:
-            return f"（你此刻的{mood}）" if self.lang == "zh" else f"(Your {mood[0].lower() + mood[1:]} right now.)"
-        if self.lang == "zh":
-            return f"（你此刻的{mood}。刚才心里那一下：{event['reason']}）"
-        return f"(Your {mood[0].lower() + mood[1:]} right now. What just moved you: {event['reason']})"
+            return say(self.lang, "mood.now", mood=mood)
+        return say(self.lang, "mood.news", mood=mood, reason=event["reason"])
 
     def timeline(self, subject: str, limit: int = 40) -> list[MoodEvent]:
         rows = self.store.rows("select * from mood_events where space = ? and subject = ? order by id desc limit ?",
@@ -148,24 +148,28 @@ class Mood:
                           row["confidence"], row["source"], row["judge"], row["value"]) for row in rows]
 
     # ---- changing ------------------------------------------------------------------------------------
-    def questions(self, source: str, user: str) -> list:
-        """What the judge is asked; the wording follows who started the exchange."""
-        name = self.name
-        if source == "speak-up":
-            about = (f"{name} reached out to {user} on her own (because she wanted to, not as a task). How did "
-                     f"reaching out, and how it went, move {name}'s own mood?")
-        elif source == "duty":
-            about = f"{name} was doing a scheduled task. How did doing it move {name}'s own mood?"
-        else:
-            about = (f"How did this exchange with {user} move {name}'s own mood, from her side? Being annoyed at "
-                     f"{user} does not lower it; only aching for them, worry or sadness does.")
+    def questions(self) -> list:
+        """What the judge is asked. The wording names nobody (who is who, and who started it, is said in the
+        judged text; see `frame`), so the micro model learns one model per question for every person."""
         choices = {e.key: f"{e.en} ({e.zh})" for e in self.settings.emotions}
         choices["none"] = "nothing in particular"
         return [
-            Score("mood_change", about, {"-2": "clearly worse", "-1": "a little worse", "0": "no real change",
-                                         "1": "a little better", "2": "clearly better"}),
-            Choice("feeling", f"{name}'s strongest feeling after this exchange.", choices),
+            Score("mood_change", "How did this move the assistant's own mood, from the assistant's side? Who "
+                                 "started it is said at the top. Being annoyed at the user does not lower it; only "
+                                 "aching for them, worry or sadness does.",
+                  {"-2": "clearly worse", "-1": "a little worse", "0": "no real change", "1": "a little better",
+                   "2": "clearly better"}),
+            Choice("feeling", "The assistant's strongest feeling after this.", choices),
         ]
+
+    def frame(self, exchange, source: str, user: str) -> str:
+        """The text the judge reads: who is who and who started it, then the exchange."""
+        exchange = exchange if isinstance(exchange, str) else "\n".join(f"{who}: {said}" for who, said in exchange)
+        started = {"user": f"{user} is talking to {self.name}.",
+                   "speak-up": f"{self.name} reached out to {user} on their own, because they wanted to (not as "
+                               "a task).",
+                   "duty": f"{self.name} is doing a scheduled task."}.get(source, "")
+        return f"[{started} The assistant is {self.name}; the user is {user}.]\n{exchange}"
 
     async def ajudge(self, subject: str, exchange: str | Sequence[tuple[str, str]], *, source: str = "user",
                      user: str = "the user", decider: Chain | None = None) -> MoodEvent | None:
@@ -173,16 +177,19 @@ class Mood:
 
         `decider` replaces the mood's own chain for this call (for hosts whose model handle belongs to one
         request)."""
-        s = self.settings
         decider = decider or self.decider
-        if source in s.skip or decider is None:
+        if source in self.settings.skip or decider is None:
             return None
-        if not isinstance(exchange, str):
-            exchange = "\n".join(f"{who}: {said}" for who, said in exchange)
-        context = {"user": f"{user} is talking to {self.name}.",
-                   "speak-up": f"{self.name} started this conversation on her own.",
-                   "duty": f"{self.name} is doing a scheduled task."}.get(source, "")
-        answers = await decider.adecide(f"[{context}]\n{exchange}", self.questions(source, user))
+        answers = await decider.adecide(self.frame(exchange, source, user), self.questions())
+        return self.apply_answers(subject, answers, exchange, source=source, user=user)
+
+    def apply_answers(self, subject: str, answers, exchange, *, source: str = "user",
+                      user: str = "the user") -> MoodEvent | None:
+        """Move the mood from the judge's answers to `questions()` (other answers are ignored)."""
+        s = self.settings
+        if source in s.skip:
+            return None
+        exchange = exchange if isinstance(exchange, str) else "\n".join(f"{who}: {said}" for who, said in exchange)
         change, feeling = answers.get("mood_change"), answers.get("feeling")
         if change is None and feeling is None:
             return None
@@ -254,23 +261,24 @@ class Mood:
         known = {e.key for e in self.settings.emotions}
         return {key: self.settings.gain * p for key, p in feeling.probabilities.items() if key in known and p >= 0.15}
 
+    def _emotion_name(self, emotion: Emotion) -> str:
+        return emotion.zh if self.lang == "zh" else emotion.en
+
     def _reason(self, key: str, exchange: str, source: str, user: str) -> str:
-        names = {e.key: e for e in self.settings.emotions}
-        emotion = names.get(key)
+        emotion = {e.key: e for e in self.settings.emotions}.get(key)
         if emotion is None:
             return ""
+        feeling = self._emotion_name(emotion)
+        if source == "speak-up":
+            return say(self.lang, "mood.reason_reached", user=user, feeling=feeling)
         said = ""
         for line in reversed(exchange.splitlines()):
             if line.startswith(f"{user}:"):
-                said = texts.clip(line.split(":", 1)[1].strip(), 40)
+                said = texts.clip(line.split(":", 1)[1].strip(), 40)  # one quoted line, never more
                 break
-        if self.lang == "zh":
-            if source == "speak-up":
-                return f"主动去找{user}说话，{emotion.zh}"
-            return f"{user}说「{said}」，{emotion.zh}" if said else emotion.zh
-        if source == "speak-up":
-            return f"reached out to {user}, felt {emotion.en}"
-        return f"{user} said “{said}”, felt {emotion.en}" if said else f"felt {emotion.en}"
+        if said:
+            return say(self.lang, "mood.reason", user=user, said=said, feeling=feeling)
+        return say(self.lang, "mood.reason_plain", feeling=feeling)
 
 
 def _confidence(change: Answer | None, feeling: Answer | None) -> float:

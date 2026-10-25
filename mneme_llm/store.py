@@ -31,7 +31,9 @@ create table if not exists memories (
     recalls integer not null default 0,
     superseded_by integer,
     deleted_at real,
-    source text
+    source text,
+    gloss text,
+    terms text
 );
 create index if not exists memories_live on memories(space, subject, deleted_at, superseded_by);
 create index if not exists memories_key on memories(space, subject, key);
@@ -59,11 +61,21 @@ create table if not exists micro_models (
     question text primary key, kind text not null, labels text not null, weights text not null,
     examples integer not null, updated_at real not null
 );
+create table if not exists vectors (
+    memory_id integer not null, embedder text not null, vector blob not null,
+    primary key (memory_id, embedder)
+);
+create table if not exists meaning_terms (
+    embedder text not null, term text not null, count integer not null, vector blob not null,
+    primary key (embedder, term)
+);
 """
+# Columns added after a table first shipped, so files made by earlier builds gain them on open.
+ADDED_COLUMNS = {"memories": {"gloss": "text", "terms": "text"}}
 
 
 MEMORY_COLUMNS = ("subject", "key", "kind", "text", "importance", "feeling", "happened_at", "created_at",
-                  "recalled_at", "recalls", "deleted_at", "source")
+                  "recalled_at", "recalls", "deleted_at", "source", "gloss")
 
 
 class Store:
@@ -80,6 +92,11 @@ class Store:
             if str(path) != ":memory:":
                 self._db.execute("pragma journal_mode=wal")
             self._db.executescript(SCHEMA)
+            for table, columns in ADDED_COLUMNS.items():
+                have = {row["name"] for row in self._db.execute(f"pragma table_info({table})")}
+                for name, kind in columns.items():
+                    if name not in have:
+                        self._db.execute(f"alter table {table} add column {name} {kind}")
             found = self.meta("schema_version")
             if found is None:
                 self.set_meta("schema_version", str(SCHEMA_VERSION))
@@ -121,14 +138,16 @@ class Store:
                      "excluded.value", (key, value))
 
     # ---- moving a space between files and projects ----------------------------------------------
-    def export(self, space: str) -> dict:
-        """Everything of one space as plain JSON (memories, profiles, moods and their timelines)."""
+    def export_data(self, space: str) -> dict:
+        """Everything of one space as plain JSON (memories, profiles, moods and their timelines). Vectors and
+        cached search terms are left out: they belong to an embedder and a tokenizer, and are rebuilt on use."""
         def table(name: str) -> list[dict]:
             return [dict(row) for row in self.rows(f"select * from {name} where space = ? order by rowid", (space,))]
-        return {"mneme_llm": SCHEMA_VERSION, "space": space, "exported_at": time.time(), "memories": table("memories"),
+        memories = [{key: value for key, value in row.items() if key != "terms"} for row in table("memories")]
+        return {"mneme_llm": SCHEMA_VERSION, "space": space, "exported_at": time.time(), "memories": memories,
                 "profiles": table("profiles"), "moods": table("moods"), "mood_events": table("mood_events")}
 
-    def import_(self, data: dict, space: str | None = None) -> int:
+    def import_data(self, data: dict, space: str | None = None) -> int:
         """Add an export (into `space`, or the one it came from); memory ids are renumbered. Returns memories added."""
         target = space or data["space"]
         renumbered, links = {}, []
