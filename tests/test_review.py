@@ -11,8 +11,7 @@ import tempfile
 import threading
 import time
 import unittest
-from datetime import datetime
-from zoneinfo import ZoneInfo
+from datetime import datetime, timedelta, timezone
 
 from tests.tiers import needs_centroids, needs_decide_micro, needs_unify
 from mneme_llm import Embeddings, Mneme
@@ -24,7 +23,8 @@ from mneme_llm.store import Store
 from mneme_llm.tools import Toolbox
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SHANGHAI = ZoneInfo("Asia/Shanghai")
+# UTC+8 all year (no daylight saving since 1991); a fixed zone needs no time-zone database, which Windows lacks
+SHANGHAI = timezone(timedelta(hours=8), "Asia/Shanghai")
 
 
 def plain(**options):
