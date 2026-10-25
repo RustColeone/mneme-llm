@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mneme-llm"
+version = "0.1.0"
+description = "Memory and mood for AI companions that outlive any one model: one SQLite file, usable by every LLM"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [{name = "RustColeone"}]
+keywords = ["llm", "memory", "long-term memory", "companion", "chatbot", "mood", "mcp", "agents", "sqlite"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Natural Language :: English",
+    "Natural Language :: Chinese (Simplified)",
+]
+dependencies = []
+
+[project.optional-dependencies]
+jieba = ["jieba>=0.42"]
+
+[project.urls]
+Homepage = "https://github.com/RustColeone/mneme-llm"
+Repository = "https://github.com/RustColeone/mneme-llm"
+Issues = "https://github.com/RustColeone/mneme-llm/issues"
+
+[project.scripts]
+mneme-llm = "mneme_llm.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["mneme_llm*"]
