@@ -9,83 +9,23 @@
 
 Tiers 1 and 2 give a vector for the query, compared with the vectors tier 1 stored for the notes; tier 3 adds
 words to the matching. With no tier available, recall is word matching alone. Vectors are stored per embedder
-(`name`), so changing the provider never compares vectors from two different models. This module computes;
-Memory writes what it found (glosses) into the notes.
+(`name`), so changing the provider never compares vectors from two different models, and each model's floor (the
+similarity under which a note says nothing) is measured in the file. The providers are in `embedders.py`, the
+measuring in `calibrate.py`; this module has the tiers work together. It computes; Memory writes what it found
+(glosses) into the notes.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import os
-from typing import Awaitable, Callable, Protocol, Sequence, Union
+from typing import Sequence
 
-from .. import providers
-from ..providers import Rest, Unavailable
-from . import ledger
+from ..providers import Rest
+from . import calibrate, ledger
+from .embedders import FLOOR, Embedder, Embeddings, OpenAIEmbeddings
 from .vectors import Vector, cosine, normalize, pack, unpack
 
 log = logging.getLogger("mneme_llm.meaning")
-
-# Similarity below an embedder's floor says nothing. Measured for text-embedding-3-small (256 dimensions) on English
-# and Chinese notes: related pairs 0.30-0.60 (mean 0.45), unrelated ones mean 0.18 with 95% under 0.34. Another
-# model needs its own measurement: pass `floor=` to its embedder.
-FLOOR = 0.33
-
-
-class Embedder(Protocol):
-    name: str    # identifies the model and its settings; vectors from different names are never compared
-    floor: float  # the similarity under which two of its vectors are unrelated
-
-    async def embed(self, texts: Sequence[str]) -> list[Vector]:
-        """One vector per text, in order; raising means this tier is unavailable."""
-
-
-# ---- tier 1: providers ------------------------------------------------------------------------------
-class OpenAIEmbeddings:
-    """OpenAI's embeddings API: `text-embedding-3-small` at 256 dimensions costs $0.02 per million tokens and
-    places Chinese and English texts about the same thing close together."""
-
-    def __init__(self, api_key: str | None = None, *, model: str = "text-embedding-3-small", dimensions: int = 256,
-                 base_url: str = "https://api.openai.com/v1", timeout: float = 15.0, floor: float = FLOOR):
-        self.api_key = api_key if api_key is not None else os.environ.get("OPENAI_API_KEY", "")
-        self.model, self.dimensions, self.base_url, self.timeout = model, dimensions, base_url.rstrip("/"), timeout
-        self.name, self.floor = f"openai:{model}:{dimensions}", floor
-        self.input_tokens = 0
-
-    def _post(self, texts: list[str]) -> dict:
-        return providers.post_json(f"{self.base_url}/embeddings", self.api_key,
-                                   {"model": self.model, "input": texts, "dimensions": self.dimensions},
-                                   timeout=self.timeout, what="embeddings API")
-
-    async def embed(self, texts: Sequence[str]) -> list[Vector]:
-        if not self.api_key:
-            raise Unavailable("no OpenAI key for embeddings")
-        payload = await asyncio.to_thread(self._post, [text[:8000] or " " for text in texts])
-        self.input_tokens += int(payload.get("usage", {}).get("prompt_tokens", 0) or 0)
-        ordered = sorted(payload["data"], key=lambda item: item["index"])
-        return [normalize(item["embedding"]) for item in ordered]
-
-    def report(self) -> dict:
-        return {"input_tokens": self.input_tokens, "dollars": round(self.input_tokens * 0.02 / 1_000_000, 6)}
-
-
-EmbedFunction = Callable[[list], Union[list, Awaitable[list]]]
-
-
-class Embeddings:
-    """Any embedding function (sync or async, list of texts → list of vectors): a local model, Ollama, Gemini…
-    Give it a `name` that changes when the model does, and its own `floor` once you have measured one."""
-
-    def __init__(self, function: EmbedFunction, name: str, *, floor: float = FLOOR):
-        self.function, self.name, self.floor = function, name, floor
-
-    async def embed(self, texts: Sequence[str]) -> list[Vector]:
-        vectors = await providers.call(self.function, list(texts))
-        if len(vectors) != len(texts):
-            raise Unavailable(f"{self.name} returned {len(vectors)} vectors for {len(texts)} texts")
-        return [normalize(vector) for vector in vectors]
-
 
 # ---- the tiers together -----------------------------------------------------------------------------
 class Found:
@@ -108,6 +48,16 @@ class Meaning:
         self.store, self.embedder, self.micro, self.unify = store, embedder, micro, unify
         self.rest = Rest()  # the embedding provider's
         self.teach_error = ""
+        self._measuring = False
+
+    @property
+    def floor(self) -> float:
+        """The embedder's floor: its own when it was given one, else the one measured in this file, else FLOOR."""
+        fixed = getattr(self.embedder, "floor", None)
+        if fixed is not None:
+            return fixed
+        record = calibrate.read(self.store, self.name) if self.name else None
+        return record["floor"] if record else FLOOR
 
     @property
     def name(self) -> str:
@@ -134,7 +84,7 @@ class Meaning:
             except Exception as error:
                 self._failed(error)
             else:
-                return Found("embeddings", vector=vector, floor=getattr(self.embedder, "floor", FLOOR))
+                return Found("embeddings", vector=vector, floor=self.floor)
         if self.micro is not None:
             vector = self.micro.vector(text)
             if vector is not None:
@@ -148,7 +98,8 @@ class Meaning:
 
     async def prepare_vectors(self, notes) -> int:
         """Embed the notes that have no vector from this embedder yet (in batches); returns how many were added.
-        With the centroids on, each new vector teaches them, and so do stored vectors that have not yet."""
+        With the centroids on, each new vector teaches them, and so do stored vectors that have not yet. Then the
+        embedder's floor is measured, the first time, and refined as the file grows."""
         if self.micro is not None and self.name and ledger.untaught(self.store, self.name, 1):
             with self.store.transaction():
                 self._teach(ledger.untaught(self.store, self.name, self.TAUGHT_PER_CALL))
@@ -183,7 +134,28 @@ class Meaning:
                 if self.micro is not None:
                     self._teach(fresh)
             added += len(fresh)
+        await self._measure()
         return added
+
+    async def _measure(self) -> None:
+        """The floor of an embedder given none: measured on the bundled set once (one request), then refined by the
+        file's own notes each time their number doubles (no request)."""
+        if getattr(self.embedder, "floor", None) is not None or self._measuring or not self.rest.up():
+            return
+        self._measuring = True  # one measurement at a time; a recall meanwhile uses the floor there is
+        try:
+            record = calibrate.read(self.store, self.name)
+            if record is None:
+                try:
+                    record = await calibrate.measure(self.embedder, FLOOR)
+                except Exception as error:
+                    self._failed(error)
+                    return
+                calibrate.write(self.store, self.name, record)
+            if calibrate.due(self.store, record):
+                calibrate.write(self.store, self.name, calibrate.refine(self.store, self.name, record))
+        finally:
+            self._measuring = False
 
     def vectors(self, ids: Sequence[int]) -> dict[int, Vector]:
         if not ids or not self.name:
@@ -199,12 +171,24 @@ class Meaning:
     def report(self) -> dict:
         failures = {name: error for name, error in (("embeddings", self.rest.error), ("micro", self.teach_error),
                                                     ("unify", self.unify.rest.error if self.unify else "")) if error}
-        report = {"embedder": self.name or None, "failures": failures,
+        report = {"embedder": self.name or None, "floor": self._floor_report(), "failures": failures,
                   "micro": self.micro.report() if self.micro is not None else None,
                   "unify": self.unify.report() if self.unify is not None else None}
         if self.embedder is not None and hasattr(self.embedder, "report"):
             report["embeddings"] = self.embedder.report()
         return report
+
+    def _floor_report(self) -> dict | None:
+        if self.embedder is None:
+            return None
+        if getattr(self.embedder, "floor", None) is not None:
+            return {"value": self.embedder.floor, "by": "given"}
+        record = calibrate.read(self.store, self.name)
+        if record is None:
+            return {"value": FLOOR, "by": "default (not measured yet)"}
+        by = "file" if (record.get("file") or {}).get("shift") is not None else "set" if record["separated"] else \
+            "default (the set did not separate)"
+        return {"value": record["floor"], "by": by, "set": record["set"], "file": record.get("file")}
 
     def _teach(self, items) -> None:
         """Teach the centroids, in a savepoint: a problem there takes back the lesson, never the vectors."""

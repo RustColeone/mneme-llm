@@ -36,7 +36,7 @@ class Judge:
 def mood(judge=None, **settings):
     clock = Clock()
     return Mood(Store(":memory:"), "t", decider=Chain(judge) if judge else None, settings=MoodSettings(**settings),
-                name="大肥鱼", clock=clock), clock
+                companion_name="大肥鱼", clock=clock), clock
 
 
 class MoodTests(unittest.TestCase):
@@ -68,21 +68,43 @@ class MoodTests(unittest.TestCase):
         judge = Judge(change={"-2": 0, "-1": 0.04, "0": 0.45, "1": 0.4, "2": 0.11},
                       feeling={"tender": 0.94, "happy": 0.06})
         m, _ = mood(judge)
-        event = m.judge("u", [("Leo", "今天考试又没考好……"), ("大肥鱼", "才不笨！")], user="Leo")
+        event = m.judge("u", [("Leo", "今天考试又没考好……"), ("大肥鱼", "才不笨！")], user_name="Leo")
         self.assertAlmostEqual(event.delta, 0.58 * 6, places=2)
         self.assertEqual(set(event.emotions), {"tender"})  # 6% of happy is below the noise floor
-        self.assertEqual(event.reason, "Leo said “今天考试又没考好……”, felt aching for them")
+        self.assertEqual(event.reason, "Leo said “今天考试又没考好……”")  # the feeling is said by the cue
         self.assertEqual(event.judge, "judge")
 
     def test_the_question_follows_who_started_it(self):
         judge = Judge(feeling={"sweet": 0.9, "happy": 0.1})
         m, _ = mood(judge)
-        m.judge("u", "大肥鱼: 想你了", source="speak-up", user="Leo")
+        m.judge("u", "大肥鱼: 想你了", source="speak-up", user_name="Leo")
         input, questions = judge.asked[0]
         self.assertIn("reached out to Leo on their own", input)
         self.assertNotIn("Leo", questions["mood_change"].instructions)  # names live in the text, not the question
         self.assertIsNone(m.judge("u", "x", source="runtime"))
         self.assertEqual(len(judge.asked), 1)
+
+    def test_news_says_what_to_feel(self):
+        m, _ = mood()
+        m.apply("u", delta=6, emotions={"happy": 40}, reason="Leo passed the exam", confidence=0.9)
+        self.assertEqual(m.news("u"), "(Your mood 76/100 (good); feeling: happy 40 right now. What just moved you: "
+                                      "Leo passed the exam. Something worth celebrating: you feel happy.)")
+        m.display_language = "zh"
+        m.apply("u", delta=-3, emotions={"worried": 40}, reason="Leo发烧了", confidence=0.9)
+        self.assertIn("这让你放心不下：你在担心对方。", m.news("u"))
+
+    def test_lunas_changes_have_a_threshold_of_their_own(self):
+        from mneme_llm.decide import Answer
+        m, _ = mood()
+
+        def answers(by, confidence):
+            return {"feeling": Answer("feeling", "choice", {"happy": 0.9, "none": 0.1}, confidence, by),
+                    "mood_change": Answer("mood_change", "score", {"1": 1.0}, 0.9, "prompt")}
+        m.apply_answers("u", answers("luna", 0.5), "Leo: I passed!", user_name="Leo")
+        self.assertIsNotNone(m.news("u"))  # 0.5 is enough for Luna (0.45)...
+        m.apply_answers("u", answers("prompt", 0.5), "Leo: I passed again!", user_name="Leo")
+        self.assertIsNone(m.news("u"))  # ...but not for a chat model's own report (0.6)
+        self.assertEqual(m.timeline("u", 1)[0].judge, "prompt")
 
     def test_news_is_told_once_and_only_when_confident(self):
         m, _ = mood(threshold=0.6)
@@ -104,7 +126,7 @@ class MoodTests(unittest.TestCase):
 
     def test_chinese_description_and_faces(self):
         m, _ = mood()
-        m.lang = "zh"
+        m.display_language = "zh"
         m.apply("u", delta=15, emotions={"sweet": 40})
         self.assertEqual(m.describe("u"), "心情 85/100（欢喜）；甜蜜 40")
         m.apply("u", delta=-70, emotions={"sad": 90})

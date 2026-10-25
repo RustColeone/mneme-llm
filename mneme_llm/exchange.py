@@ -22,9 +22,11 @@ def as_text(exchange) -> str:
     return "\n".join(lines)
 
 
-def frame(exchange, *, source: str = "user", user: str = "the user", assistant: str = "the assistant") -> str:
+def frame(exchange, *, source: str = "user", user_name: str = "the user",
+          companion_name: str = "the assistant") -> str:
     """What a judge reads: who is who and who started it, then the exchange. The questions name nobody, so one
     learned model serves every person; the names are said here instead."""
+    user, assistant = user_name, companion_name
     started = {"user": f"{user} is talking to {assistant}.",
                "speak-up": f"{assistant} reached out to {user} on their own, because they wanted to (not as a task).",
                "duty": f"{assistant} is doing a scheduled task."}.get(source, "")

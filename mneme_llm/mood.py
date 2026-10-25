@@ -11,7 +11,8 @@
     telling     `news()` gives the newest change once, for the system prompt; `describe()` any time
 
 Where an exchange came from matters: a person talking to her (`user`), her reaching out on her own
-(`speak-up`), or her doing a scheduled task (`duty`) are judged differently; `runtime` turns are skipped.
+(`speak-up`), or her doing a scheduled task (`duty`) are judged differently; `runtime` turns are skipped. Who the
+person is matters too: `weight` (from `relations.py`, through `Mneme`) makes a close person's words count more.
 Decay is computed when read, so nothing has to tick in the background.
 """
 
@@ -65,10 +66,18 @@ class MoodSettings:
     step: float = 6.0            # mood points per scale level (+2 → +12 at most per exchange)
     gain: float = 40.0           # emotion points for a certain feeling
     threshold: float = 0.6       # below this the change is kept but not told
+    # The same, for the tier whose confidence counted: Luna's confidence for a feeling is lower than a chat model's
+    # self-report (several feelings fit at once), so it has a threshold of its own. To be measured in use.
+    thresholds: Mapping[str, float] = field(default_factory=lambda: {"luna": 0.45})
     tell: str = "event"          # "event" (what just moved her), "mood" (only how she feels) or "off"
     emotions: tuple[Emotion, ...] = EMOTIONS
     weights: Mapping[str, float] = field(default_factory=lambda: {"user": 1.0, "speak-up": 0.7, "duty": 0.5})
     skip: frozenset = frozenset({"runtime", "time"})
+
+    def threshold_of(self, judge: str) -> float:
+        """The threshold for a change judged by `judge` ("luna", "luna+prompt": the first tier is the one whose
+        confidence counted)."""
+        return self.thresholds.get(judge.split("+")[0], self.threshold)
 
 
 @dataclass(frozen=True)
@@ -98,10 +107,10 @@ class MoodEvent:
 
 class Mood:
     def __init__(self, store: Store, space: str, *, decider: Chain | None = None,
-                 settings: MoodSettings = MoodSettings(), name: str = "the assistant", lang: str = "en",
-                 clock: Callable[[], float] = time.time):
+                 settings: MoodSettings = MoodSettings(), companion_name: str = "the assistant",
+                 display_language: str = "en", clock: Callable[[], float] = time.time):
         self.store, self.space, self.decider, self.settings = store, space, decider, settings
-        self.name, self.lang, self.clock = name, lang, clock
+        self.companion_name, self.display_language, self.clock = companion_name, display_language, clock
 
     # ---- reading -------------------------------------------------------------------------------------
     def state(self, subject: str, now: float | None = None) -> MoodState:
@@ -119,14 +128,17 @@ class Mood:
     def describe(self, subject: str) -> str:
         """How the companion feels now, in one line ("Mood 74/100 (good); feeling: aching for them 31")."""
         state = self.state(subject)
-        names = {e.key: e.label(self.lang) for e in self.settings.emotions}
-        feelings = say(self.lang, "mood.separator").join(f"{names.get(key, key)} {round(value)}"
-                                                         for key, value in state.strongest())
-        line = say(self.lang, "mood.line", value=round(state.value), face=say(self.lang, f"face.{state.face}"))
-        return line + (say(self.lang, "mood.feelings", feelings=feelings) if feelings else "")
+        lang = self.display_language
+        names = {e.key: e.label(lang) for e in self.settings.emotions}
+        feelings = say(lang, "mood.separator").join(f"{names.get(key, key)} {round(value)}"
+                                                    for key, value in state.strongest())
+        line = say(lang, "mood.line", value=round(state.value), face=say(lang, f"face.{state.face}"))
+        return line + (say(lang, "mood.feelings", feelings=feelings) if feelings else "")
 
     def news(self, subject: str, *, mark: bool = True) -> str | None:
-        """The newest confident change, once (None if there is nothing new to tell or telling is off)."""
+        """The newest confident change, once (None if there is nothing new to tell or telling is off): the mood,
+        what moved it (with `tell="event"`), and a plain cue of how to feel ("Something worth celebrating: you
+        feel happy."), so even a small chat model knows what to make of it."""
         s = self.settings
         if s.tell == "off":
             return None
@@ -135,16 +147,18 @@ class Mood:
             if row is None or row["last_event"] is None or row["last_event"] == row["told_event"]:
                 return None
             event = self.store.row("select * from mood_events where id = ?", (row["last_event"],))
-            if event is None or event["confidence"] < s.threshold:
+            if event is None or event["confidence"] < s.threshold_of(event["judge"]):
                 return None
             if mark:
                 self.store.execute("update moods set told_event = ? where space = ? and subject = ?",
                                    (row["last_event"], self.space, subject))
+        lang = self.display_language
         mood = self.describe(subject)
-        mood = mood if self.lang == "zh" else mood[0].lower() + mood[1:]
-        if s.tell == "mood" or not event["reason"]:
-            return say(self.lang, "mood.now", mood=mood)
-        return say(self.lang, "mood.news", mood=mood, reason=event["reason"])
+        mood = mood if lang == "zh" else mood[0].lower() + mood[1:]
+        cue = self._cue(json.loads(event["emotions"] or "{}"))
+        reason = event["reason"].rstrip(" .。!！") if s.tell == "event" else ""
+        key = "mood.news" if reason else "mood.now"
+        return say(lang, key + ("_cue" if cue else ""), mood=mood, reason=reason, cue=cue)
 
     def timeline(self, subject: str, limit: int = 40) -> list[MoodEvent]:
         rows = self.store.rows("select * from mood_events where space = ? and subject = ? order by id desc limit ?",
@@ -168,20 +182,21 @@ class Mood:
         ]
 
     async def ajudge(self, subject: str, exchange: str | Sequence[tuple[str, str]], *, source: str = "user",
-                     user: str = "the user", decider: Chain | None = None) -> MoodEvent | None:
+                     user_name: str = "the user", weight: float = 1.0,
+                     decider: Chain | None = None) -> MoodEvent | None:
         """Judge one exchange and move the mood; returns the recorded change, or None when nothing changed.
 
-        `decider` replaces the mood's own chain for this call (for hosts whose model handle belongs to one
-        request)."""
+        `weight` scales the change (how much this person's words count); `decider` replaces the mood's own chain
+        for this call (for hosts whose model handle belongs to one request)."""
         decider = decider or self.decider
         if source in self.settings.skip or decider is None:
             return None
-        framed = exchanges.frame(exchange, source=source, user=user, assistant=self.name)
+        framed = exchanges.frame(exchange, source=source, user_name=user_name, companion_name=self.companion_name)
         answers = await decider.adecide(framed, self.questions())
-        return self.apply_answers(subject, answers, exchange, source=source, user=user)
+        return self.apply_answers(subject, answers, exchange, source=source, user_name=user_name, weight=weight)
 
-    def apply_answers(self, subject: str, answers, exchange, *, source: str = "user",
-                      user: str = "the user") -> MoodEvent | None:
+    def apply_answers(self, subject: str, answers, exchange, *, source: str = "user", user_name: str = "the user",
+                      weight: float = 1.0) -> MoodEvent | None:
         """Move the mood from the judge's answers to `questions()` (other answers are ignored)."""
         s = self.settings
         if source in s.skip:
@@ -192,26 +207,30 @@ class Mood:
             return None
         reason = (change.reason if change else "") or (feeling.reason if feeling else "")
         if not reason and feeling is not None and feeling.choice != "none":
-            reason = self._reason(feeling.choice, exchange, source, user)
+            reason = self._reason(exchange, source, user_name)
+        confidence, counted = _confidence(change, feeling)
+        others = sorted({a.by for a in (change, feeling) if a is not None and a.by != counted})
         return self.apply(subject, delta=change.mean(LEVELS) * s.step if change else 0.0,
-                          emotions=self._bumps(feeling), reason=reason,
-                          confidence=_confidence(change, feeling), source=source,
-                          judge="+".join(sorted({a.by for a in (change, feeling) if a is not None})))
+                          emotions=self._bumps(feeling), reason=reason, confidence=confidence, source=source,
+                          judge="+".join([counted, *others]), weight=weight)  # the counted tier comes first
 
     def judge(self, subject: str, exchange, **options) -> MoodEvent | None:
         """`ajudge` for code without an event loop."""
         return run(self.ajudge(subject, exchange, **options))
 
     def apply(self, subject: str, *, delta: float = 0.0, emotions: Mapping[str, float] | None = None,
-              reason: str = "", confidence: float = 1.0, source: str = "manual",
-              judge: str = "manual") -> MoodEvent | None:
-        """Move the mood directly (hosts with their own judge use this); same guardrails as `judge`."""
+              reason: str = "", confidence: float = 1.0, source: str = "manual", judge: str = "manual",
+              weight: float = 1.0) -> MoodEvent | None:
+        """Move the mood directly (hosts with their own judge use this); same guardrails as `judge`. The change
+        is scaled by `weight` and by the source's weight."""
         texts.required(subject, "subject")
         s = self.settings
         emotions = {key: float(value) for key, value in (emotions or {}).items() if value}
         if not all(math.isfinite(value) for value in [float(delta), float(confidence), *emotions.values()]):
             raise ValueError("a mood change, its feelings and its confidence are finite numbers")
-        weight = s.weights.get(source, 1.0)
+        if not math.isfinite(float(weight)) or weight < 0:
+            raise ValueError("a weight is a finite number, 0 or more")
+        weight = s.weights.get(source, 1.0) * weight
         delta *= weight
         emotions = {key: value * weight for key, value in emotions.items()}
         lowering = {e.key for e in s.emotions if e.lowers}
@@ -299,21 +318,28 @@ class Mood:
         known = {e.key for e in self.settings.emotions}
         return {key: self.settings.gain * p for key, p in feeling.probabilities.items() if key in known and p >= 0.15}
 
-    def _reason(self, key: str, exchange: str, source: str, user: str) -> str:
-        emotion = {e.key: e for e in self.settings.emotions}.get(key)
-        if emotion is None:
-            return ""
-        feeling = emotion.label(self.lang)
+    def _reason(self, exchange: str, source: str, user_name: str) -> str:
+        """What moved the mood, when the judge gave no reason: the person's last words (one line, quoted, at most
+        40 characters), or that the companion reached out. The feeling itself is said by the cue."""
+        lang = self.display_language
         if source == "speak-up":
-            return say(self.lang, "mood.reason_reached", user=user, feeling=feeling)
-        said = ""
+            return say(lang, "mood.reason_reached", user=user_name)
         for line in reversed(exchange.splitlines()):
-            if line.startswith(f"{user}:"):
+            if line.startswith(f"{user_name}:"):
                 said = texts.clip(line.split(":", 1)[1].strip(), 40)  # one quoted line, never more
-                break
-        if said:
-            return say(self.lang, "mood.reason", user=user, said=said, feeling=feeling)
-        return say(self.lang, "mood.reason_plain", feeling=feeling)
+                return say(lang, "mood.reason", user=user_name, said=said) if said else ""
+        return ""
+
+    def _cue(self, emotions: Mapping[str, float]) -> str:
+        """How to feel about a change: its strongest feeling, said plainly (a host's own feeling: "You feel …")."""
+        if not emotions:
+            return ""
+        key = max(emotions, key=emotions.get)
+        lang = self.display_language
+        if has(f"cue.{key}"):
+            return say(lang, f"cue.{key}")
+        emotion = {e.key: e for e in self.settings.emotions}.get(key)
+        return say(lang, "cue.other", feeling=emotion.label(lang) if emotion else key)
 
 
 def _subject(row) -> str | None:
@@ -351,7 +377,8 @@ def _feelings(value) -> dict[str, float]:
     return {key: amount for key, amount in found.items() if amount > 0}
 
 
-def _confidence(change: Answer | None, feeling: Answer | None) -> float:
+def _confidence(change: Answer | None, feeling: Answer | None) -> tuple[float, str]:
+    """How sure the judge was, and which tier said so: the feeling's when there is one, else the change's."""
     if feeling is not None and feeling.choice != "none":
-        return feeling.confidence
-    return change.confidence if change is not None else 0.0
+        return feeling.confidence, feeling.by
+    return (change.confidence, change.by) if change is not None else (0.0, "")

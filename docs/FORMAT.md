@@ -40,7 +40,8 @@ A note is **live** when `superseded_by` and `deleted_at` are both null. Writing 
 `text` and `gloss` never contain line breaks (whitespace is collapsed on write).
 
 `terms` belongs to the tokenizer that wrote it (`meta.terms_version`); a reader with a different tokenizer sets
-every `terms` to null and rebuilds them on use. Writers that change `text` or `gloss` set `terms` to null.
+every `terms` to null (and empties `note_terms`) and rebuilds them on use. Writers that change `text`, `gloss` or
+`key` set `terms` to null and delete the note's `note_terms` rows.
 `folded` is filled in on write; a writer comparing texts fills in any null `folded` of the subject first. Two live
 notes of a subject never have the same `folded` unless both have keys and the keys differ.
 
@@ -87,8 +88,31 @@ The baseline (70) and both half-lives are settings, not part of the file.
 ### `mood_events`: the timeline
 
 `id`, `space`, `subject`, `at`, `delta` (the change actually applied), `value` (after it), `emotions` (JSON: what
-this event added), `reason`, `confidence` (0–1), `source` (`user`, `speak-up`, `duty`, `manual`…), `judge` (the
-tier or tiers that answered, such as `luna` or `micro+prompt`).
+this event added), `reason` (what moved it, in the display language: the judge's sentence, or the person's quoted
+words; the feeling is told from `emotions`), `confidence` (0–1), `source` (`user`, `speak-up`, `duty`, `manual`…),
+`judge` (the tier or tiers that answered, the one whose confidence counted first: `luna`, `luna+prompt`).
+
+### `relationships`: who each person is to the companion
+
+`(space, subject)` primary key; `role` (`creator`, `family`, `friend`, `acquaintance`, or a host's own); `closeness`
+(0–100, as of `updated_at`); `since` (when the role was given); `updated_at` (when closeness was last written: the
+role given, or a day of contact).
+
+At most one `creator` per space. With the built-in bands, closeness stays within the role's: creator 80–100, family
+60–100, friend 20–90, acquaintance 0–60. To read it at time *t*, with *d* = days since `updated_at`:
+
+    closeness(t) = max(min(closeness, floor), closeness − d / 30)     (the creator's does not fade)
+
+A contact on a later day than `updated_at` (in the companion's zone) adds 1, up to the role's ceiling. The rates,
+the bands and the zone are settings, not part of the file.
+
+### `note_terms`: the term index
+
+`(space, subject, term, memory_id)` primary key, and an index on `memory_id`. A note's rows are exactly the terms
+in its `memories.terms`, one row each; a note whose `terms` is null has none. A writer that sets `terms` to null (a
+new gloss, a new key, another tokenizer) deletes the note's rows, a writer that deletes a note deletes them too,
+and one that inserts a note under a reused id first deletes any rows left under it. Readers that do not use the
+index can ignore it, but writers must keep it.
 
 ### `recalls`: the recall log
 
@@ -103,8 +127,17 @@ hashes of search terms, masked to 18 bits. Implementations that don't run the mi
 
 ### `meta`
 
-`key`, `value`. Holds `schema_version`, `terms_version`, `meaning_texts:<embedder>`, `meaning_version:<embedder>`
-and `adopted:…` flags hosts may set.
+`key`, `value`. Holds `schema_version`, `terms_version`, `meaning_texts:<embedder>`, `meaning_version:<embedder>`,
+`floor:<embedder>` and `adopted:…` flags hosts may set.
+
+`floor:<embedder>` is a JSON object: what was measured for that embedding model in this file. `floor` is the
+similarity under which a note says nothing about a query; `version` is the bundled set's (a record of another
+version is measured again); `separated` says whether the set's related pairs stood clearly above its unrelated
+ones (if not, `floor` is the default); `set` holds the set's `floor`, the related pairs' lower quartile
+(`related`), the unrelated pairs' 95th percentile (`unrelated`) and the median similarity of its unrelated note pairs
+(`background`); `file` is null, or the highest note id when the file's own notes were last compared (`at`), how many
+were compared (`notes`) and, when there were enough, their median similarity (`background`) and the move it made
+(`shift`).
 
 ## Export format
 
@@ -113,11 +146,11 @@ and `adopted:…` flags hosts may set.
 ```json
 {"mneme_llm": 1, "space": "dafeiyu", "exported_at": 1792885075.5,
  "memories": [{"id": 1, "subject": "discord:42", "key": "pet.name", "kind": "fact", "text": "…", "gloss": null, …}],
- "profiles": [...], "moods": [...], "mood_events": [...]}
+ "profiles": [...], "moods": [...], "mood_events": [...], "relationships": [...]}
 ```
 
-Rows are the table rows as objects, without `terms` and `folded`. Vectors, word centroids and micro models are
-not exported: they belong to an embedder and a tokenizer, and are rebuilt on use. On import, memory ids are
+Rows are the table rows as objects, without `terms` and `folded`. Vectors, word centroids, floors and micro models
+are not exported: they belong to an embedder and a tokenizer, and are rebuilt or measured again on use. On import, memory ids are
 renumbered and `superseded_by` links follow the new numbers; each note is held to the rules of writing (one line
 of at most 500 characters, whitespace collapsed; a key lowercased, or dropped when it isn't `part(.part){0,3}` of
 at most 48 characters; an unknown kind read as `episode`; importance clamped to 1–5, feeling to −1…1 and `recalls` to 0 or more; times
@@ -127,7 +160,8 @@ without text or subject skipped); then, per subject, the newest live note of eac
 stays live and the others point to it, and a live text that appears twice (compared case-folded) keeps a copy with
 a key, or else the first copy (the others are marked deleted). Moods are imported
 without their event links (the timeline is imported separately); an event identical to one already in the timeline
-is not added again.
+is not added again. A relationship replaces the person's present one, its closeness kept within the role's band
+(0–100 for a role the host does not have); a second holder of a one-person role (a second creator) is skipped.
 
 ## Search terms
 
@@ -157,4 +191,10 @@ Files written before these were added open as before; a writer adds the missing 
 - `vectors` and `meaning_terms` (tables), and `vectors.taught` (column) with the index `vectors_untaught` on
   `embedder` where `taught` is null. In a file from before `vectors.taught`, no vector has taught anything while
   `meaning_texts` says otherwise, so the first reader resets those centroids (they may hold words of queries and
-  can't be taken back) and relearns them from the stored vectors.
+  can't be taken back) and relearns them from the stored vectors;
+- `note_terms` (table) with the index `note_terms_memory`, and the indexes `memories_newest` on
+  `(space, subject, id)` and `memories_important` on `(space, subject, importance, id)`. A file from before the
+  term index has every note's `terms` null or not; those not null are indexed when first needed (a reader indexes
+  any live note of a subject whose `terms` is null, or that has terms but no rows, before using the index);
+- `relationships` (table), and the `floor:<embedder>` keys in `meta`. A file without them has no roles (everyone
+  counts as before) and floors not yet measured.

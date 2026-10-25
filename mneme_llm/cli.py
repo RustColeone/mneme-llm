@@ -1,7 +1,7 @@
 """The `mneme-llm` command: look inside a memory file, fix it by hand, move it, or serve it over MCP.
 
     mneme-llm --db companion.db --space whale_chan notes discord:42
-    mneme-llm recall discord:42 "考试" --explain
+    mneme-llm recall discord:42 "考试" --explain        mneme-llm relate discord:42 creator
     mneme-llm export > backup.json        mneme-llm import backup.json --into other_space
 """
 
@@ -21,7 +21,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mneme-llm", description="Memory and mood for AI companions, for any LLM.")
     parser.add_argument("--db", default=os.environ.get("MNEME_LLM_DB", "mneme.db"), help="the memory file")
     parser.add_argument("--space", default=os.environ.get("MNEME_LLM_SPACE", "default"), help="whose memory (an app)")
-    parser.add_argument("--lang", default=os.environ.get("MNEME_LLM_LANG", "en"), choices=("en", "zh"))
+    parser.add_argument("--display-language", default=os.environ.get("MNEME_LLM_DISPLAY_LANGUAGE", "en"),
+                        choices=("en", "zh"), help="the language of what is shown (headers, dates, moods)")
     parser.add_argument("--version", action="version", version=f"mneme-llm {__version__}")
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -43,7 +44,7 @@ def main(argv: list[str] | None = None) -> int:
     context = commands.add_parser("context", help="the block a system prompt would get")
     context.add_argument("subject")
     context.add_argument("query", nargs="?", default="")
-    context.add_argument("--user", help="how the header names the person")
+    context.add_argument("--user-name", help="how the header names the person")
 
     listing = commands.add_parser("notes", help="every live note of a subject")
     listing.add_argument("subject")
@@ -72,6 +73,14 @@ def main(argv: list[str] | None = None) -> int:
     profile = commands.add_parser("profile", help="show or set a subject's profile card")
     profile.add_argument("subject")
     profile.add_argument("text", nargs="?")
+
+    relate = commands.add_parser("relate", help="show or set who a subject is to the companion")
+    relate.add_argument("subject")
+    relate.add_argument("role", nargs="?", help="creator, family, friend or acquaintance")
+    relate.add_argument("--closeness", type=float, help="0-100, within the role's band (its start otherwise)")
+    relate.add_argument("--remove", action="store_true", help="take the role away")
+
+    commands.add_parser("relations", help="everyone with a role, closest first")
 
     mood = commands.add_parser("mood", help="a subject's mood and its timeline")
     mood.add_argument("subject")
@@ -106,7 +115,8 @@ def main(argv: list[str] | None = None) -> int:
             args.data = json.load(handle)
         space = args.into or str(args.data.get("space") or args.space)
     meaning = args.command == "mcp" or getattr(args, "meaning", False)
-    m = Mneme(args.db, space, lang=args.lang, luna=False, embed=meaning, language=None)
+    m = Mneme(args.db, space, display_language=args.display_language, luna=False, embed=meaning,
+              memory_language=None)
     if (m.store.meta("terms_version") or "").endswith("+jieba") and not texts.use_jieba():
         print("note: this file's search terms were made with jieba, which is not installed here; they will be "
               "rebuilt without it (pip install mneme-llm[jieba])", file=sys.stderr)
@@ -134,7 +144,7 @@ def _run(m: Mneme, args) -> int:
             found = memory.recall(args.subject, args.query, log=False)
         print(found.explain() if args.explain else "\n".join(f"#{r.note.id} {r.note.text}" for r in found.chosen))
     elif args.command == "context":
-        print(memory.context(args.subject, args.query, user=args.user) or "(nothing to say)")
+        print(m.prompt(args.subject, args.query, user_name=args.user_name, mark=False) or "(nothing to say)")
     elif args.command == "notes":
         for note in memory.notes(args.subject, kinds=[args.kind] if args.kind else None):
             key = f" {note.key}" if note.key else ""
@@ -147,7 +157,8 @@ def _run(m: Mneme, args) -> int:
         print(f"forgot {memory.forget(args.subject, id=args.id, key=args.key)}")
     elif args.command == "erase":
         if not args.yes:
-            print("this deletes every note, the profile and the mood of the subject; add --yes", file=sys.stderr)
+            print("this deletes every note, the profile, the mood and the role of the subject; add --yes",
+                  file=sys.stderr)
             return 2
         print(f"erased {m.erase(args.subject)} notes")
     elif args.command == "subjects":
@@ -160,6 +171,20 @@ def _run(m: Mneme, args) -> int:
         if args.text is not None:
             memory.set_profile(args.subject, args.text)
         print(memory.profile(args.subject) or "(no profile)")
+    elif args.command == "relate":
+        if args.remove:
+            print("removed" if m.relations.remove(args.subject) else "(no role)")
+            return 0
+        if args.role:
+            try:
+                m.relate(args.subject, args.role, closeness=args.closeness)
+            except ValueError as error:
+                print(error, file=sys.stderr)
+                return 2
+        found = m.relations.get(args.subject)
+        print(_relationship(found) if found else "(no role)")
+    elif args.command == "relations":
+        print("\n".join(_relationship(found) for found in m.relations.all()) or "(nobody has a role)")
     elif args.command == "mood":
         if args.reset:
             m.mood.reset(args.subject)
@@ -193,6 +218,10 @@ def _run(m: Mneme, args) -> int:
         from .mcp import serve
         serve(m, args.subject)
     return 0
+
+
+def _relationship(found) -> str:
+    return f"{found.subject}: {found.role}, closeness {found.closeness:.0f} (since {stamp(found.since)})"
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import operator
 from array import array
 from typing import Sequence
 
@@ -26,4 +27,4 @@ def unpack(blob: bytes) -> Vector:
 
 def cosine(a: Sequence[float], b: Sequence[float]) -> float:
     """Of two normalized vectors."""
-    return sum(x * y for x, y in zip(a, b))
+    return sum(map(operator.mul, a, b))

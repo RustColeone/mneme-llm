@@ -126,23 +126,39 @@ def terms(text: str) -> list[str]:
     return list(found)
 
 
-SCRIPTS = {"CJK": "cjk", "HIRAGANA": "cjk", "KATAKANA": "cjk", "HANGUL": "cjk", "LATIN": "latin",
-           "CYRILLIC": "cyrillic", "GREEK": "greek", "ARABIC": "arabic", "HEBREW": "hebrew",
-           "DEVANAGARI": "devanagari", "THAI": "thai"}
+# The script of a letter, from the first word of its Unicode name that names one ("CJK UNIFIED IDEOGRAPH",
+# "HALFWIDTH KATAKANA LETTER", "FULLWIDTH LATIN"…). Han, kana and Hangul are told apart.
+SCRIPTS = {"CJK": "han", "HIRAGANA": "kana", "KATAKANA": "kana", "HANGUL": "hangul", "LATIN": "latin",
+           "CYRILLIC": "cyrillic", "GREEK": "greek", "ARMENIAN": "armenian", "GEORGIAN": "georgian",
+           "HEBREW": "hebrew", "ARABIC": "arabic", "SYRIAC": "syriac", "THAANA": "thaana", "ETHIOPIC": "ethiopic",
+           "DEVANAGARI": "devanagari", "BENGALI": "bengali", "GURMUKHI": "gurmukhi", "GUJARATI": "gujarati",
+           "ORIYA": "oriya", "TAMIL": "tamil", "TELUGU": "telugu", "KANNADA": "kannada", "MALAYALAM": "malayalam",
+           "SINHALA": "sinhala", "THAI": "thai", "LAO": "lao", "KHMER": "khmer", "MYANMAR": "myanmar",
+           "TIBETAN": "tibetan", "MONGOLIAN": "mongolian", "CHEROKEE": "cherokee"}
+WIDE = frozenset({"han", "kana", "hangul"})  # one character is a syllable or a word: it weighs as two letters
 
 
-def script(text: str) -> str:
-    """The writing that makes up most of `text`: "cjk" (Chinese, Japanese, Korean), "latin", "cyrillic", "greek",
-    "arabic", "hebrew", "devanagari", "thai", or "other"; "" when it has no letters. A CJK character counts as two
-    letters."""
+def scripts(text: str) -> dict[str, float]:
+    """The share of each script among the letters of `text` (a Han, kana or Hangul character weighing as two); a
+    letter of an unnamed script counts as "other". Han written among kana is Japanese, so it counts as kana."""
     counts: dict[str, int] = {}
     for character in text:
         if not unicodedata.category(character).startswith("L"):
             continue
-        name = unicodedata.name(character, "")
-        kind = next((SCRIPTS[word] for word in name.split() if word in SCRIPTS), "other")  # FULLWIDTH LATIN …
-        counts[kind] = counts.get(kind, 0) + (2 if kind == "cjk" else 1)
-    return max(counts, key=counts.get) if counts else ""
+        words = re.split(r"[ -]", unicodedata.name(character, ""))
+        kind = next((SCRIPTS[word] for word in words if word in SCRIPTS), "other")
+        counts[kind] = counts.get(kind, 0) + (2 if kind in WIDE else 1)
+    if counts.get("kana") and counts.get("han") and counts["kana"] >= 0.15 * (counts["kana"] + counts["han"]):
+        counts["kana"] += counts.pop("han")
+    total = sum(counts.values())
+    return {kind: count / total for kind, count in counts.items()} if total else {}
+
+
+def script(text: str) -> str:
+    """The script most of `text` is written in ("han", "kana", "hangul", "latin", "cyrillic", "arabic",
+    "devanagari", "tamil"…, or "other"); "" when it has no letters."""
+    shares = scripts(text)
+    return max(shares, key=shares.get) if shares else ""
 
 
 CONTROL = re.compile("[\x00-\x08\x0e-\x1b\x7f-\x84\x86-\x9f]")  # control characters that are not whitespace

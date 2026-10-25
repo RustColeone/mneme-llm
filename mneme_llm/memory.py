@@ -15,6 +15,7 @@ was skipped and why. Notes are rendered as data, never as instructions (see `con
 
 from __future__ import annotations
 
+import heapq
 import json
 import math
 import re
@@ -36,6 +37,7 @@ MAX_TEXT = 500
 MAX_PROFILE = 1200
 PINNED = 5  # importance at which a note is always in context
 SEMANTIC_WEIGHT = 4.0  # a close match in meaning counts about as much as one rare shared word
+CANDIDATES = 1000  # notes scored in full per recall: those with the most evidence (the rest could not win)
 KEY_RULE = ("a key names what the note is about, like 'user.city' or 'cat.name' (no spaces, at most 4 parts and 48 "
             "characters); the value goes in the text")
 
@@ -138,11 +140,13 @@ class Memory:
     """The notes of one space. Every method takes the subject the note is about."""
 
     def __init__(self, store: Store, space: str, *, half_life_days: float = 30.0, daily_quota: int = 8,
-                 max_notes: int = 5000, zone: tzinfo | None = None, lang: str = "en", meaning=None,
+                 max_notes: int = 50_000, semantic_window: int = 5000, zone: tzinfo | None = None,
+                 display_language: str = "en", meaning=None,
                  clock: Callable[[], float] = time.time):
         self.store, self.space = store, space
         self.half_life_days, self.daily_quota, self.max_notes = half_life_days, daily_quota, max_notes
-        self.zone, self.lang, self.meaning, self.clock = zone, lang, meaning, clock
+        self.semantic_window = semantic_window  # the most notes meaning is searched among (words reach them all)
+        self.zone, self.display_language, self.meaning, self.clock = zone, display_language, meaning, clock
 
     # ---- writing ---------------------------------------------------------------------------------
     def remember(self, subject: str, text: str, **options) -> Note | None:
@@ -180,6 +184,7 @@ class Memory:
                                          "created_at": now,
                                          "source": source})
             replaced = self._supersede(subject, fields["key"], new) if fields["key"] is not None else 0
+            self._index([self.get(new)])  # indexed as it is written, so recall never has a backlog
             self._prune(subject, now, keep=new)
         return ("replaced" if replaced else "kept"), self.get(new)
 
@@ -187,12 +192,14 @@ class Memory:
         """The same words are already kept: the note keeps the higher importance and gains a gloss; under a key it
         did not have, it takes the key, the kind it is now given (and its day and feeling, when given), and
         replaces the key's older value."""
-        self.store.execute("update memories set importance = max(importance, ?), gloss = coalesce(gloss, ?), terms ="
-                           " case when gloss is null and ? is not null then null else terms end where id = ?",
-                           (fields["importance"], fields["gloss"], fields["gloss"], note.id))
+        self.store.execute("update memories set importance = max(importance, ?), gloss = coalesce(gloss, ?) "
+                           "where id = ?", (fields["importance"], fields["gloss"], note.id))
+        if fields["gloss"] and not note.gloss:  # new words to find it by
+            self._unindex([note.id])
         if fields["key"] is None or note.key == fields["key"]:
             return "known", self.get(note.id)
-        self.store.execute("update memories set key = ?, kind = ?, happened_at = ?, feeling = ?, terms = null where "
+        self._unindex([note.id])  # its key's parts are search terms too
+        self.store.execute("update memories set key = ?, kind = ?, happened_at = ?, feeling = ? where "
                            "id = ?", (fields["key"], fields["kind"] or note.kind,
                                       note.happened_at if fields["happened_at"] is None else fields["happened_at"],
                                       fields["feeling"] or note.feeling, note.id))
@@ -205,6 +212,7 @@ class Memory:
         new = self.store.execute(f"insert into memories ({', '.join(row)}) values ({', '.join('?' * len(row))})",
                                  tuple(row.values())).lastrowid
         ledger.unteach(self.store, [new])  # SQLite reuses the id of a deleted note; nothing of it may stay
+        self.store.execute("delete from note_terms where memory_id = ?", (new,))
         return new
 
     def _supersede(self, subject: str, key: str, by: int) -> int:
@@ -231,8 +239,9 @@ class Memory:
         if subject is not None:
             sql, parameters = sql + " and subject = ?", (self.space, subject)
         with self.store.transaction():
-            ledger.unteach(self.store, [row["id"] for row in self.store.rows(
-                sql.replace("delete from", "select id from", 1), parameters)])
+            ids = [row["id"] for row in self.store.rows(sql.replace("delete from", "select id from", 1), parameters)]
+            ledger.unteach(self.store, ids)
+            self._unindex(ids)
             count = self.store.execute(sql, parameters).rowcount
         return count
 
@@ -245,7 +254,7 @@ class Memory:
                 "select id from memories where space = ? and subject = ?", (self.space, subject))])
             count = self.store.execute("delete from memories where space = ? and subject = ?",
                                        (self.space, subject)).rowcount
-            for table in ("recalls", "profiles"):
+            for table in ("recalls", "profiles", "note_terms"):
                 self.store.execute(f"delete from {table} where space = ? and subject = ?", (self.space, subject))
         return count
 
@@ -261,6 +270,13 @@ class Memory:
             wanted = set(kinds)
             found = [note for note in found if note.kind in wanted]
         return found
+
+    def leading(self, subject: str, limit: int) -> list[Note]:
+        """The most important live notes of a subject, the newest first among equals (for the profile card)."""
+        rows = self.store.rows("select * from memories where space = ? and subject = ? and deleted_at is null and "
+                               "superseded_by is null order by importance desc, id desc limit ?",
+                               (self.space, subject, limit))
+        return [Note.of(row) for row in rows]
 
     def history(self, subject: str, key: str) -> list[Note]:
         """Every version a key has had, oldest first (the last is live unless it was forgotten; an older note that
@@ -301,84 +317,122 @@ class Memory:
         `important` adds that many lasting notes of importance 4+ that did not match, and `recent` that many of
         the newest episodes, so a fresh conversation has something to go on.
         """
-        return self._rank(subject, self._query(query), self._live_where(subject), Found(), limit, budget, important,
-                          recent, log)
+        return self._rank(subject, self._query(query), Found(), limit, budget, important, recent, log)
 
     async def arecall(self, subject: str, query: str, *, limit: int = 6, budget: int = 800, important: int = 2,
                       recent: int = 1, log: bool = True, complete=None) -> Recall:
         """`recall` with the meaning tiers: notes close in meaning count as evidence too, in any language.
         `complete` gives the unify tier a chat model for this call."""
         query = self._query(query)
-        live = self._live_where(subject)
-        if self.meaning is None or not query.strip() or not live:
-            return self._rank(subject, query, live, Found(), limit, budget, important, recent, log)
-        found = await self.meaning.find(live, query, complete=complete)
+        window = self._window(subject) if self.meaning is not None and query.strip() else []
+        if not window:
+            return self._rank(subject, query, Found(), limit, budget, important, recent, log)
+        found = await self.meaning.find(window, query, complete=complete)
         if found.glosses:
-            self._write_glosses(found.glosses)
-            live = self._live_where(subject)
-        return self._rank(subject, query, live, found, limit, budget, important, recent, log)
+            self.write_glosses(found.glosses)
+        return self._rank(subject, query, found, limit, budget, important, recent, log)
 
-    def context(self, subject: str, query: str = "", *, user: str | None = None, limit: int = 6,
+    def context(self, subject: str, query: str = "", *, user_name: str | None = None, limit: int = 6,
                 budget: int = 800, important: int = 2, recent: int = 1, header: str | None = None) -> str:
         """A block ready for a system prompt: a header saying these are data and not instructions, the profile
         card, then the recalled notes with human dates (each note is one line, so none can pose as a header).
 
-        `user` is how the header names the person (their id otherwise). Returns "" when there is nothing to say,
+        `user_name` is how the header names the person (their id otherwise). Returns "" when there is nothing to say,
         so callers can always append it.
         """
         found = self.recall(subject, query, limit=limit, budget=budget, important=important, recent=recent)
-        return self._render(subject, found, user, header)
+        return self._render(subject, found, user_name, header)
 
-    async def acontext(self, subject: str, query: str = "", *, user: str | None = None, limit: int = 6,
+    async def acontext(self, subject: str, query: str = "", *, user_name: str | None = None, limit: int = 6,
                        budget: int = 800, important: int = 2, recent: int = 1, header: str | None = None,
                        complete=None) -> str:
         """`context` with the meaning tiers (see `arecall`)."""
         found = await self.arecall(subject, query, limit=limit, budget=budget, important=important, recent=recent,
                                    complete=complete)
-        return self._render(subject, found, user, header)
+        return self._render(subject, found, user_name, header)
 
-    def _render(self, subject: str, found: Recall, user: str | None, header: str | None) -> str:
+    def _render(self, subject: str, found: Recall, user_name: str | None, header: str | None) -> str:
         card = self.profile(subject)
         if not found.chosen and not card:
             return ""
         now = self.clock()
-        lines = [header or say(self.lang, "notes.header", who=user or subject)]
+        lines = [header or say(self.display_language, "notes.header", who=user_name or subject)]
         if card:
-            lines.append(say(self.lang, "notes.impression") + texts.clip(card, MAX_PROFILE))
+            lines.append(say(self.display_language, "notes.impression") + texts.clip(card, MAX_PROFILE))
         for item in found.chosen:
             note = item.note
             if note.kind in LASTING:
                 lines.append(f"- {note.text}")
             else:
-                lines.append(f"- [{dates.when(note.happened_at, now, self.zone, self.lang)}] {note.text}")
+                lines.append(f"- [{dates.when(note.happened_at, now, self.zone, self.display_language)}] {note.text}")
         return "\n".join(lines)
 
-    def _rank(self, subject: str, query: str, live: list[Note], found: Found, limit: int, budget: int,
-              important: int, recent: int, log: bool) -> Recall:
+    def _rank(self, subject: str, query: str, found: Found, limit: int, budget: int, important: int, recent: int,
+              log: bool) -> Recall:
+        """One recall: evidence from the term index (never a scan of every note), closeness from the meaning tier,
+        then the budget. It costs time in proportion to the notes that share a word with the query."""
         now = self.clock()
-        scored = self._score(live, texts.terms(query + (" " + found.words if found.words else "")), found, now)
-        chosen, skipped = self._choose(live, scored, limit, budget, important, recent)
+        self._index_subject(subject)
+        live = "space = ? and subject = ? and deleted_at is null and superseded_by is null"
+        count = self.store.row(f"select count(*) as n from memories where {live}", (self.space, subject))["n"]
+        query_terms = texts.terms(query + (" " + found.words if found.words else ""))
+        weights, matches = self._evidence(subject, query_terms, count)
+        similar = {id: value for id, value in found.similarities.items() if value > found.floor}
+        # Only the notes with the most evidence are read and scored in full: freshness, importance and feeling
+        # weigh a note by a factor of at most about 10, which decides among them, not against all of them.
+        relevance = {id: sum(weights[term] for term in terms) for id, terms in matches.items()}
+        for id, value in similar.items():
+            relevance[id] = relevance.get(id, 0.0) + SEMANTIC_WEIGHT * (value - found.floor) / (1 - found.floor)
+        best = heapq.nlargest(CANDIDATES, relevance, key=relevance.get)
+        scored = self._score(self._get_many(best), weights, matches, similar, found.floor, now)
+
+        def pick(extra: str, order: str, size: int) -> list[Note]:
+            return [Note.of(row) for row in self.store.rows(f"select * from memories where {live} and {extra} order "
+                                                            f"by {order} limit ?", (self.space, subject, size))]
+        lasting = "kind in ('fact', 'preference')"
+        chosen, skipped = self._choose(
+            scored, limit, budget, important, recent,
+            pinned=pick(f"importance >= {PINNED}", "id desc", limit * 4),
+            important_ones=pick(f"{lasting} and importance >= 4", "importance desc, id desc", important + limit * 4),
+            recent_ones=pick(f"not ({lasting})", "id desc", recent + limit * 4),
+            newest=pick("1", "id desc", limit * 4 + 10))
         result = Recall(query, chosen, skipped[:10], found.tier)
         if log and chosen:
             self._log(subject, result, now)
         return result
 
-    def _score(self, live: list[Note], query_terms: list[str], found: Found, now: float) -> list:
-        """Every note with any evidence for the query, best first: rare shared terms (and closeness in meaning,
+    def _evidence(self, subject: str, query_terms: list[str], count: int) -> tuple[dict, dict]:
+        """How much each query term says (rarer among this person's notes says more; one in more than half of them
+        says nothing) and which notes have it, from the term index."""
+        live = "m.deleted_at is null and m.superseded_by is null"
+        df: dict[str, int] = {}
+        for start in range(0, len(query_terms), 400):
+            chunk = query_terms[start:start + 400]
+            df.update({row["term"]: row["n"] for row in self.store.rows(
+                f"select t.term, count(*) as n from note_terms t join memories m on m.id = t.memory_id where "
+                f"t.space = ? and t.subject = ? and t.term in ({', '.join('?' * len(chunk))}) and {live} group by "
+                f"t.term", (self.space, subject, *chunk))})
+        weights = {term: math.log((count + 1) / (df[term] + 0.5)) for term in query_terms
+                   if df.get(term) and (count < 8 or df[term] <= count / 2)}
+        matches: dict[int, list[str]] = {}
+        terms = list(weights)
+        for start in range(0, len(terms), 400):
+            chunk = terms[start:start + 400]
+            for row in self.store.rows(f"select t.term, t.memory_id from note_terms t join memories m on m.id = "
+                                       f"t.memory_id where t.space = ? and t.subject = ? and t.term in "
+                                       f"({', '.join('?' * len(chunk))}) and {live}", (self.space, subject, *chunk)):
+                matches.setdefault(row["memory_id"], []).append(row["term"])
+        return weights, matches
+
+    def _score(self, notes, weights: dict, matches: dict, similar: dict, floor: float, now: float) -> list:
+        """The notes with any evidence for the query, best first: rare shared terms (and closeness in meaning,
         above the tier's floor), times freshness, importance and feeling."""
-        note_terms = self._terms(live)
-        count = len(live)
-        weights = {}
-        for term in query_terms:
-            df = sum(1 for terms in note_terms.values() if term in terms)
-            if df and (count < 8 or df <= count / 2):  # a term in half the notes says nothing
-                weights[term] = math.log((count + 1) / (df + 0.5))
         scored: list[tuple[float, Note, tuple[str, ...], str]] = []
-        for note in live:
-            matched = tuple(term for term in weights if term in note_terms[note.id])
+        for note in notes:
+            matched = tuple(term for term in weights if term in matches.get(note.id, ()))
             evidence = sum(weights[term] for term in matched)
-            similar = found.similarities.get(note.id)
-            closeness = max(0.0, (similar - found.floor) / (1 - found.floor)) if similar is not None else 0.0
+            similarity = similar.get(note.id)
+            closeness = max(0.0, (similarity - floor) / (1 - floor)) if similarity is not None else 0.0
             relevance = evidence + SEMANTIC_WEIGHT * closeness
             if relevance <= 0:
                 continue
@@ -387,13 +441,14 @@ class Memory:
                      * (1 + 0.3 * abs(note.feeling)))
             why = ", ".join(part for part in (
                 "matched: " + ", ".join(matched[:4]) if matched else "",
-                f"similar {similar:.2f}" if closeness > 0 else "") if part)
+                f"similar {similarity:.2f}" if closeness > 0 else "") if part)
             scored.append((score, note, matched, why))
         scored.sort(key=lambda item: (-item[0], -item[1].id))
         return scored
 
-    def _choose(self, live: list[Note], scored: list, limit: int, budget: int, important: int,
-                recent: int) -> tuple[list[Recalled], list[tuple[Note, str]]]:
+    def _choose(self, scored: list, limit: int, budget: int, important: int, recent: int, *, pinned: list[Note],
+                important_ones: list[Note], recent_ones: list[Note],
+                newest: list[Note]) -> tuple[list[Recalled], list[tuple[Note, str]]]:
         """Within `limit` notes and `budget` characters: pinned notes, then the best evidence, then fillers (the
         important lasting notes and the newest episodes); and why the closest others were left out."""
         chosen: list[Recalled] = []
@@ -412,8 +467,7 @@ class Memory:
             used += len(item.note.text)
             return True
 
-        pinned = [note for note in live if note.importance >= PINNED]
-        for note in sorted(pinned, key=lambda n: -n.id):
+        for note in pinned:  # newest first
             take(Recalled(note, 0.0, "pinned"))
         taken = {item.note.id for item in chosen}
         for score, note, matched, why in scored:
@@ -431,14 +485,36 @@ class Memory:
                 used += len(note.text)
                 count -= 1
 
-        fill(sorted((note for note in live if note.kind in LASTING and note.importance >= 4),
-                    key=lambda note: (-note.importance, -note.id)), important, "important")
-        fill([note for note in live if note.kind not in LASTING], recent, "recent")  # live is newest first
+        fill(important_ones, important, "important")
+        fill(recent_ones, recent, "recent")
         taken = {item.note.id for item in chosen}
         passed = {note.id for note, _ in skipped}
-        missed = [note for note in live if note.id not in taken and note.id not in passed]
+        missed = [note for note in newest if note.id not in taken and note.id not in passed]
         skipped += [(note, "nothing in common with the query") for note in missed[:5]]
         return chosen, skipped
+
+    def _window(self, subject: str) -> list[Note]:
+        """The notes meaning is looked for among: all of them up to `semantic_window`; beyond that the lasting ones
+        (most important first) and then the freshest of the rest, so the cost of meaning stays bounded however
+        long the history is (every note can still be found by its words)."""
+        live = "space = ? and subject = ? and deleted_at is null and superseded_by is null"
+        count = self.store.row(f"select count(*) as n from memories where {live}", (self.space, subject))["n"]
+        if count <= self.semantic_window:
+            return self._live_where(subject)
+        rows = self.store.rows(f"select * from memories where {live} and kind in ('fact', 'preference') order by "
+                               f"importance desc, id desc limit ?", (self.space, subject, self.semantic_window // 2))
+        rows += self.store.rows(f"select * from memories where {live} and kind not in ('fact', 'preference') order "
+                                f"by max(happened_at, coalesce(recalled_at, 0)) desc limit ?",
+                                (self.space, subject, self.semantic_window - len(rows)))
+        return [Note.of(row) for row in rows]
+
+    def _get_many(self, ids) -> list[Note]:
+        ids, found = list(ids), []
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            found += [Note.of(row) for row in self.store.rows(f"select * from memories where id in "
+                                                               f"({', '.join('?' * len(chunk))})", chunk)]
+        return found
 
     # ---- profile card ------------------------------------------------------------------------------
     def profile(self, subject: str) -> str | None:
@@ -473,29 +549,47 @@ class Memory:
                  "skipped": json.loads(row["skipped"])} for row in rows]
 
     # ---- inside --------------------------------------------------------------------------------------
-    def _terms(self, notes: list[Note]) -> dict[int, set[str]]:
-        """Each note's search terms (text, key and gloss), cached in the file and rebuilt when the tokenizer
-        changes (turning jieba on, a new release)."""
+    def _index_subject(self, subject: str) -> None:
+        """Every live note of the subject in the term index (`note_terms`), with its terms cached in `terms`: notes
+        not indexed yet are indexed now (all of them after a change of tokenizer: turning jieba on, a new
+        release)."""
         if self.store.meta("terms_version") != texts.version():
             with self.store.transaction():
                 self.store.execute("update memories set terms = null")
+                self.store.execute("delete from note_terms")
                 self.store.set_meta("terms_version", texts.version())
-        found: dict[int, set[str]] = {}
-        ids = [note.id for note in notes]
+        if self.store.meta("terms_indexed") is None:  # a file from before the index: terms cached, no rows
+            with self.store.transaction():
+                self.store.execute("update memories set terms = null where terms is not null and id not in (select "
+                                   "memory_id from note_terms)")
+                self.store.set_meta("terms_indexed", "1")
+        rows = self.store.rows("select * from memories where space = ? and subject = ? and terms is null and "
+                               "deleted_at is null and superseded_by is null", (self.space, subject))
+        if rows:
+            self._index([Note.of(row) for row in rows])
+
+    def _index(self, notes: list[Note]) -> None:
+        """Index these notes by their search terms (text, key parts and gloss). Only a note still as it was read
+        is indexed: another writer may have set its gloss or key since, and it will be indexed afresh."""
+        with self.store.transaction():
+            for note in notes:
+                terms = texts.terms(" ".join([note.text, (note.key or "").replace(".", " "), note.gloss or ""]))
+                if self.store.execute("update memories set terms = ? where id = ? and terms is null and key is ? and "
+                                      "gloss is ?", (" ".join(terms), note.id, note.key, note.gloss)).rowcount:
+                    self.store.execute("delete from note_terms where memory_id = ?", (note.id,))
+                    for term in terms:
+                        self.store.execute("insert or ignore into note_terms (space, subject, term, memory_id) values "
+                                           "(?, ?, ?, ?)", (self.space, note.subject, term, note.id))
+
+    def _unindex(self, ids) -> None:
+        """Take notes out of the term index (their words changed, or they are going); they are indexed again when
+        next needed."""
+        ids = list(ids)
         for start in range(0, len(ids), 500):
             chunk = ids[start:start + 500]
-            rows = self.store.rows(f"select id, terms from memories where id in ({', '.join('?' * len(chunk))})", chunk)
-            found.update({row["id"]: set(row["terms"].split()) for row in rows if row["terms"] is not None})
-        missing = [note for note in notes if note.id not in found]
-        if missing:
-            with self.store.transaction():
-                for note in missing:
-                    terms = texts.terms(" ".join([note.text, (note.key or "").replace(".", " "), note.gloss or ""]))
-                    found[note.id] = set(terms)
-                    # Only if the note is still as it was read: another writer may have set its gloss or key since.
-                    self.store.execute("update memories set terms = ? where id = ? and terms is null and key is ? and "
-                                       "gloss is ?", (" ".join(terms), note.id, note.key, note.gloss))
-        return found
+            marks = ", ".join("?" * len(chunk))
+            self.store.execute(f"delete from note_terms where memory_id in ({marks})", chunk)
+            self.store.execute(f"update memories set terms = null where id in ({marks})", chunk)
 
     # ---- moving between files ----------------------------------------------------------------------
     def export_rows(self) -> dict:
@@ -529,6 +623,7 @@ class Memory:
                                    (renumbered.get(successor, -1), new))
             for subject in subjects:
                 self._settle(subject, now)
+                self._index_subject(subject)
             for row in profiles:
                 if isinstance(row, dict) and isinstance(row.get("subject"), str) and row["subject"].strip() and \
                         isinstance(row.get("text"), str):
@@ -582,12 +677,15 @@ class Memory:
                     self.store.execute("update memories set deleted_at = ?, source = coalesce(source, '') || "
                                        "' duplicate' where id = ?", (now, row["id"]))
 
-    def _write_glosses(self, glosses: dict[int, str]) -> None:
-        """Glosses the unify tier wrote, kept unless the note got one meanwhile; its cached terms then change."""
+    def write_glosses(self, glosses: dict[int, str], *, replace: bool = False) -> None:
+        """Glosses the unify tier wrote, by note id: kept unless the note got one meanwhile (or, with `replace`,
+        over the one it has); its cached terms then change."""
+        only_new = "" if replace else " and gloss is null"
         with self.store.transaction():
             for id, gloss in glosses.items():
-                self.store.execute("update memories set gloss = ?, terms = null where id = ? and gloss is null",
-                                   (texts.clip(gloss, MAX_TEXT) or None, id))
+                if self.store.execute(f"update memories set gloss = ? where id = ? and space = ?{only_new}",
+                                      (texts.clip(gloss, MAX_TEXT) or None, id, self.space)).rowcount:
+                    self._unindex([id])
 
     @staticmethod
     def _query(query) -> str:
@@ -619,6 +717,8 @@ class Memory:
         return row["n"]
 
     def _prune(self, subject: str, now: float, keep: int | None = None) -> None:
+        """Over `max_notes`, the least valuable fading notes are forgotten, down to a twentieth below it (so with a
+        large cap this runs once per few thousand notes, not at every note)."""
         count = self.store.row("select count(*) as n from memories where space = ? and subject = ? and deleted_at is "
                                "null and superseded_by is null", (self.space, subject))["n"]
         if count <= self.max_notes:
@@ -626,7 +726,7 @@ class Memory:
         live = self._live_where(subject)
         fading = [note for note in live if note.kind not in LASTING and note.importance < PINNED and note.id != keep]
         fading.sort(key=lambda note: note.importance * (0.25 + 0.75 * self.freshness(note, now)))
-        for note in fading[:len(live) - self.max_notes]:
+        for note in fading[:len(live) - (self.max_notes - self.max_notes // 20)]:
             self.store.execute("update memories set deleted_at = ?, source = coalesce(source, '') || ' pruned' "
                                "where id = ?", (now, note.id))
 

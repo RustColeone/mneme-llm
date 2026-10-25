@@ -15,9 +15,13 @@ The first release.
   log; rendered with human dates under a header marking the notes as data, not instructions.
 - **Meaning, in three tiers:** embeddings (OpenAI `text-embedding-3-small` at 256 dimensions, or any function),
   word centroids learned from them (optional), and the host's chat model unifying notes into one language and
-  translating queries. Vectors are kept per embedder.
+  translating queries. Vectors are kept per embedder, and each embedding model's similarity floor is measured in
+  the file: on a bundled set of 32 topics in six languages (one request), then refined by the file's own notes.
 - **Mood:** a value and seven feelings per person with decay on read, judged by expected values, with the
-  guardrails of dsh-feiyu-mood and news told once.
+  guardrails of dsh-feiyu-mood and news told once, with a plain cue of what to feel.
+- **Relationships:** a role per person (creator, one per space and never fading; family; friend; acquaintance; or
+  a host's own) and a closeness from 0 to 100 within the role's band, growing on days of contact and fading
+  without; a close person's words move the mood more, and the prompt says who they are.
 - **Decisions, in three tiers:** GPT-6 Luna's Decisions API, a local micro model per question trained on Luna's
   answers (optional), and the host's chat model.
 - **`observe`:** after each exchange, one decision request judges the mood and whether anything is worth
@@ -28,30 +32,51 @@ The first release.
 - **File format:** schema 1, documented in `docs/FORMAT.md`, with additive migrations.
 - **Structure:** one owner per table and dependencies in one direction (`docs/DESIGN.md`, section 2); the three
   optional tiers can each be deleted, which a test and a CI job check.
-- **Tests:** 158, plus stress tests (random operations, threads, processes, coroutines, a writer killed
-  mid-transaction, odd input at every entry point) that check every rule of the file after each run.
+- **Long histories:** a term index, at most 1,000 candidates scored per recall, meaning within a 5,000-note window,
+  and up to 50,000 live notes per person; 100,000 notes are recalled in 50–400 ms on a Raspberry Pi 5.
+- **Tests:** 197, plus stress tests (random operations, threads, processes, coroutines, a long history, a writer
+  killed mid-transaction, odd input at every entry point) that check every rule of the file after each run.
 
 Changed from the code first pushed to GitHub (before any release on PyPI):
 
-- the person's name is `user=` everywhere (`prompt`, `aprompt`, `Memory.context` and `acontext` took `name=`);
+- clearer names: `display_language` (was `lang`), `memory_language` (was `language`; it also takes a `Unify` of
+  your own), `companion_name` (was `name`), and `user_name` for the person in every call (`prompt`, `aprompt`,
+  `aobserve`, `acapture`, `areflect`, `Memory.context`, `Mood.ajudge`, `exchange.frame`; some took `name=` or
+  `user=`); the CLI's `--lang` is `--display-language` (`MNEME_LLM_DISPLAY_LANGUAGE`), `context --name` is
+  `context --user-name`;
 - `Mneme.erase` erases a person's mood too; `Memory.erase` no longer touches the mood's tables;
 - `Mneme` gains `purge`, `capture`/`acapture` and `reflect` beside `areflect`; `capture.acapture` and
   `capture.areflect` are gone, and `capture.py` only builds prompts and reads replies;
 - a decision tier implements `adecide` (was `decide`); `Chain` is a tier itself, so chains nest;
-- an embedder carries its own similarity `floor`; `Memory.floors` is gone;
+- an embedder's similarity `floor` is measured in the file unless one is given (`floor=None` by default, was
+  0.33); `Memory.floors` is gone;
 - export and import moved from `Store` to `Mneme.export_data`/`import_data`, which go through `Memory` and `Mood`;
 - `Emotion(key, lowers, names)` replaces `Emotion(key, en, zh, lowers)`, and `MoodState.face` is the face's key
   (named by `i18n`); `face_zh` is gone;
 - `Unify` is no longer exported from `mneme_llm` (import it from `mneme_llm.meaning.unify`), so the tier can be
   deleted; `Note.as_dict`, `Answer.as_dict`, `Toolbox.names` and `specs(only=)` are gone;
-- the CLI gains `recalls` and `micro --reset`; `context --name` is `context --user`;
+- the CLI gains `recalls`, `micro --reset`, `relate` and `relations`, and `context` prints what a system prompt
+  would get (the relationship and the mood's news too, without marking the news told);
+- `Mood.apply`, `apply_answers` and `ajudge` take a `weight` (how much the person's words count);
 - `Mood.frame` is `exchange.frame`; `Meaning.prepare_glosses` became `Unify.glosses`, reached through
   `Meaning.find`, which also returns the similarities (`Found` now carries them, and its arguments are named);
   `Meaning.failures` is `Meaning.report()["failures"]`; `TermCentroids.learn` and `reset` moved to
   `meaning.ledger`; `Luna.rest_s` is `Luna.rest` (a `providers.Rest`);
 - one resting policy for every tier: a provider that fails for any reason is skipped for 60 s (Luna used to rest
   only on network errors, 5xx and 429; embeddings and unify on any error);
-- the `remember` tool refuses a text that is not a string (it used to be turned into one).
+- the `remember` tool refuses a text that is not a string (it used to be turned into one);
+- the embedding providers moved to `mneme_llm.meaning.embedders` (still importable from `mneme_llm.meaning` and
+  `mneme_llm`);
+- `text.script` names Han, kana and Hangul apart (`han`, `kana`, `hangul`, where it said `cjk`) and some 25 more
+  scripts (where it said `other`); `text.scripts` gives each script's share, and unify translates a text a fifth or
+  more in other scripts;
+- the mood news ends with a cue of what to feel, so a change's stored `reason` no longer says the feeling
+  ("Leo said '…'" where it was "Leo said '…', felt happy"); `MoodSettings.thresholds` gives a tier its own threshold
+  (`{"luna": 0.45}`), and a change's `judge` names first the tier whose confidence counted;
+- `Mneme` gains `regloss`/`aregloss`; `Memory.write_glosses` is public; `max_notes` is 50,000 (was 5,000), and
+  `Memory(semantic_window=)` bounds where meaning looks;
+- the note writer reads at most 12,000 characters of an exchange (its opening and its end), and its list of notes
+  already known is marked as data.
 
 Fixed before release, after an independent review (each has a test in `tests/test_review.py`):
 

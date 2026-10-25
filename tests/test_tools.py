@@ -119,7 +119,7 @@ class CaptureTests(unittest.TestCase):
 
 class FacadeTests(unittest.TestCase):
     def test_prompt_joins_memory_and_mood_news(self):
-        m = plain(name="大肥鱼")
+        m = plain(companion_name="大肥鱼")
         m.remember("u", "Plays the cello", kind="fact", importance=4)
         m.mood.apply("u", delta=5, emotions={"happy": 30}, reason="被夸了")
         text = m.prompt("u", "cello")
@@ -128,7 +128,7 @@ class FacadeTests(unittest.TestCase):
         self.assertNotIn("被夸了", m.prompt("u", "cello"))
 
     def test_one_judgement_can_use_a_different_chat_model(self):
-        m = plain(name="大肥鱼")
+        m = plain(companion_name="大肥鱼")
         asked = []
 
         async def complete(system, user):

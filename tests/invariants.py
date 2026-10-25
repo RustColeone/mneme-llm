@@ -8,6 +8,7 @@ from collections import Counter, defaultdict
 
 from mneme_llm import text as texts
 from mneme_llm.meaning import unpack
+from mneme_llm.relations import ROLES
 
 
 def check(store) -> list[str]:
@@ -49,6 +50,20 @@ def check(store) -> list[str]:
             if not twins:
                 problems.append(f"note #{row['id']} was hidden as a duplicate of nothing")
 
+    # The term index holds exactly the cached terms of each note, and nothing for a note without them.
+    indexed = defaultdict(set)
+    for row in store.rows("select * from note_terms"):
+        indexed[row["memory_id"]].add(row["term"])
+    by_id = {row["id"]: row for row in rows}
+    for id, terms in indexed.items():
+        row = by_id.get(id)
+        if row is None:
+            problems.append(f"the term index names missing note #{id}")
+        elif row["terms"] is None or set(row["terms"].split()) != terms:
+            problems.append(f"note #{id} is indexed by other terms than its own")
+    problems += [f"note #{row['id']} has terms but no index rows" for row in rows
+                 if row["terms"] and row["id"] not in indexed]
+
     vectors = store.rows("select * from vectors")
     problems += [f"a vector of missing note #{row['memory_id']}" for row in vectors if row["memory_id"] not in ids]
 
@@ -80,6 +95,16 @@ def check(store) -> list[str]:
     for row in store.rows("select * from moods"):
         if not 0 <= row["value"] <= 100:
             problems.append(f"mood of {row['subject']} out of range: {row['value']}")
+
+    # Relationships: closeness within the role's band, and one creator per space at most.
+    bands = {role.key: (role.floor, role.ceiling) for role in ROLES}
+    relationships = store.rows("select * from relationships")
+    for row in relationships:
+        low, high = bands.get(row["role"], (0, 100))
+        if not low <= row["closeness"] <= high or not row["role"].strip():
+            problems.append(f"{row['subject']}: closeness {row['closeness']} off the band of {row['role']!r}")
+    creators = Counter(row["space"] for row in relationships if row["role"] == "creator")
+    problems += [f"{count} creators in space {space}" for space, count in creators.items() if count > 1]
 
     result = store.row("pragma integrity_check")[0]
     if result != "ok":

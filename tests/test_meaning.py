@@ -44,7 +44,7 @@ class Flaky:
 
 
 def mneme(**options):
-    return Mneme(":memory:", "t", luna=False, micro=False, language=None, **options)
+    return Mneme(":memory:", "t", luna=False, micro=False, memory_language=None, **options)
 
 
 class VectorTests(unittest.TestCase):

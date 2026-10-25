@@ -42,7 +42,7 @@ def embed(texts):  # deterministic: one direction per word, so similar notes are
 
 
 def open_memory(path=":memory:", **options):
-    options = {"luna": False, "micro": False, "language": None, "embed": Embeddings(embed, name="toy:8"),
+    options = {"luna": False, "micro": False, "memory_language": None, "embed": Embeddings(embed, name="toy:8"),
                **options}
     return Mneme(path, "t", **options)
 
@@ -82,9 +82,18 @@ def act(m: Mneme, rng: random.Random) -> None:
             asyncio.run(m.arecall(subject, sentence(rng)))
         elif roll < 0.85:
             m.memory.set_profile(subject, rng.choice([None, sentence(rng)]))
-        elif roll < 0.92:
+        elif roll < 0.90:
             m.mood.apply(subject, delta=rng.uniform(-12, 12), emotions={rng.choice(["happy", "sad", "worried"]):
                                                                          rng.uniform(0, 60)})
+        elif roll < 0.92:  # roles given, visits, roles taken away; a second creator or a closeness off the band fails
+            step = rng.random()
+            if step < 0.5:
+                m.relate(subject, rng.choice(["creator", "family", "friend", "acquaintance", "boss"]),
+                         closeness=rng.choice([None, None, rng.uniform(-10, 110), math.nan]))
+            elif step < 0.9:
+                m.relations.seen(subject)
+            else:
+                rng.choice([m.relations.remove, m.erase])(subject)
         elif roll < 0.95:
             m.memory.context(subject, sentence(rng))
         elif roll < 0.96:  # notes as an earlier build left them, before the folded text was kept
@@ -196,7 +205,7 @@ class ConcurrencyTests(unittest.TestCase):
             for index in range(30):
                 m.remember(SUBJECTS[index % 4], f"note {index} about tea and 猫", kind="fact")
             jobs = [m.arecall(SUBJECTS[index % 4], "tea 猫") for index in range(40)]
-            jobs += [m.aobserve(SUBJECTS[index % 4], [{"role": "user", "content": "I like matcha"}], user="Leo",
+            jobs += [m.aobserve(SUBJECTS[index % 4], [{"role": "user", "content": "I like matcha"}], user_name="Leo",
                                 mood=False, gate=0) for index in range(20)]
             jobs += [asyncio.to_thread(m.memory.erase, "v") for _ in range(3)]
             results = await asyncio.gather(*jobs, return_exceptions=True)
@@ -221,6 +230,38 @@ class ScaleTests(unittest.TestCase):
             m.memory.context("u", query)
         self.assertLess(time.perf_counter() - started, 4.0 * SCALE)
         self.assertEqual(check(m.store), [])
+
+    def test_a_long_history_is_recalled_quickly(self):
+        """A person with a very long history: recall reads the term index, not every note, and meaning looks
+        among a bounded window; the oldest note is still found by its words."""
+        m = open_memory(os.path.join(tempfile.mkdtemp(), "long.db"))
+        m.memory.max_notes = 10 ** 6
+        count, rng, now = 20_000 * SCALE, random.Random(5), time.time()
+        words = "tea cat exam friday hangzhou cello hiking coffee sister work deadline paper train rain".split()
+        with m.store.transaction():  # an old file's notes, written straight into the table to be quick
+            for index in range(count):
+                text = " ".join(rng.choice(words) for _ in range(5)) + f" day {index}"
+                m.store.execute("insert into memories (space, subject, kind, text, importance, feeling, happened_at, "
+                                "created_at, folded) values ('t', 'u', ?, ?, ?, 0, ?, ?, ?)",
+                                (rng.choice(["episode", "plan", "fact"]), text, 1 + index % 4, now - index * 600,
+                                 now - index * 600, text.casefold()))
+            m.store.execute("update memories set text = 'Adopted a cat named Mochi long ago', folded = 'adopted a cat "
+                            "named mochi long ago' where id = 1")
+        m.recall("u", "tea")  # indexes the old notes, once
+        m.remember("u", "Started learning the cello", kind="episode")  # indexed as it is written
+        started = time.perf_counter()
+        found = m.recall("u", "Mochi", important=0, recent=0)
+        rare = time.perf_counter() - started
+        self.assertEqual([r.note.id for r in found.chosen], [1])  # the oldest note, by a rare word
+        started = time.perf_counter()
+        asyncio.run(m.arecall("u", "cello hiking"))
+        asyncio.run(m.arecall("u", "cello hiking"))
+        meaning = (time.perf_counter() - started) / 2
+        self.assertLess(rare, 1.0)
+        self.assertLess(meaning, 4.0 * SCALE)
+        self.assertLessEqual(len(m.meaning.vectors(list(range(1, count + 2)))), m.memory.semantic_window + 1)
+        self.assertEqual(check(m.store), [])
+        m.close()
 
     def test_many_subjects(self):
         m = open_memory(embed=False)
@@ -250,7 +291,7 @@ class CrashTests(unittest.TestCase):
         m.remember("u", "Kept before the crash", kind="fact")
         m.close()
         code = ("import sys, time\nfrom mneme_llm import Mneme\n"
-                "m = Mneme(sys.argv[1], 't', luna=False, micro=False, embed=False, language=None)\n"
+                "m = Mneme(sys.argv[1], 't', luna=False, micro=False, embed=False, memory_language=None)\n"
                 "with m.store.transaction():\n"
                 "    for index in range(2000):\n"
                 "        m.memory.keep('u', f'half written {index}')\n"

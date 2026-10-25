@@ -89,14 +89,14 @@ def _gemini(schema: dict) -> dict:
 
 class Toolbox:
     """Runs the tools against one Mneme; `subject` is who the conversation is with. Replies follow the memory's
-    language (`lang`), and recalled notes come marked as data, not instructions."""
+    display language, and recalled notes come marked as data, not instructions."""
 
     def __init__(self, mneme, subject: str | None = None, *, prefix: str = "", source: str = "auto"):
         self.mneme, self.subject, self.prefix, self.source = mneme, subject, prefix, source
 
     @property
-    def lang(self) -> str:
-        return self.mneme.memory.lang
+    def display_language(self) -> str:
+        return self.mneme.memory.display_language
 
     def call(self, name: str, arguments: dict | str | None = None, *, subject: str | None = None) -> str:
         """The tool's reply as text for the model (recall by words only); mistakes come back as text too, never
@@ -111,7 +111,7 @@ class Toolbox:
                                                                  recent=0))
             return getattr(self, f"_{tool}")(who, arguments)
         except Exception as error:  # a model's mistake becomes a sentence it can read and correct
-            return say(self.lang, "error.value", detail=error)
+            return say(self.display_language, "error.value", detail=error)
 
     async def acall(self, name: str, arguments: dict | str | None = None, *, subject: str | None = None) -> str:
         """`call`, with recall using the meaning tiers."""
@@ -125,28 +125,28 @@ class Toolbox:
                                                                         important=0, recent=0))
             return getattr(self, f"_{tool}")(who, arguments)
         except Exception as error:  # a model's mistake becomes a sentence it can read and correct
-            return say(self.lang, "error.value", detail=error)
+            return say(self.display_language, "error.value", detail=error)
 
     def _prepare(self, name: str, arguments, subject):
         if isinstance(arguments, str):
             try:
                 arguments = json.loads(arguments or "{}")
             except (json.JSONDecodeError, RecursionError):  # not JSON, or nested too deep
-                return say(self.lang, "error.json")
+                return say(self.display_language, "error.json")
         if arguments is None:
             arguments = {}
         if not isinstance(arguments, dict):
-            return say(self.lang, "error.arguments")
+            return say(self.display_language, "error.arguments")
         arguments = dict(arguments)
         named = arguments.pop("subject", None)
         # The host's binding always wins: a model can name a subject only when nobody bound one (the MCP server
         # deliberately run for many people).
         who = subject or self.subject or (named if isinstance(named, str) else None)
         if not who:
-            return say(self.lang, "error.subject")
+            return say(self.display_language, "error.subject")
         tool = name[len(self.prefix):] if name.startswith(self.prefix) else name
         if tool not in {spec["name"] for spec in SPECS}:
-            return say(self.lang, "error.tool", name=name)
+            return say(self.display_language, "error.tool", name=name)
         return tool, str(who), arguments
 
     def _remember(self, subject: str, arguments: dict[str, Any]) -> str:
@@ -159,18 +159,19 @@ class Toolbox:
             subject, arguments.get("text", ""), kind=arguments.get("kind") or None, key=arguments.get("key") or None,
             importance=arguments.get("importance", 2), happened_at=happened, source=self.source)
         if note is None:
-            return say(self.lang, "tool.quota")
-        return say(self.lang, {"known": "tool.known", "replaced": "tool.replaced"}.get(outcome, "tool.kept"),
-                   id=note.id)
+            return say(self.display_language, "tool.quota")
+        key = {"known": "tool.known", "replaced": "tool.replaced"}.get(outcome, "tool.kept")
+        return say(self.display_language, key, id=note.id)
 
     def _recalled(self, found) -> str:
         if not found.chosen:
-            return say(self.lang, "tool.nothing")
+            return say(self.display_language, "tool.nothing")
         memory = self.mneme.memory
-        now, lines = memory.clock(), [say(self.lang, "tool.recalled")]
+        now, lines = memory.clock(), [say(self.display_language, "tool.recalled")]
         for item in found.chosen:
             note = item.note
-            date = "" if note.kind in LASTING else f" [{when(note.happened_at, now, memory.zone, memory.lang)}]"
+            date = ("" if note.kind in LASTING
+                    else f" [{when(note.happened_at, now, memory.zone, memory.display_language)}]")
             lines.append(f"#{note.id}{date} {note.text}")
         return "\n".join(lines)
 
@@ -180,10 +181,12 @@ class Toolbox:
         elif arguments.get("key"):
             count = self.mneme.memory.forget(subject, key=str(arguments["key"]))
         else:
-            return say(self.lang, "error.forget")
+            return say(self.display_language, "error.forget")
         if count == 1:
-            return say(self.lang, "tool.forgot_one")
-        return say(self.lang, "tool.no_such") if not count else say(self.lang, "tool.forgot_many", count=count)
+            return say(self.display_language, "tool.forgot_one")
+        if not count:
+            return say(self.display_language, "tool.no_such")
+        return say(self.display_language, "tool.forgot_many", count=count)
 
     def _mood(self, subject: str, arguments: dict[str, Any]) -> str:
         return self.mneme.mood.describe(subject)

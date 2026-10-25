@@ -38,8 +38,8 @@ m.remember("u", "Has a cat named Mochi", kind="fact")
 m.remember("u", "我的猫叫年糕", kind="fact")
 assert m.recall("u", "cat").chosen
 asyncio.run(m.arecall("u", "猫"))
-assert "Mochi" in asyncio.run(m.aprompt("u", "cat", user="Leo"))
-seen = m.observe("u", [("Leo", "I love oolong tea"), ("bot", "nice")], user="Leo")
+assert "Mochi" in asyncio.run(m.aprompt("u", "cat", user_name="Leo"))
+seen = m.observe("u", [("Leo", "I love oolong tea"), ("bot", "nice")], user_name="Leo")
 assert not seen.error and seen.notes, seen
 assert m.reflect("u") == "Likes tea."
 box = Toolbox(m, "u")
@@ -49,7 +49,7 @@ out = io.StringIO()
 serve(m, "u", io.StringIO(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}) + "\n"), out)
 assert "remember" in out.getvalue()
 data = m.export_data()
-other = Mneme(os.path.join(sys.argv[1], "n.db"), "t", embed=False, luna=False, language=None)
+other = Mneme(os.path.join(sys.argv[1], "n.db"), "t", embed=False, luna=False, memory_language=None)
 assert other.import_data(data) >= 3
 m.report()
 assert m.erase("u") >= 3 and not m.memory.notes("u")
