@@ -9,7 +9,7 @@ that she was worried about them last night. Nothing in the file depends on which
 - **Pure Python, no dependencies.** Python 3.10+, stdlib only. `jieba` is used if you have it.
 - **Any LLM.** Tool definitions for OpenAI-style APIs (DeepSeek, Qwen, vLLM, Ollama…), the OpenAI responses
   API, Claude and Gemini, an MCP server, or just a text block for the system prompt.
-- **Portable.** Export a space to JSON, import it anywhere; the [file format](docs/FORMAT.md) is documented
+- **Portable.** Export a space to JSON, import it anywhere; the [file format](https://github.com/RustColeone/mneme-llm/blob/main/docs/FORMAT.md) is documented
   so programs in other languages can read and write it too.
 
 ```
@@ -31,7 +31,7 @@ that she was worried about them last night. Nothing in the file depends on which
 ```python
 from mneme_llm import Mneme
 
-m = Mneme("companion.db", space="whale_chan", lang="zh", name="鲸酱")
+m = Mneme("companion.db", space="whale_chan", lang="zh", name="大肥鱼")
 
 # keep notes (usually your model does this through the tools, below)
 m.remember("discord:42", "养了一只叫年糕的猫", kind="fact", key="pet.name", importance=4)
@@ -41,7 +41,7 @@ m.remember("discord:42", "数学考试没考好，觉得自己很笨", kind="epi
 system = PERSONA + "\n\n" + m.prompt("discord:42", query=user_message, name="小明")
 
 # after each exchange: judge her mood (and teach the micro model)
-m.after("discord:42", [("小明", user_message), ("鲸酱", reply)], user="小明")
+m.after("discord:42", [("小明", user_message), ("大肥鱼", reply)], user="小明")
 ```
 
 `m.prompt(...)` gives something like:

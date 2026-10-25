@@ -117,7 +117,7 @@ class CaptureTests(unittest.TestCase):
 
 class FacadeTests(unittest.TestCase):
     def test_prompt_joins_memory_and_mood_news(self):
-        m = plain(name="鲸酱")
+        m = plain(name="大肥鱼")
         m.remember("u", "Plays the cello", kind="fact", importance=4)
         m.mood.apply("u", delta=5, emotions={"happy": 30}, reason="被夸了")
         text = m.prompt("u", "cello")
@@ -126,7 +126,7 @@ class FacadeTests(unittest.TestCase):
         self.assertNotIn("被夸了", m.prompt("u", "cello"))
 
     def test_one_judgement_can_use_a_different_chat_model(self):
-        m = plain(name="鲸酱")
+        m = plain(name="大肥鱼")
         asked = []
 
         async def complete(system, user):
@@ -134,7 +134,7 @@ class FacadeTests(unittest.TestCase):
             return ('{"mood_change": {"level": "2", "confidence": 0.9, "reason": "被夸了"}, '
                     '"feeling": {"choice": "happy", "confidence": 0.9}}')
 
-        event = asyncio.run(m.aafter("u", "user: 你真棒\n鲸酱: 嘿嘿", complete=complete))
+        event = asyncio.run(m.aafter("u", "user: 你真棒\n大肥鱼: 嘿嘿", complete=complete))
         self.assertEqual((event.judge, event.reason), ("prompt", "被夸了"))
         self.assertEqual(m.decider.report()["prompt"]["answered"], 2)
         self.assertEqual(len(asked), 1)
