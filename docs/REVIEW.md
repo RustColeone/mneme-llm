@@ -155,11 +155,12 @@ same renames.
 
 ### Not yet verified
 
-**19. Other platforms and Python versions.** Everything above ran on Linux (Raspberry Pi 5) with Python 3.13 and
-SQLite 3.46. Every file parses with the Python 3.10 grammar and nothing uses newer library APIs, but 3.10–3.12 and
-Windows and macOS are only covered by CI, which runs on the next push. The fixes most worth seeing pass there: the
-file-opening race and WAL switch (`test_processes_opening_a_new_file_at_once_all_succeed`), the killed writer
-(`test_a_writer_killed_mid_transaction_leaves_a_sound_file`), and dates before 1970 on Windows.
+**19. Platforms beyond CI's.** The whole suite, the suite with the tiers deleted and the stress tests at five times
+their size pass on CI: Python 3.10–3.13 on Linux, and 3.13 on Windows and macOS (run 40230450917, 2026-10-25),
+including the file-opening race, the writer killed mid-transaction and dates before 1970 on Windows. The first CI
+run on Windows failed only because a test used `ZoneInfo("Asia/Shanghai")`, which needs the `tzdata` package there;
+the tests now use a fixed UTC+8 zone. Not covered: Python 3.10–3.12 on Windows and macOS, and SQLite builds other
+than those the runners ship. A host passing `ZoneInfo(...)` as `zone=` on Windows needs `pip install tzdata`.
 
 **20. The long fuzz ran here only.** CI runs the stress tests at five times their size, but not the long fuzz;
 `python3 -m tests.fuzz [seeds] [operations] [first seed]` repeats it anywhere (60 × 400 by default, a few minutes).
