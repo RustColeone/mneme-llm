@@ -4,9 +4,14 @@ import unittest
 from mneme_llm import Embeddings, Mneme
 from mneme_llm.decide import Unavailable
 from mneme_llm.meaning import Meaning, cosine, normalize, pack, unpack
-from mneme_llm.meaning.micro import TermCentroids
-from mneme_llm.meaning.unify import Unify
-from mneme_llm.store import Store
+try:  # the tiers are removable; their tests are skipped where they were removed
+    from mneme_llm.meaning.micro import TermCentroids
+except ImportError:
+    TermCentroids = None
+try:
+    from mneme_llm.meaning.unify import Unify
+except ImportError:
+    Unify = None
 
 # A toy embedding space: each concept is one direction, in either language.
 CONCEPTS = {"cat": 0, "猫": 0, "年糕": 0, "kitten": 0, "exam": 1, "考试": 1, "math": 1, "数学": 1,
@@ -89,6 +94,7 @@ class EmbeddingTierTests(unittest.TestCase):
         self.assertIn("embeddings", m.meaning.report()["failures"])
 
 
+@unittest.skipIf(TermCentroids is None, "the meaning micro tier is not installed")
 class MicroTierTests(unittest.TestCase):
     def test_centroids_answer_offline_after_learning_and_abstain_before(self):
         flaky = Flaky()
@@ -102,7 +108,7 @@ class MicroTierTests(unittest.TestCase):
         flaky.up = True
         asyncio.run(m.arecall("u", "tea"))  # embeds every note: the centroids learn
         flaky.up = False
-        m.meaning._resting_until = 0
+        m.meaning.rest.until = 0
         found = asyncio.run(m.arecall("u", "猫", important=0, recent=0))
         self.assertEqual(found.tier, "micro")
         self.assertIn("Has a cat named Mochi", [r.note.text for r in found.chosen])
@@ -113,6 +119,7 @@ class MicroTierTests(unittest.TestCase):
         self.assertIsNone(m.meaning.micro)
 
 
+@unittest.skipIf(Unify is None, "the unify tier is not installed")
 class UnifyTierTests(unittest.TestCase):
     def complete(self, calls):
         async def complete(system, user):
@@ -141,7 +148,12 @@ class UnifyTierTests(unittest.TestCase):
         m.remember("u", "Has a cat", kind="fact")
         found = asyncio.run(m.arecall("u", "我的猫"))
         self.assertEqual(found.tier, "")
-        self.assertIn("unify", m.meaning.report()["failures"])
+        self.assertNotIn("unify", m.meaning.report()["failures"])  # not asked: no model is no failure
+
+        async def complete(system, user):  # and a call that brings one is not turned away
+            return "my cat" if system.startswith("Translate") else '["Has a cat"]'
+        found = asyncio.run(m.arecall("u", "我的猫", complete=complete))
+        self.assertEqual((found.tier, [r.note.text for r in found.chosen]), ("unify", ["Has a cat"]))
 
     def test_the_language_decides_which_script_is_foreign(self):
         self.assertTrue(Unify(None, "English").needs_translation("我的猫"))

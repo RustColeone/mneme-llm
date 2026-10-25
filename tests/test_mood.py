@@ -22,7 +22,7 @@ class Judge:
     def __init__(self, change=None, feeling=None, reason=""):
         self.change, self.feeling, self.reason, self.asked = change, feeling, reason, []
 
-    async def decide(self, input, questions):
+    async def adecide(self, input, questions):
         self.asked.append((input, {q.name: q for q in questions}))
         found = {}
         if self.change is not None:

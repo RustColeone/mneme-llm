@@ -1,7 +1,8 @@
 """The database: one SQLite file holding everything mneme-llm keeps, versioned so later releases can migrate it.
 
 Every row belongs to a `space` (whose memory it is: an app or a character, "whale_chan") and most to a `subject`
-(who it is about: "discord:1234"). Nothing here knows about models; the file can move between projects.
+(who it is about: "discord:1234"). This module is the file alone: its tables, migrations, locking and
+transactions. The rules of what goes in them belong to the modules that own each table (memory, mood, meaning).
 """
 
 from __future__ import annotations
@@ -33,7 +34,8 @@ create table if not exists memories (
     deleted_at real,
     source text,
     gloss text,
-    terms text
+    terms text,
+    folded text
 );
 create index if not exists memories_live on memories(space, subject, deleted_at, superseded_by);
 create index if not exists memories_key on memories(space, subject, key);
@@ -62,7 +64,7 @@ create table if not exists micro_models (
     examples integer not null, updated_at real not null
 );
 create table if not exists vectors (
-    memory_id integer not null, embedder text not null, vector blob not null,
+    memory_id integer not null, embedder text not null, vector blob not null, taught text,
     primary key (memory_id, embedder)
 );
 create table if not exists meaning_terms (
@@ -71,11 +73,11 @@ create table if not exists meaning_terms (
 );
 """
 # Columns added after a table first shipped, so files made by earlier builds gain them on open.
-ADDED_COLUMNS = {"memories": {"gloss": "text", "terms": "text"}}
+ADDED_COLUMNS = {"memories": {"gloss": "text", "terms": "text", "folded": "text"}, "vectors": {"taught": "text"}}
+# Indexes on added columns, made once the columns exist.
+ADDED_INDEXES = ("create index if not exists memories_folded on memories(space, subject, folded)",
+                 "create index if not exists vectors_untaught on vectors(embedder) where taught is null")
 
-
-MEMORY_COLUMNS = ("subject", "key", "kind", "text", "importance", "feeling", "happened_at", "created_at",
-                  "recalled_at", "recalls", "deleted_at", "source", "gloss")
 
 
 class Store:
@@ -85,23 +87,66 @@ class Store:
         self.path = Path(path)
         if str(path) != ":memory:":
             self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._db = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
+        # `timeout`: another process holding the write lock is waited for (begin immediate honours it).
+        self._db = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None, timeout=10.0)
         self._db.row_factory = sqlite3.Row
         self._lock = threading.RLock()
+        self._depth = 0  # open transactions on this connection (nested ones are savepoints)
         with self._lock:
-            if str(path) != ":memory:":
-                self._db.execute("pragma journal_mode=wal")
-            self._db.executescript(SCHEMA)
+            try:
+                self._migrate()
+                if str(path) != ":memory:":
+                    self._wal()
+            except BaseException:
+                self._db.close()
+                raise
+
+    def _migrate(self) -> None:
+        """Make the file current: refuse a newer one before changing anything, create what is missing and add the
+        columns of later builds. Under the write lock, so two processes opening one file at once take turns."""
+        self._db.execute("begin immediate")
+        try:
+            found = self._version()
+            if found is not None and found > SCHEMA_VERSION:
+                raise RuntimeError(f"{self.path} was written by a newer mneme-llm (schema {found}); upgrade "
+                                   "mneme-llm to read it")
+            for statement in SCHEMA.split(";"):
+                if statement.strip():
+                    self._db.execute(statement)
             for table, columns in ADDED_COLUMNS.items():
                 have = {row["name"] for row in self._db.execute(f"pragma table_info({table})")}
                 for name, kind in columns.items():
                     if name not in have:
                         self._db.execute(f"alter table {table} add column {name} {kind}")
-            found = self.meta("schema_version")
+            for statement in ADDED_INDEXES:
+                self._db.execute(statement)
             if found is None:
                 self.set_meta("schema_version", str(SCHEMA_VERSION))
-            elif int(found) > SCHEMA_VERSION:
-                raise RuntimeError(f"{path} was written by a newer mneme-llm (schema {found}); upgrade mneme-llm to read it")
+            self._db.execute("commit")
+        except BaseException:
+            if self._db.in_transaction:  # (SQLite may have rolled it back itself, on a full disk say)
+                self._db.execute("rollback")
+            raise
+
+    def _wal(self, timeout: float = 10.0) -> None:
+        """WAL journaling, so readers don't block the writer. Switching needs the file to itself for a moment;
+        another process opening it at the same time is waited for."""
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                self._db.execute("pragma journal_mode=wal")
+                return
+            except sqlite3.OperationalError as error:
+                if "locked" not in str(error) and "busy" not in str(error) or time.monotonic() > deadline:
+                    raise
+                time.sleep(0.05)
+
+    def _version(self) -> int | None:
+        """The file's schema version, read without changing anything (None for a new or empty file)."""
+        if self._db.execute("select 1 from sqlite_master where type = 'table' and name = 'meta'").fetchone() is None:
+            return None
+        row = self._db.execute("select value from meta where key = 'schema_version'").fetchone()
+        return int(row["value"]) if row is not None else None
 
     def close(self) -> None:
         self._db.close()
@@ -126,7 +171,9 @@ class Store:
             return self._db.execute(sql, tuple(parameters)).fetchone()
 
     def transaction(self):
-        """`with store.transaction():` several writes that land together or not at all."""
+        """`with store.transaction():` several writes that land together or not at all. It takes the write lock up
+        front (`begin immediate`), so another process writing the same file is waited for rather than failing
+        midway; a transaction inside another is a savepoint of it."""
         return _Transaction(self)
 
     def meta(self, key: str) -> str | None:
@@ -137,61 +184,51 @@ class Store:
         self.execute("insert into meta (key, value) values (?, ?) on conflict(key) do update set value = "
                      "excluded.value", (key, value))
 
-    # ---- moving a space between files and projects ----------------------------------------------
-    def export_data(self, space: str) -> dict:
-        """Everything of one space as plain JSON (memories, profiles, moods and their timelines). Vectors and
-        cached search terms are left out: they belong to an embedder and a tokenizer, and are rebuilt on use."""
-        def table(name: str) -> list[dict]:
-            return [dict(row) for row in self.rows(f"select * from {name} where space = ? order by rowid", (space,))]
-        memories = [{key: value for key, value in row.items() if key != "terms"} for row in table("memories")]
-        return {"mneme_llm": SCHEMA_VERSION, "space": space, "exported_at": time.time(), "memories": memories,
-                "profiles": table("profiles"), "moods": table("moods"), "mood_events": table("mood_events")}
-
-    def import_data(self, data: dict, space: str | None = None) -> int:
-        """Add an export (into `space`, or the one it came from); memory ids are renumbered. Returns memories added."""
-        target = space or data["space"]
-        renumbered, links = {}, []
-        with self.transaction():
-            for original in data.get("memories", []):
-                row = {name: original.get(name) for name in MEMORY_COLUMNS if name in original}
-                row.update(space=target, superseded_by=None)
-                cursor = self.execute(f"insert into memories ({', '.join(row)}) values ({', '.join('?' * len(row))})",
-                                      row.values())
-                renumbered[original["id"]] = cursor.lastrowid
-                if original.get("superseded_by") is not None:
-                    links.append((cursor.lastrowid, original["superseded_by"]))
-            for new, old_successor in links:  # links between memories follow the new numbers
-                self.execute("update memories set superseded_by = ? where id = ?",
-                             (renumbered.get(old_successor, -1), new))
-            for row in data.get("profiles", []):
-                self.execute("insert or replace into profiles (space, subject, text, updated_at) values (?, ?, ?, ?)",
-                             (target, row["subject"], row["text"], row["updated_at"]))
-            for row in data.get("moods", []):
-                self.execute("insert or replace into moods (space, subject, value, emotions, updated_at, last_event, "
-                             "told_event) values (?, ?, ?, ?, ?, null, null)",
-                             (target, row["subject"], row["value"], row["emotions"], row["updated_at"]))
-            for row in data.get("mood_events", []):
-                self.execute("insert into mood_events (space, subject, at, delta, value, emotions, reason, confidence, "
-                             "source, judge) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                             (target, row["subject"], row["at"], row["delta"], row["value"], row["emotions"],
-                              row["reason"], row["confidence"], row["source"], row["judge"]))
-        return len(renumbered)
-
 
 class _Transaction:
     def __init__(self, store: Store):
         self.store = store
+        self.savepoint = ""
 
     def __enter__(self):
-        self.store._lock.acquire()
-        self.store._db.execute("begin")
-        return self.store
+        store = self.store
+        store._lock.acquire()
+        try:
+            if store._depth == 0:
+                store._db.execute("begin immediate")
+            else:
+                self.savepoint = f"inner{store._depth}"
+                store._db.execute(f"savepoint {self.savepoint}")
+        except BaseException:
+            store._lock.release()  # never leave the lock held when the transaction could not start
+            raise
+        store._depth += 1
+        return store
 
     def __exit__(self, kind, value, traceback):
+        store = self.store
         try:
-            self.store._db.execute("commit" if kind is None else "rollback")
+            store._depth -= 1
+            # SQLite rolls a transaction back by itself on some errors (a full disk): then there is nothing left
+            # to roll back, and trying would hide the error that is on its way out.
+            if self.savepoint:
+                if store._db.in_transaction:
+                    if kind is not None:
+                        store._db.execute(f"rollback to {self.savepoint}")
+                    store._db.execute(f"release {self.savepoint}")
+            elif kind is None:
+                try:
+                    store._db.execute("commit")
+                except BaseException:
+                    try:  # a failed commit must not leave the transaction open for every later write
+                        store._db.execute("rollback")
+                    except sqlite3.Error:
+                        pass
+                    raise
+            elif store._db.in_transaction:
+                store._db.execute("rollback")
         finally:
-            self.store._lock.release()
+            store._lock.release()
         return False
 
 

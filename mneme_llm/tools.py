@@ -13,10 +13,9 @@ except through the MCP server when it is deliberately run for many people at onc
 from __future__ import annotations
 
 import json
-from datetime import datetime
 from typing import Any
 
-from .dates import when
+from .dates import noon, when
 from .i18n import say
 from .memory import KINDS, LASTING
 
@@ -55,13 +54,10 @@ SPECS = [
 SUBJECT = {"type": "string", "description": "Whose memory: the person's id, like 'discord:42'."}
 
 
-def specs(style: str = "openai", *, prefix: str = "", with_subject: bool = False,
-          only: tuple[str, ...] | None = None) -> list[dict]:
+def specs(style: str = "openai", *, prefix: str = "", with_subject: bool = False) -> list[dict]:
     """The tool definitions in `style`: openai, responses, anthropic, gemini or mcp."""
     found = []
     for spec in SPECS:
-        if only is not None and spec["name"] not in only:
-            continue
         parameters = json.loads(json.dumps(spec["parameters"]))
         if with_subject:
             parameters["properties"]["subject"] = SUBJECT
@@ -102,9 +98,6 @@ class Toolbox:
     def lang(self) -> str:
         return self.mneme.memory.lang
 
-    def names(self) -> set[str]:
-        return {self.prefix + spec["name"] for spec in SPECS}
-
     def call(self, name: str, arguments: dict | str | None = None, *, subject: str | None = None) -> str:
         """The tool's reply as text for the model (recall by words only); mistakes come back as text too, never
         as exceptions."""
@@ -117,7 +110,7 @@ class Toolbox:
                 return self._recalled(self.mneme.memory.recall(who, str(arguments.get("query", "")), important=0,
                                                                  recent=0))
             return getattr(self, f"_{tool}")(who, arguments)
-        except (TypeError, ValueError) as error:
+        except Exception as error:  # a model's mistake becomes a sentence it can read and correct
             return say(self.lang, "error.value", detail=error)
 
     async def acall(self, name: str, arguments: dict | str | None = None, *, subject: str | None = None) -> str:
@@ -131,17 +124,24 @@ class Toolbox:
                 return self._recalled(await self.mneme.memory.arecall(who, str(arguments.get("query", "")),
                                                                         important=0, recent=0))
             return getattr(self, f"_{tool}")(who, arguments)
-        except (TypeError, ValueError) as error:
+        except Exception as error:  # a model's mistake becomes a sentence it can read and correct
             return say(self.lang, "error.value", detail=error)
 
     def _prepare(self, name: str, arguments, subject):
         if isinstance(arguments, str):
             try:
                 arguments = json.loads(arguments or "{}")
-            except json.JSONDecodeError:
+            except (json.JSONDecodeError, RecursionError):  # not JSON, or nested too deep
                 return say(self.lang, "error.json")
-        arguments = dict(arguments or {})
-        who = subject or arguments.pop("subject", None) or self.subject
+        if arguments is None:
+            arguments = {}
+        if not isinstance(arguments, dict):
+            return say(self.lang, "error.arguments")
+        arguments = dict(arguments)
+        named = arguments.pop("subject", None)
+        # The host's binding always wins: a model can name a subject only when nobody bound one (the MCP server
+        # deliberately run for many people).
+        who = subject or self.subject or (named if isinstance(named, str) else None)
         if not who:
             return say(self.lang, "error.subject")
         tool = name[len(self.prefix):] if name.startswith(self.prefix) else name
@@ -152,11 +152,12 @@ class Toolbox:
     def _remember(self, subject: str, arguments: dict[str, Any]) -> str:
         happened = None
         if arguments.get("date"):
-            happened = datetime.strptime(str(arguments["date"])[:10], "%Y-%m-%d").replace(hour=12).timestamp()
-        outcome, note = self.mneme.memory.keep(
-            subject, str(arguments.get("text", "")), kind=str(arguments.get("kind", "episode")),
-            key=arguments.get("key") or None, importance=int(arguments.get("importance", 2)), happened_at=happened,
-            source=self.source)
+            happened = noon(str(arguments["date"]), self.mneme.memory.zone)
+            if happened is None:
+                raise ValueError("date is a day from 1970 to 2999, written YYYY-MM-DD")
+        outcome, note = self.mneme.memory.keep(  # every value is checked there, by the rules of writing
+            subject, arguments.get("text", ""), kind=arguments.get("kind") or None, key=arguments.get("key") or None,
+            importance=arguments.get("importance", 2), happened_at=happened, source=self.source)
         if note is None:
             return say(self.lang, "tool.quota")
         return say(self.lang, {"known": "tool.known", "replaced": "tool.replaced"}.get(outcome, "tool.kept"),

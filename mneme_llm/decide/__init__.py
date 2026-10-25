@@ -1,21 +1,23 @@
 """Small judgements (yes/no, pick one, rate on a scale) answered by the best tier that can, falling through.
 
     chain = Chain(Luna(), Micro(store), Prompt(complete))
-    answers = chain.decide(text, [Predicate("remember", "The user shared something worth remembering.")])
-    answers["remember"].probability
+    answers = await chain.adecide(text, [Predicate("remember", "The user shared something worth remembering.")])
+    answers["remember"].probability            # or chain.decide(…) without an event loop
 
 Tiers are tried in order. A tier may answer some questions and abstain on the rest (the micro model abstains
 until it has learned a question well), or fail outright (no key, network down); whatever is left goes to the
 next tier. A tier with a `learn` method learns from every answer a tier above it gave, which is how the micro
-model is trained: by watching Luna. Leave any tier out and the rest still work.
+model is trained: by watching Luna. Leave any tier out and the rest still work. A tier is anything with a `name`
+and an async `adecide(input, questions)`; a Chain is one too, so chains nest.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import Iterable, Mapping, Protocol, Sequence, Union
+
+from ..providers import Unavailable, run
 
 log = logging.getLogger("mneme_llm.decide")
 
@@ -108,10 +110,6 @@ class Answer:
             total += p * (values[label] if values is not None else float(label))
         return total
 
-    def as_dict(self) -> dict:
-        return {"name": self.name, "type": self.type, "choice": self.choice, "probabilities": self.probabilities,
-                "confidence": self.confidence, "by": self.by, "reason": self.reason}
-
 
 def normalized(probabilities: Mapping[str, float], labels: Sequence[str]) -> dict[str, float]:
     """Probabilities for exactly `labels`, summing to 1 (uniform if nothing usable was given)."""
@@ -122,14 +120,10 @@ def normalized(probabilities: Mapping[str, float], labels: Sequence[str]) -> dic
     return {label: value / total for label, value in clean.items()}
 
 
-class Unavailable(RuntimeError):
-    """A tier cannot answer at all right now (no key, no network, not configured)."""
-
-
 class Decider(Protocol):
     name: str
 
-    async def decide(self, input: str, questions: Sequence[Question]) -> dict[str, Answer]:
+    async def adecide(self, input: str, questions: Sequence[Question]) -> dict[str, Answer]:
         """Answers for the questions this tier is willing to answer; raising means "none of them"."""
 
 
@@ -146,8 +140,10 @@ class Chain:
     """Deciders in order of preference; each question goes to the first that answers it."""
     tiers: list = field(default_factory=list)
     stats: dict[str, TierStats] = field(default_factory=dict)
+    name: str = "chain"
 
-    def __init__(self, *tiers):
+    def __init__(self, *tiers, name: str = "chain"):
+        self.name = name
         self.tiers = [tier for tier in tiers if tier is not None]
         self.stats = {tier.name: TierStats() for tier in self.tiers}
 
@@ -161,7 +157,7 @@ class Chain:
                 break
             stats = self.stats.setdefault(tier.name, TierStats())
             try:
-                got = await tier.decide(input, pending)
+                got = await tier.adecide(input, pending)
             except Exception as error:  # one tier failing is exactly what the next one is for
                 stats.failed += 1
                 stats.last_error = f"{type(error).__name__}: {error}"[:300]
@@ -192,6 +188,13 @@ class Chain:
         """`adecide` for code without an event loop."""
         return run(self.adecide(input, questions))
 
+    def learn(self, input: str, question: Question, answer: Answer) -> None:
+        """As a tier of another chain: an answer from above teaches every tier of this one that learns."""
+        for tier in self.tiers:
+            learn = getattr(tier, "learn", None)
+            if learn is not None:
+                learn(input, question, answer)
+
     def report(self) -> dict:
         report = {name: vars(stats).copy() for name, stats in self.stats.items()}
         for tier in self.tiers:
@@ -201,18 +204,18 @@ class Chain:
         return report
 
 
-def run(awaitable):
-    """Run a coroutine from synchronous code (inside an event loop, await the `a…` method instead)."""
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(awaitable)
-    awaitable.close()
-    raise RuntimeError("called the synchronous form inside a running event loop; await the async form instead")
+def fit(text: str, limit: int) -> str:
+    """`text` within `limit` characters for a judge: the opening (where who-is-who is said) and the end (the
+    newest words) are kept, the middle is cut."""
+    if len(text) <= limit:
+        return text
+    head = min(600, limit // 3)
+    tail = limit - head - 5  # (the marker takes 5)
+    return text[:head] + "\n[…]\n" + text[-tail:] if tail > 0 else text[:max(0, limit)]
 
 
 from .luna import Luna  # noqa: E402  (the tiers use the types above)
 from .prompt import Prompt  # noqa: E402
 
 __all__ = ["Answer", "Chain", "Choice", "Decider", "Luna", "Predicate", "Prompt", "Question", "Score",
-           "Unavailable", "normalized", "run"]
+           "Unavailable", "fit", "normalized", "run"]

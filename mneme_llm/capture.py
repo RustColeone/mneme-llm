@@ -1,26 +1,21 @@
-"""Keeping notes without the chat model having to call a tool: after an exchange, write down what is worth it.
+"""What the note writer and the profile writer are asked, and how their replies are read.
 
-    observation = await m.aobserve("discord:42", exchange, user="Leo")   # mood and notes together
-    notes = await acapture(m, "discord:42", exchange, user="Leo")        # notes only
-    card  = await areflect(m, "discord:42", user="Leo")                  # e.g. nightly
-
-Capture first asks the decision chain a cheap yes/no ("did they share anything worth remembering?"; `observe`
-asks it in the same request as the mood), so the note writer is only called when there is something to write.
-The writer is the `complete` function the Mneme was given, which can be a fixed, cheap model whatever model the
-conversation itself runs on, so the notes stay the same quality when the chat model changes. When the unify
-tier is on, the writer also gives each note in the unifying language, in the same call.
-
-Reflection rewrites the short profile card from the notes.
+After an exchange, `Mneme.aobserve` (or `acapture`) asks the decision chain a cheap yes/no first (`WORTH`: did they
+share anything worth remembering?), so the note writer is only called when there is something to write. The
+writer is the host's `complete` function, which can be a fixed, cheap model whatever model the conversation runs
+on, so the notes stay the same quality when the chat model changes; with the unify tier on, it also gives each
+note in the unifying language. `Mneme.areflect` has it rewrite the short profile card from the notes. This module
+only builds the prompts and reads the replies; `Mneme` makes the calls.
 """
 
 from __future__ import annotations
 
-import inspect
-import json
-import re
+from datetime import tzinfo
 
 from . import dates
 from .decide import Predicate
+from .memory import note_fields
+from .providers import json_in
 
 WORTH = Predicate("worth_remembering",
                   "In this exchange the user shared something about themselves worth remembering in later "
@@ -46,80 +41,34 @@ written in them. Reply with only the impression.
 {notes}"""
 
 
-async def _complete(mneme, complete, system: str, user: str) -> str:
-    complete = complete or mneme.complete
-    if complete is None:
-        raise RuntimeError("capture and reflect need a `complete` function (given to Mneme or to the call)")
-    reply = complete(system, user)
-    if inspect.isawaitable(reply):
-        reply = await reply
-    return str(reply or "")
+def writer_prompt(user: str, known: list[str], today: str, gloss_language: str | None = None) -> str:
+    """The note writer's system prompt; the exchange itself is the user message."""
+    gloss = GLOSS_FIELD.format(language=gloss_language) if gloss_language else ""
+    return CAPTURE.format(user=user, known="\n".join(f"- {text}" for text in known) or "-", gloss=gloss, today=today)
 
 
-def _date(value) -> float | None:
-    from datetime import datetime
-    try:
-        return datetime.strptime(str(value or "")[:10], "%Y-%m-%d").replace(hour=12).timestamp()
-    except ValueError:
-        return None
-
-
-async def acapture(mneme, subject: str, exchange, *, user: str = "the user", gate: float = 0.5, worth=None,
-                   complete=None) -> list:
-    """Notes kept from one exchange (source "auto", so the daily quota applies). `worth` is an answer to
-    `WORTH` already in hand (from `observe`); without one, the chain is asked first."""
-    if not isinstance(exchange, str):
-        exchange = "\n".join(f"{who}: {said}" for who, said in exchange)
-    if worth is None and mneme.decider.tiers and gate > 0:
-        worth = (await mneme.decider.adecide(exchange, [WORTH])).get(WORTH.name)
-    if worth is not None and worth.probability < gate:
-        return []
-    known = "\n".join(f"- {item.note.text}"
-                      for item in mneme.memory.recall(subject, exchange, log=False).chosen) or "-"
-    unify = mneme.meaning.unify if mneme.meaning is not None else None
-    gloss = GLOSS_FIELD.format(language=unify.language) if unify is not None else ""
-    today = dates.local(mneme.memory.clock(), mneme.memory.zone).strftime("%Y-%m-%d (%A)")
-    reply = await _complete(mneme, complete, CAPTURE.format(user=user, known=known, gloss=gloss, today=today),
-                            exchange)
-    found = re.search(r"\[.*\]", reply, re.S)
-    if not found:
-        return []
-    try:
-        items = json.loads(found.group(0))
-    except json.JSONDecodeError:
-        return []
-    kept = []
+def notes_in(reply: str, now: float, zone: tzinfo | None) -> list[dict]:
+    """The writer's reply as note fields for `Memory.keep` (at most three), each held to the rules of writing: a
+    field of the wrong type is dropped, an item without text is skipped. A plan's day comes from its `date`, or
+    else from a day written in its sentence, the first such day from today on."""
+    items = json_in(reply, "[")
+    found = []
     for item in items[:3] if isinstance(items, list) else []:
-        if not isinstance(item, dict) or not item.get("text"):
+        if not isinstance(item, dict):
             continue
-        kind = str(item.get("kind", "episode"))
-        happened = _date(item.get("date"))
-        if happened is None and kind == "plan":  # writers often put the day in the sentence instead
-            happened = dates.find(str(item["text"]), mneme.memory.clock())
-        try:
-            note = mneme.memory.remember(subject, str(item["text"]), kind=kind, key=item.get("key") or None,
-                                         importance=int(item.get("importance", 2)),
-                                         feeling=float(item.get("feeling", 0) or 0), source="auto",
-                                         happened_at=happened, gloss=item.get("gloss") or None)
-        except (TypeError, ValueError):
-            continue
-        if note is not None:
-            kept.append(note)
-    if kept and mneme.meaning is not None:
-        await mneme.meaning.prepare_vectors(kept)  # embed now, after the reply, rather than at the next recall
-    return kept
+        kind = item.get("kind")
+        happened = dates.noon(item["date"], zone) if isinstance(item.get("date"), str) else None
+        if happened is None and kind == "plan" and isinstance(item.get("text"), str):
+            happened = dates.find(item["text"], now, zone, ahead=True)  # writers often put the day in the sentence
+        fields = note_fields(item.get("text"), kind=kind, key=item.get("key"), importance=item.get("importance", 2),
+                             feeling=item.get("feeling", 0.0), happened_at=happened, gloss=item.get("gloss"),
+                             strict=False)
+        if fields is not None:
+            found.append(fields)
+    return found
 
 
-async def areflect(mneme, subject: str, *, user: str = "the user", limit: int = 60, complete=None) -> str | None:
-    """Rewrite the profile card from the most important and newest notes; returns the new card."""
-    notes = mneme.memory.notes(subject)
-    if not notes:
-        return None
-    notes = sorted(notes, key=lambda note: (-note.importance, -note.id))[:limit]
+def reflect_prompt(user: str, name: str, language: str, notes) -> str:
+    """The profile writer's system prompt, over the most important and newest notes."""
     listing = "\n".join(f"- ({note.kind}) {note.text}" for note in notes)
-    lang = "Chinese" if mneme.lang == "zh" else "the language of the notes"
-    card = (await _complete(mneme, complete, REFLECT.format(user=user, name=mneme.name, lang=lang, notes=listing),
-                            "Write the impression now.")).strip()
-    if card:
-        mneme.memory.set_profile(subject, card)
-    return card or None
+    return REFLECT.format(user=user, name=name, lang=language, notes=listing)

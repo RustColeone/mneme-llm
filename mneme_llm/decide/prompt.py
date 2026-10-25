@@ -7,15 +7,10 @@ anything. It is slower and costs output tokens, but it never needs a second prov
 
 from __future__ import annotations
 
-import asyncio
-import inspect
-import json
-import re
-from typing import Awaitable, Callable, Sequence, Union
+from typing import Sequence
 
-from . import Answer, Question, Unavailable, normalized
-
-Complete = Callable[[str, str], Union[str, Awaitable[str]]]
+from ..providers import Complete, ask, json_in
+from . import Answer, Question, fit, normalized
 
 SYSTEM = """You judge a piece of text and answer questions about it. Reply with only one JSON object, no prose,
 with one entry per question name:
@@ -33,7 +28,7 @@ class Prompt:
         self.calls = 0
 
     def message(self, input: str, questions: Sequence[Question]) -> str:
-        lines = ["TEXT:", input[-self.max_input:], "", "QUESTIONS:"]
+        lines = ["TEXT:", fit(input, self.max_input), "", "QUESTIONS:"]
         for question in questions:
             if question.type == "predicate":
                 lines.append(f'- "{question.name}" (yes/no): {question.instructions}')
@@ -46,12 +41,8 @@ class Prompt:
         return "\n".join(lines)
 
     def parse(self, reply: str, questions: Sequence[Question]) -> dict[str, Answer]:
-        found = re.search(r"\{.*\}", reply, re.S)
-        if not found:
-            return {}
-        try:
-            data = json.loads(found.group(0))
-        except json.JSONDecodeError:
+        data = json_in(reply, "{")
+        if not isinstance(data, dict):
             return {}
         answers = {}
         for question in questions:
@@ -72,23 +63,18 @@ class Prompt:
             labels = question.labels
             if picked not in labels:
                 continue
-            rest = (1 - confidence) / (len(labels) - 1)
-            probabilities = normalized({label: confidence if label == picked else rest for label in labels}, labels)
+            # The picked label stays the most likely even when the model is unsure (a share of at least
+            # 2 / (n + 1) puts it above every other); the stated confidence is kept as it was.
+            share = max(confidence, 2 / (len(labels) + 1))
+            rest = (1 - share) / (len(labels) - 1)
+            probabilities = normalized({label: share if label == picked else rest for label in labels}, labels)
             answers[question.name] = Answer(question.name, question.type, probabilities, confidence, self.name, reason)
         return answers
 
-    async def decide(self, input: str, questions: Sequence[Question]) -> dict[str, Answer]:
-        if self.complete is None:
-            raise Unavailable("no completion function given")
-        message = self.message(input, questions)
-        if inspect.iscoroutinefunction(self.complete):
-            reply = await self.complete(self.system, message)
-        else:
-            reply = await asyncio.to_thread(self.complete, self.system, message)
-            if inspect.isawaitable(reply):
-                reply = await reply
+    async def adecide(self, input: str, questions: Sequence[Question]) -> dict[str, Answer]:
+        reply = await ask(self.complete, self.system, self.message(input, questions))
         self.calls += 1
-        return self.parse(str(reply or ""), questions)
+        return self.parse(reply, questions)
 
     def report(self) -> dict:
         return {"calls": self.calls}

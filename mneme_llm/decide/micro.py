@@ -24,8 +24,9 @@ from . import Answer, Question
 
 
 def signature(question: Question) -> str:
-    """Changing a question's wording or options gives it a new model (the old one is not reused)."""
-    raw = "|".join([question.type, question.instructions, *question.labels])
+    """Changing a question's wording or options gives it a new model (the old one is not reused), and so does a
+    new tokenizer (its features are hashes of the search terms, which would no longer match)."""
+    raw = "|".join([question.type, question.instructions, *question.labels, texts.version()])
     return f"{question.name}:{hashlib.sha1(raw.encode()).hexdigest()[:12]}"
 
 
@@ -105,13 +106,15 @@ class Micro:
         return model
 
     def trusted(self, question: Question) -> bool:
-        model = self._model(question)
+        return self._trusted(self._model(question))
+
+    def _trusted(self, model: _Model) -> bool:
         recent = model.window[-self.window:]
         return (model.examples >= self.min_examples and len(recent) >= min(self.window, self.min_examples)
                 and sum(recent) / len(recent) >= self.min_agreement)
 
     # ---- the tier ------------------------------------------------------------------------------------
-    async def decide(self, input: str, questions: Sequence[Question]) -> dict[str, Answer]:
+    async def adecide(self, input: str, questions: Sequence[Question]) -> dict[str, Answer]:
         features = None
         answers = {}
         for question in questions:
@@ -166,9 +169,14 @@ class Micro:
             recent = model.window[-self.window:]
             found[key] = {"examples": model.examples,
                           "agreement": round(sum(recent) / len(recent), 3) if recent else None,
-                          "trusted": model.examples >= self.min_examples and bool(recent)
-                          and sum(recent) / len(recent) >= self.min_agreement}
+                          "trusted": self._trusted(model)}
         return found
+
+    @staticmethod
+    def saved(store: Store) -> list[dict]:
+        """The models saved in a file: which question, how many lessons, when (for `mneme-llm micro`)."""
+        return [dict(row) for row in store.rows("select question, examples, updated_at from micro_models order "
+                                                 "by question")]
 
     def reset(self, question: Question | None = None) -> None:
         """Forget what was learned (one question, or all)."""

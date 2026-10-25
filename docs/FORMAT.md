@@ -33,6 +33,7 @@ a writer opening an older file adds them.
 | `source` | text, null | who wrote it: `auto` (a model, unprompted), `user`, `cli`, `core-diary`… |
 | `gloss` | text, null | the note in the unifying language (meaning tier 3), when one was written |
 | `terms` | text, null | a cache: the note's search terms, space-separated; may be null at any time |
+| `folded` | text, null | a cache: `text` with Unicode full case folding (and `i` + U+0307 read as `i`), for duplicate checks; may be null |
 
 A note is **live** when `superseded_by` and `deleted_at` are both null. Writing a note with a key sets
 `superseded_by` on the live note of the same `(space, subject, key)`, so there is at most one live note per key.
@@ -40,18 +41,32 @@ A note is **live** when `superseded_by` and `deleted_at` are both null. Writing 
 
 `terms` belongs to the tokenizer that wrote it (`meta.terms_version`); a reader with a different tokenizer sets
 every `terms` to null and rebuilds them on use. Writers that change `text` or `gloss` set `terms` to null.
+`folded` is filled in on write; a writer comparing texts fills in any null `folded` of the subject first. Two live
+notes of a subject never have the same `folded` unless both have keys and the keys differ.
 
 ### `vectors`: meaning tier 1
 
-`(memory_id, embedder)` primary key; `vector` (blob). `embedder` names the model and its settings
-(`openai:text-embedding-3-small:256`); vectors from different embedders are never compared. Rows of notes that
-no longer exist are deleted on `purge` and `erase`.
+`(memory_id, embedder)` primary key; `vector` (blob); `taught` (text, null: the terms this vector taught the word
+centroids, space-separated, possibly empty; null when it has taught nothing). `embedder` names the model and its settings (`openai:text-embedding-3-small:256`); vectors
+from different embedders are never compared. Rows of notes that no longer exist are deleted on `purge` and
+`erase`.
 
 ### `meaning_terms`: meaning tier 2
 
-`(embedder, term)` primary key; `count` (how many embedded texts contained the term); `vector` (blob: the running
-mean of those texts' vectors). `meta."meaning_texts:<embedder>"` counts the texts learned. Implementations that
-don't run this tier can ignore the table.
+`(embedder, term)` primary key; `count` (how many learned notes contained the term); `vector` (blob: the running
+mean of those notes' vectors, not renormalized). Only notes are learned, never queries. `meta."meaning_texts:<embedder>"`
+counts the notes learned, always the number of that embedder's vectors whose `taught` is not null (a reader that
+finds otherwise, or finds terms with nothing taught, resets that embedder's centroids), and `meta."meaning_version:<embedder>"` names the tokenizer that split their
+terms; with another tokenizer the rows are not used, and the next lesson deletes them first.
+
+A writer teaching a note adds, in one transaction, the vector row, each term's new running mean, and the terms in
+`taught`; and only if the note still exists with the text that was embedded (ids of deleted notes are reused)
+and had no vector from that embedder. A writer inserting a note deletes any vector rows left under its id. A writer that deletes a note
+takes back each of its vectors' lessons first: for each term in `taught`, `count` drops by one and the mean becomes
+`(mean · count − vector) / (count − 1)`, the row going when `count` reaches 0; `meaning_texts` drops by one. This
+needs no tokenizer. Implementations that don't run this tier must still do it when they delete notes, or a deleted
+note's words stay in the file. Resetting an embedder's centroids deletes its rows and both meta keys and sets its
+vectors' `taught` to null; such vectors are taught again from the file.
 
 ### `profiles`: the impression card
 
@@ -82,14 +97,14 @@ The newest 200 per subject are kept.
 
 ### `micro_models`: decision tier 2
 
-`question` (primary key: `name:sha1(type|instructions|labels…)[:12]`), `kind`, `labels` (JSON list), `weights`
+`question` (primary key: `name:sha1(type|instructions|labels…|tokenizer version)[:12]`), `kind`, `labels` (JSON list), `weights`
 (JSON `{"bias": [...], "w": {"feature": [...]}, "window": [0/1…]}`), `examples`, `updated_at`. Features are CRC-32
 hashes of search terms, masked to 18 bits. Implementations that don't run the micro model can ignore this table.
 
 ### `meta`
 
-`key`, `value`. Holds `schema_version`, `terms_version`, `meaning_texts:<embedder>` and `adopted:…` flags hosts
-may set.
+`key`, `value`. Holds `schema_version`, `terms_version`, `meaning_texts:<embedder>`, `meaning_version:<embedder>`
+and `adopted:…` flags hosts may set.
 
 ## Export format
 
@@ -101,25 +116,45 @@ may set.
  "profiles": [...], "moods": [...], "mood_events": [...]}
 ```
 
-Rows are the table rows as objects, without `terms`. Vectors and micro models are not exported: they belong to an
-embedder and a tokenizer, and are rebuilt on use. On import, memory ids are renumbered and `superseded_by` links
-follow the new numbers; moods are imported without their event links (the timeline is imported separately).
+Rows are the table rows as objects, without `terms` and `folded`. Vectors, word centroids and micro models are
+not exported: they belong to an embedder and a tokenizer, and are rebuilt on use. On import, memory ids are
+renumbered and `superseded_by` links follow the new numbers; each note is held to the rules of writing (one line
+of at most 500 characters, whitespace collapsed; a key lowercased, or dropped when it isn't `part(.part){0,3}` of
+at most 48 characters; an unknown kind read as `episode`; importance clamped to 1–5, feeling to −1…1 and `recalls` to 0 or more; times
+that are not seconds between 1970 and the year 3000 replaced (`created_at` by now, the others by `created_at`); a
+`source` that is not text dropped; a row that is not an object, or a note
+without text or subject skipped); then, per subject, the newest live note of each key
+stays live and the others point to it, and a live text that appears twice (compared case-folded) keeps a copy with
+a key, or else the first copy (the others are marked deleted). Moods are imported
+without their event links (the timeline is imported separately); an event identical to one already in the timeline
+is not added again.
 
 ## Search terms
 
-To match the Python implementation's recall (tokenizer version `2`), a term is one of:
+To match the Python implementation's recall (tokenizer version `4`), the text is first normalized: NFKC, Unicode
+full case folding (with `i` + U+0307 read as `i`, so Turkish *İ* matches *i*), U+2019 read as an apostrophe, and the
+Hebrew points (U+0591–U+05C7) and Arabic vowel marks (U+064B–U+065F, U+0670) removed.
+A term is then one of:
 
-- a Latin word: NFKC-lowercased, two or more characters, `'s` and a plural `s`/`ies` trimmed, common function
-  words dropped;
-- in a run of Chinese, Japanese or Korean characters, each overlapping pair of characters (common function pairs
-  such as 我们 and 什么 dropped) and each single character (common function characters such as 的 and 了 dropped).
+- a word: a run of letters, digits and combining marks of any alphabet (Unicode categories L, N and M) and `_`,
+  with apostrophes allowed between two of them; leading and trailing `'`, `_` and `-` stripped, a final `'s`
+  dropped, then two or more characters, common English function words dropped; on ASCII words, a plural `s`/`ies`
+  is trimmed;
+- in a run of Chinese, Japanese or Korean characters, or of a script written without spaces (Thai, Lao, Khmer,
+  Burmese), each overlapping pair of characters (common function pairs such as 我们 and 什么 dropped) and each
+  single character (common function characters such as 的 and 了, and combining marks, dropped).
 
-With jieba installed and enabled, jieba's words of two or more characters are added (version `2+jieba`). Other
+Each distinct term counts once per text. With jieba installed and enabled, jieba's words of two or more
+characters are added to CJK runs (version `4+jieba`). Other
 implementations may tokenize differently; that changes only which notes a query finds, never what is stored.
 
 ## Changes within schema 1
 
 Files written before these were added open as before; a writer adds the missing parts:
 
-- `memories.gloss` and `memories.terms` (columns);
-- `vectors` and `meaning_terms` (tables).
+- `memories.gloss`, `memories.terms` and `memories.folded` (columns), and the index `memories_folded` on
+  `(space, subject, folded)`;
+- `vectors` and `meaning_terms` (tables), and `vectors.taught` (column) with the index `vectors_untaught` on
+  `embedder` where `taught` is null. In a file from before `vectors.taught`, no vector has taught anything while
+  `meaning_texts` says otherwise, so the first reader resets those centroids (they may hold words of queries and
+  can't be taken back) and relearns them from the stored vectors.

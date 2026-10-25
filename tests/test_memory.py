@@ -36,6 +36,19 @@ class TextTests(unittest.TestCase):
         self.assertEqual(terms("谢谢妈妈"), ["谢谢", "谢妈", "妈妈", "谢", "妈"])
         self.assertEqual(terms("哈哈哈"), [])
 
+    def test_every_alphabet_gives_words(self):
+        self.assertEqual(terms("Lives in Zürich"), ["live", "zürich"])
+        self.assertNotIn("rich", terms("Lives in Zürich"))
+        self.assertEqual(terms("Кошку зовут Мурка"), ["кошку", "зовут", "мурка"])
+        self.assertIn("τσάι", terms("Μου αρέσει το τσάι"))
+        self.assertIn("แม", terms("ฉันชอบแมว"))  # written without spaces: pairs, as for Chinese
+        self.assertEqual(terms("don't forget my dog's name"), ["forget", "dog", "name"])
+
+    def test_the_script_of_a_text(self):
+        from mneme_llm.text import script
+        self.assertEqual([script(t) for t in ("我的猫", "my cat", "Мурка", "123", "ＡＢＣ", "ქართული")],
+                         ["cjk", "latin", "cyrillic", "", "latin", "other"])
+
     def test_function_words_are_dropped(self):
         self.assertNotIn("什么", terms("你在干什么"))
         self.assertNotIn("the", terms("the exam"))
@@ -182,7 +195,7 @@ class RecallTests(unittest.TestCase):
     def test_context_block_has_human_dates_and_the_profile(self):
         self.clock.now += 2 * DAY
         self.notes.set_profile("u", "A cellist who is hard on herself.")
-        block = self.notes.context("u", "数学考试", name="Leo")
+        block = self.notes.context("u", "数学考试", user="Leo")
         self.assertIn("Leo", block)
         self.assertIn("A cellist", block)
         self.assertIn("[2 days ago] 数学考试没考好", block)

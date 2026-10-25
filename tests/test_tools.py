@@ -7,8 +7,8 @@ import sys
 import tempfile
 import unittest
 
+from tests.tiers import needs_decide_micro
 from mneme_llm import Mneme
-from mneme_llm.capture import acapture, areflect
 from mneme_llm.mcp import serve
 from mneme_llm.tools import Toolbox, specs
 
@@ -100,10 +100,10 @@ class CaptureTests(unittest.TestCase):
             return '[{"text": "Plays the cello", "kind": "fact", "key": "user.instrument", "importance": 3}]'
 
         m = plain(complete=complete)
-        kept = asyncio.run(acapture(m, "u", [("user", "I practised cello for 2 hours"), ("bot", "wow")]))
+        kept = m.capture("u", [("user", "I practised cello for 2 hours"), ("bot", "wow")])
         self.assertEqual([n.text for n in kept], ["Plays the cello"])
         self.assertEqual(kept[0].source, "auto")
-        self.assertEqual(asyncio.run(areflect(m, "u")), "A student who loves the cello.")
+        self.assertEqual(m.reflect("u"), "A student who loves the cello.")
         self.assertEqual(m.memory.profile("u"), "A student who loves the cello.")
 
     def test_small_talk_never_reaches_the_writer(self):
@@ -113,7 +113,7 @@ class CaptureTests(unittest.TestCase):
             calls.append(system)
             return '{"worth_remembering": {"probability": 0.1}}'
 
-        self.assertEqual(asyncio.run(acapture(plain(complete=complete), "u", "user: hi\nbot: hi")), [])
+        self.assertEqual(plain(complete=complete).capture("u", "user: hi\nbot: hi"), [])
         self.assertEqual(len(calls), 1)
 
 
@@ -142,6 +142,7 @@ class FacadeTests(unittest.TestCase):
         self.assertEqual(m.decider.report()["prompt"]["answered"], 2)
         self.assertEqual(len(asked), 1)
 
+    @needs_decide_micro
     def test_the_micro_model_is_optional(self):
         self.assertIsNone(plain().micro)
         self.assertEqual([t.name for t in Mneme(":memory:", luna=False).decider.tiers], ["micro"])

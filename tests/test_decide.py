@@ -4,7 +4,10 @@ import unittest
 
 from mneme_llm.decide import Answer, Chain, Choice, Predicate, Prompt, Score, Unavailable
 from mneme_llm.decide.luna import Luna
-from mneme_llm.decide.micro import Micro, signature
+try:  # the tier is removable; its tests are skipped where it was removed
+    from mneme_llm.decide.micro import Micro, signature
+except ImportError:
+    Micro = signature = None
 from mneme_llm.store import Store
 
 REMEMBER = Predicate("remember", "Worth remembering.")
@@ -21,7 +24,7 @@ class Fixed:
         if learns:
             self.learn = lambda input, question, answer: self.lessons.append((input, question.name, answer.by))
 
-    async def decide(self, input, questions):
+    async def adecide(self, input, questions):
         if self.error:
             raise self.error
         return {q.name: self.answers[q.name] for q in questions if q.name in self.answers}
@@ -89,7 +92,7 @@ class LunaTests(unittest.TestCase):
 
     def test_without_a_key_it_is_unavailable(self):
         with self.assertRaises(Unavailable):
-            asyncio.run(Luna("").decide("x", [REMEMBER]))
+            asyncio.run(Luna("").adecide("x", [REMEMBER]))
 
 
 class PromptTests(unittest.TestCase):
@@ -118,6 +121,7 @@ class PromptTests(unittest.TestCase):
         self.assertEqual(Chain(Prompt(lambda s, u: "I cannot")).decide("x", [REMEMBER]), {})
 
 
+@unittest.skipIf(Micro is None, "the decision micro model is not installed")
 class MicroTests(unittest.TestCase):
     def teacher(self, text):
         warm = 0.95 if any(word in text for word in ("thanks", "love", "谢谢", "喜欢")) else 0.05
@@ -133,10 +137,10 @@ class MicroTests(unittest.TestCase):
     def test_abstains_until_trusted_then_answers_like_its_teacher(self):
         store = Store(":memory:")
         micro = Micro(store, min_examples=60, window=40)
-        self.assertEqual(asyncio.run(micro.decide("thanks!", [TONE])), {})
+        self.assertEqual(asyncio.run(micro.adecide("thanks!", [TONE])), {})
         self.lessons(micro, 120)
         self.assertTrue(micro.trusted(TONE))
-        found = asyncio.run(micro.decide("thanks a lot", [TONE]))
+        found = asyncio.run(micro.adecide("thanks a lot", [TONE]))
         self.assertEqual((found["tone"].choice, found["tone"].by), ("warm", "micro"))
 
     def test_learns_through_the_chain_and_survives_a_restart(self):
@@ -164,7 +168,7 @@ class MicroTests(unittest.TestCase):
         store = Store(":memory:")
         micro = Micro(store, min_examples=10, window=10, min_agreement=0.0, min_confidence=0.99)
         self.lessons(micro, 20)
-        self.assertEqual(asyncio.run(micro.decide("something new entirely", [TONE])), {})
+        self.assertEqual(asyncio.run(micro.adecide("something new entirely", [TONE])), {})
 
 
 if __name__ == "__main__":

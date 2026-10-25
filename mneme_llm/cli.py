@@ -11,10 +11,10 @@ import argparse
 import json
 import os
 import sys
-from datetime import datetime
 
 from . import KINDS, Mneme, __version__
-from .dates import stamp
+from . import text as texts
+from .dates import noon, stamp
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -43,7 +43,7 @@ def main(argv: list[str] | None = None) -> int:
     context = commands.add_parser("context", help="the block a system prompt would get")
     context.add_argument("subject")
     context.add_argument("query", nargs="?", default="")
-    context.add_argument("--name")
+    context.add_argument("--user", help="how the header names the person")
 
     listing = commands.add_parser("notes", help="every live note of a subject")
     listing.add_argument("subject")
@@ -65,6 +65,10 @@ def main(argv: list[str] | None = None) -> int:
 
     commands.add_parser("subjects", help="who this space remembers")
 
+    recalls = commands.add_parser("recalls", help="what was recalled for a subject lately, and why")
+    recalls.add_argument("subject")
+    recalls.add_argument("--limit", type=int, default=10)
+
     profile = commands.add_parser("profile", help="show or set a subject's profile card")
     profile.add_argument("subject")
     profile.add_argument("text", nargs="?")
@@ -83,7 +87,8 @@ def main(argv: list[str] | None = None) -> int:
     tools = commands.add_parser("tools", help="print the tool definitions for a model API")
     tools.add_argument("--style", default="openai", choices=("openai", "responses", "anthropic", "gemini", "mcp"))
 
-    commands.add_parser("micro", help="what the micro decision model has learned")
+    micro = commands.add_parser("micro", help="what the micro decision model has learned")
+    micro.add_argument("--reset", action="store_true", help="forget it all (it relearns from Luna)")
 
     serve = commands.add_parser("mcp", help="serve the tools over MCP (stdio)")
     serve.add_argument("--subject", help="bind every call to this person")
@@ -96,10 +101,15 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(specs(args.style), ensure_ascii=False, indent=2))
         return 0
     space = args.space
-    if args.command == "import" and args.into:
-        space = args.into
+    if args.command == "import":  # into --into, or back into the space it came from
+        with open(args.file, encoding="utf-8") as handle:
+            args.data = json.load(handle)
+        space = args.into or str(args.data.get("space") or args.space)
     meaning = args.command == "mcp" or getattr(args, "meaning", False)
     m = Mneme(args.db, space, lang=args.lang, luna=False, embed=meaning, language=None)
+    if (m.store.meta("terms_version") or "").endswith("+jieba") and not texts.use_jieba():
+        print("note: this file's search terms were made with jieba, which is not installed here; they will be "
+              "rebuilt without it (pip install mneme-llm[jieba])", file=sys.stderr)
     try:
         return _run(m, args)
     finally:
@@ -109,19 +119,22 @@ def main(argv: list[str] | None = None) -> int:
 def _run(m: Mneme, args) -> int:
     memory = m.memory
     if args.command == "remember":
-        happened = datetime.strptime(args.date, "%Y-%m-%d").replace(hour=12).timestamp() if args.date else None
+        happened = noon(args.date, memory.zone) if args.date else None
+        if args.date and happened is None:
+            print("--date is a day from 1970 to 2999, written YYYY-MM-DD", file=sys.stderr)
+            return 2
         outcome, note = memory.keep(args.subject, args.text, kind=args.kind, key=args.key,
                                     importance=args.importance, happened_at=happened, source="cli")
         print(f"{outcome} #{note.id}" if note else outcome)
     elif args.command == "recall":
         if args.meaning:
-            from .decide import run
+            from .providers import run
             found = run(memory.arecall(args.subject, args.query, log=False))
         else:
             found = memory.recall(args.subject, args.query, log=False)
         print(found.explain() if args.explain else "\n".join(f"#{r.note.id} {r.note.text}" for r in found.chosen))
     elif args.command == "context":
-        print(memory.context(args.subject, args.query, name=args.name) or "(nothing to say)")
+        print(memory.context(args.subject, args.query, user=args.user) or "(nothing to say)")
     elif args.command == "notes":
         for note in memory.notes(args.subject, kinds=[args.kind] if args.kind else None):
             key = f" {note.key}" if note.key else ""
@@ -136,9 +149,13 @@ def _run(m: Mneme, args) -> int:
         if not args.yes:
             print("this deletes every note, the profile and the mood of the subject; add --yes", file=sys.stderr)
             return 2
-        print(f"erased {memory.erase(args.subject)} notes")
+        print(f"erased {m.erase(args.subject)} notes")
     elif args.command == "subjects":
         print("\n".join(memory.subjects()))
+    elif args.command == "recalls":
+        for entry in memory.recalls(args.subject, args.limit):
+            chosen = ", ".join(f"#{id} ({why})" for id, why in entry["chosen"])
+            print(f"{stamp(entry['at'])} {entry['query']!r}: {chosen or '(nothing)'}")
     elif args.command == "profile":
         if args.text is not None:
             memory.set_profile(args.subject, args.text)
@@ -158,10 +175,16 @@ def _run(m: Mneme, args) -> int:
         else:
             print(text)
     elif args.command == "import":
-        with open(args.file, encoding="utf-8") as handle:
-            print(f"imported {m.import_data(json.load(handle))} notes")
+        print(f"imported {m.import_data(args.data)} notes into {m.space}")
     elif args.command == "micro":
-        rows = m.store.rows("select question, examples, updated_at from micro_models order by question")
+        try:
+            from .decide.micro import Micro
+        except ImportError:
+            print("(the micro model is not installed)")
+            return 0
+        if args.reset:
+            Micro(m.store).reset()
+        rows = Micro.saved(m.store)
         for row in rows:
             print(f"{row['question']}: {row['examples']} lessons, saved {stamp(row['updated_at'])}")
         if not rows:

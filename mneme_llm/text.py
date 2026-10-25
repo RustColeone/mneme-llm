@@ -1,9 +1,11 @@
 """Turning text into search terms, the same way for notes and for queries.
 
-Latin words are lowercased with a light plural trim; runs of Chinese, Japanese and Korean characters become
-overlapping two-character pieces plus their single characters ("考试没考好" → 考试 试没 没考 考好 考 试), which match
-without a word list, including one-character words such as 猫 or 茶. If `jieba` is installed and enabled, its words
-are added on top. Function words and characters that would match everything are dropped.
+Words of any alphabet (Latin with its accents, Cyrillic, Greek, Arabic, Hebrew, Devanagari…, combining marks
+included) are case-folded, possessive 's is dropped, and English plurals get a light trim on ASCII words; runs of
+Chinese, Japanese and Korean characters, and of the scripts written without spaces (Thai, Lao, Khmer, Burmese),
+become overlapping two-character pieces plus their single characters ("考试没考好" → 考试 试没 没考 考好 考 试),
+which match without a word list, including one-character words such as 猫 or 茶. With `use_jieba()` (and jieba
+installed), its words are added on top. Function words and characters that would match everything are dropped.
 """
 
 from __future__ import annotations
@@ -12,7 +14,9 @@ import re
 import unicodedata
 
 CJK = "㐀-䶿一-鿿豈-﫿぀-ヿ가-힯"
-_PIECES = re.compile(rf"[a-z0-9][a-z0-9'_-]*|[{CJK}]+")
+UNSPACED = CJK + "\u0e00-\u0eff\u1000-\u109f\u1780-\u17ff"  # also Thai, Lao, Burmese, Khmer: no spaces between words
+_UNSPACED = re.compile(rf"[{UNSPACED}]")
+_CJK = re.compile(rf"[{CJK}]")
 STOP_LATIN = frozenset("""
 a an and are as at be been but by can could did do does for from had has have he her his how i if in into is it its
 just me my no not of on or our she so than that the their them then there they this to too up us was we were what
@@ -47,59 +51,128 @@ def use_jieba(enabled: bool = True) -> bool:
 
 def version() -> str:
     """Changes whenever `terms` would split text differently, so cached terms can be rebuilt."""
-    return "2+jieba" if _jieba is not None else "2"
+    return "4+jieba" if _jieba is not None else "4"
+
+
+OPTIONAL_MARKS = re.compile("[\u0591-\u05c7\u064b-\u065f\u0670]")  # Hebrew points, Arabic vowel marks
+JOINERS = "'-\u200c\u200d"  # inside a word: an apostrophe, a hyphen, and the (non-)joiners of Persian and Indic
+
+
+def fold(text: str) -> str:
+    """Case folded in any alphabet: "Straße" is "strasse", and Turkish "İstanbul" is "istanbul"."""
+    return text.casefold().replace("i\u0307", "i")
 
 
 def normalize(text: str) -> str:
-    return unicodedata.normalize("NFKC", text).lower()
+    """NFKC, case-folded ("Straße" finds "STRASSE"), without the vowel marks Hebrew and Arabic usually leave out
+    (so שָׁלוֹם finds שלום), with a typographic apostrophe read as a plain one ("don’t" is "don't")."""
+    return fold(OPTIONAL_MARKS.sub("", unicodedata.normalize("NFKC", text)).replace("\u2019", "'"))
 
 
-def _latin(word: str) -> str | None:
+def _word(word: str) -> str | None:
     word = word.strip("'_-")
-    if word.endswith("'s"):
+    if word.endswith("'s"):  # a possessive, in any language written with one
         word = word[:-2]
     if len(word) < 2 or word in STOP_LATIN:
         return None
-    if len(word) > 4 and word.endswith("ies"):
-        word = word[:-3] + "y"
-    elif len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
-        word = word[:-1]
+    if word.isascii():  # the plural trim is English's; other languages' words are kept as they are
+        if len(word) > 4 and word.endswith("ies"):
+            word = word[:-3] + "y"
+        elif len(word) > 3 and word.endswith("s") and not word.endswith("ss"):
+            word = word[:-1]
     return word
+
+
+def _pieces(text: str):
+    """Runs of an unspaced script, and words: letters, digits and combining marks of any alphabet (so Devanagari,
+    Hebrew with its points or Arabic with its vowel marks stay whole), apostrophes allowed inside a word."""
+    piece, unspaced = [], False
+    for index, character in enumerate(text):
+        is_unspaced = bool(_UNSPACED.match(character))
+        is_word = is_unspaced or unicodedata.category(character)[0] in "LNM" or character == "_" or (
+            character in JOINERS and piece and not unspaced and index + 1 < len(text)
+            and unicodedata.category(text[index + 1])[0] in "LNM")
+        if piece and (not is_word or is_unspaced != unspaced):
+            yield "".join(piece), unspaced
+            piece = []
+        if is_word:
+            if not piece:
+                unspaced = is_unspaced
+            piece.append(character)
+    if piece:
+        yield "".join(piece), unspaced
 
 
 def terms(text: str) -> list[str]:
     """The distinct search terms of `text`, in order of first appearance."""
     found: dict[str, None] = {}
-    for piece in _PIECES.findall(normalize(text)):
-        if re.match(rf"[{CJK}]", piece):
+    for piece, unspaced in _pieces(normalize(text)):
+        if unspaced:
             for i in range(len(piece) - 1):
                 pair = piece[i:i + 2]
                 if pair not in STOP_CJK:
                     found.setdefault(pair, None)
             for character in piece:
-                if character not in STOP_CJK_CHARS:
+                if character not in STOP_CJK_CHARS and not unicodedata.category(character).startswith("M"):
                     found.setdefault(character, None)
-            if _jieba is not None:
+            if _jieba is not None and _CJK.match(piece):
                 for word in _jieba.cut(piece):
                     if len(word) >= 2 and word not in STOP_CJK:
                         found.setdefault(word, None)
         else:
-            word = _latin(piece)
+            word = _word(piece)
             if word:
                 found.setdefault(word, None)
     return list(found)
 
 
+SCRIPTS = {"CJK": "cjk", "HIRAGANA": "cjk", "KATAKANA": "cjk", "HANGUL": "cjk", "LATIN": "latin",
+           "CYRILLIC": "cyrillic", "GREEK": "greek", "ARABIC": "arabic", "HEBREW": "hebrew",
+           "DEVANAGARI": "devanagari", "THAI": "thai"}
+
+
 def script(text: str) -> str:
-    """"cjk" or "latin" by the letters that make up most of `text` ("" when it has none)."""
-    cjk = len(re.findall(rf"[{CJK}]", text))
-    latin = len(re.findall(r"[A-Za-z\u00c0-\u024f]", text))
-    if not cjk and not latin:
-        return ""
-    return "cjk" if cjk * 2 >= latin else "latin"  # a CJK character carries about two letters' worth
+    """The writing that makes up most of `text`: "cjk" (Chinese, Japanese, Korean), "latin", "cyrillic", "greek",
+    "arabic", "hebrew", "devanagari", "thai", or "other"; "" when it has no letters. A CJK character counts as two
+    letters."""
+    counts: dict[str, int] = {}
+    for character in text:
+        if not unicodedata.category(character).startswith("L"):
+            continue
+        name = unicodedata.name(character, "")
+        kind = next((SCRIPTS[word] for word in name.split() if word in SCRIPTS), "other")  # FULLWIDTH LATIN …
+        counts[kind] = counts.get(kind, 0) + (2 if kind == "cjk" else 1)
+    return max(counts, key=counts.get) if counts else ""
+
+
+CONTROL = re.compile("[\x00-\x08\x0e-\x1b\x7f-\x84\x86-\x9f]")  # control characters that are not whitespace
+SURROGATE = re.compile("[\ud800-\udfff]")
+
+
+def clean(text: str) -> str:
+    """Text that can be stored and shown to a model: control characters (other than whitespace) dropped, and lone
+    surrogates, which UTF-8 cannot hold, replaced by U+FFFD."""
+    text = CONTROL.sub("", text)
+    if SURROGATE.search(text):
+        text = text.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
+    return text
+
+
+def blank(text: str) -> bool:
+    """Whether `text` shows nothing: only spaces, invisible format characters and marks with nothing to mark."""
+    return not any(unicodedata.category(character)[0] in "LNPS" for character in text)
+
+
+def required(value, what: str) -> str:
+    """`value`, which must be a non-empty string (a subject, say); TypeError or ValueError otherwise."""
+    if not isinstance(value, str):
+        raise TypeError(f"{what} must be a string, not {type(value).__name__}")
+    if not value.strip():
+        raise ValueError(f"{what} must not be empty")
+    return value
 
 
 def clip(text: str, limit: int) -> str:
-    """`text` cut to `limit` characters, ending in "…" when something was cut."""
-    text = " ".join(text.split())
+    """`text` cleaned and on one line, cut to `limit` characters, ending in "…" when something was cut."""
+    text = " ".join(clean(text).split())
     return text if len(text) <= limit else text[:max(0, limit - 1)].rstrip() + "…"

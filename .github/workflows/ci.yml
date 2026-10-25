@@ -26,6 +26,31 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: python -W error::ResourceWarning -m unittest discover -s tests -t . -v
 
+  without-tiers:
+    name: The tests with the optional tiers deleted
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Delete the three removable tiers and run everything else
+        run: |
+          rm mneme_llm/decide/micro.py mneme_llm/meaning/micro.py mneme_llm/meaning/unify.py
+          python -W error::ResourceWarning -m unittest discover -s tests -t .
+
+  stress:
+    name: The stress tests, five times the default size
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m unittest tests.test_stress -v
+        env:
+          MNEME_STRESS: heavy
+
   package:
     name: Build and check the package
     runs-on: ubuntu-latest

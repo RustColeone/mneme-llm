@@ -9,14 +9,11 @@ confidence. Without a key (argument or OPENAI_API_KEY) this tier reports itself 
 from __future__ import annotations
 
 import asyncio
-import json
 import os
-import time
-import urllib.error
-import urllib.request
 from typing import Sequence
 
-from . import Answer, Question, Unavailable, normalized
+from ..providers import Rest, Unavailable, post_json
+from . import Answer, Question, fit, normalized
 
 
 class Luna:
@@ -28,8 +25,7 @@ class Luna:
         self.model, self.base_url, self.timeout, self.max_input = model, base_url.rstrip("/"), timeout, max_input
         self.input_tokens = 0
         self.calls = 0
-        self.rest_s = 60.0  # after the network fails, skip this tier this long instead of waiting every time
-        self._resting_until = 0.0
+        self.rest = Rest()
 
     def body(self, input: str, questions: Sequence[Question]) -> dict:
         wire = []
@@ -42,7 +38,7 @@ class Luna:
                 item["levels"] = [{"label": label, "description": text} if text else {"label": label}
                                   for label, text in question.levels]
             wire.append(item)
-        return {"model": self.model, "input": input[-self.max_input:], "questions": wire}
+        return {"model": self.model, "input": fit(input, self.max_input), "questions": wire}
 
     def parse(self, payload: dict, questions: Sequence[Question]) -> dict[str, Answer]:
         by_name = {question.name: question for question in questions}
@@ -64,28 +60,18 @@ class Luna:
         return answers
 
     def _post(self, body: dict) -> dict:
-        request = urllib.request.Request(f"{self.base_url}/decisions", data=json.dumps(body).encode(),
-                                         headers={"Authorization": f"Bearer {self.api_key}",
-                                                  "Content-Type": "application/json"})
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                return json.loads(response.read())
-        except urllib.error.HTTPError as error:
-            detail = error.read().decode("utf-8", "replace")[:300]
-            raise Unavailable(f"decisions API answered {error.code}: {detail}") from None
-        except (urllib.error.URLError, TimeoutError, OSError) as error:
-            raise Unavailable(f"decisions API unreachable: {error}") from None
+        return post_json(f"{self.base_url}/decisions", self.api_key, body, timeout=self.timeout,
+                         what="decisions API")
 
-    async def decide(self, input: str, questions: Sequence[Question]) -> dict[str, Answer]:
+    async def adecide(self, input: str, questions: Sequence[Question]) -> dict[str, Answer]:
         if not self.api_key:
             raise Unavailable("no OpenAI key for the decisions API")
-        if time.monotonic() < self._resting_until:
-            raise Unavailable("resting after a failure")
+        if not self.rest.up():
+            raise Unavailable(f"resting after a failure ({self.rest.error})")
         try:
             payload = await asyncio.to_thread(self._post, self.body(input, questions))
         except Unavailable as error:
-            if "unreachable" in str(error) or "answered 5" in str(error) or "answered 429" in str(error):
-                self._resting_until = time.monotonic() + self.rest_s
+            self.rest.failed(error)
             raise
         self.calls += 1
         self.input_tokens += int(payload.get("usage", {}).get("input_tokens", 0) or 0)
