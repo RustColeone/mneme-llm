@@ -18,8 +18,9 @@ def local(timestamp: float, zone: tzinfo | None = None) -> datetime:
     return datetime.fromtimestamp(timestamp, zone) if zone else datetime.fromtimestamp(timestamp).astimezone()
 
 
-def when(timestamp: float, now: float, zone: tzinfo | None = None, lang: str = "en") -> str:
-    """When `timestamp` is, relative to `now`, in calendar days of `zone` (past or future)."""
+def when(timestamp: float, now: float, zone: tzinfo | None = None, lang="en") -> str:
+    """When `timestamp` is, relative to `now`, in calendar days of `zone` (past or future), in `lang` (a code, or
+    a companion's `i18n.Words`)."""
     then, today = local(timestamp, zone), local(now, zone)
     days = (today.date() - then.date()).days
     if days < 0:

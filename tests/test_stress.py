@@ -85,6 +85,11 @@ def act(m: Mneme, rng: random.Random) -> None:
         elif roll < 0.90:
             m.mood.apply(subject, delta=rng.uniform(-12, 12), emotions={rng.choice(["happy", "sad", "worried"]):
                                                                          rng.uniform(0, 60)})
+        elif roll < 0.915:  # config values, most of them wrong: each is refused or kept whole
+            key = rng.choice(["mood.threshold", "companion.name", "prompts.reflect", "roles", "mood.floor",
+                              "messages.zh.notes.header", "no.such"])
+            m.config.set(key, rng.choice([0.5, -1, "", "Fei", "{user} {bogus}", "{who}的笔记", [], None, math.nan,
+                                          [{"key": "x", "floor": 10}], 95.0]))
         elif roll < 0.92:  # roles given, visits, roles taken away; a second creator or a closeness off the band fails
             step = rng.random()
             if step < 0.5:

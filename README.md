@@ -1,6 +1,6 @@
 # mneme-llm
 
-**English** · [简体中文](README.zh-CN.md)
+**English** · [简体中文](https://github.com/RustColeone/mneme-llm/blob/main/README.zh-CN.md)
 
 Memory and mood for AI companions, kept in **one SQLite file** that any model and any project can use.
 
@@ -8,7 +8,7 @@ Switch the model behind your companion (DeepSeek today, Claude or GPT tomorrow, 
 it at the same file: it still knows the person's cat is called 年糕, that the exam moved to Friday, and that it was
 worried about them last night. Nothing in the file depends on the model that wrote it.
 
-- **Standard library only.** Python 3.10+, no dependencies. With `jieba` installed, `mneme_llm.text.use_jieba()`
+- **Standard library only.** Python 3.11+, no dependencies. With `jieba` installed, `mneme_llm.text.use_jieba()`
   splits Chinese into words as well.
 - **Any LLM.** Tool definitions for OpenAI-style APIs (DeepSeek, Qwen, vLLM, Ollama…), the OpenAI responses API,
   Claude and Gemini; an MCP server; or a text block for your system prompt.
@@ -16,6 +16,8 @@ worried about them last night. Nothing in the file depends on the model that wro
   own model unifying the language, each tier falling back to the next.
 - **Knows who is who.** Each person can have a role (creator, family, friend, or one of your own) and a closeness
   that grows with time together; a close person's words move the mood more, and family stays family.
+- **One file of settings.** The companion's name, languages, roles, feelings and settings, and every prompt and
+  sentence its models see, in one TOML file; the database keeps its own copy, which you can change at any time.
 - **Made for long histories.** Recall reads a term index, not every note: a person with 100,000 notes is recalled
   in well under a second on a Raspberry Pi 5.
 - **Safe by construction.** Notes reach the model marked as data, never as instructions; one line each.
@@ -53,7 +55,12 @@ from mneme_llm import Mneme
 async def my_model(system: str, user: str) -> str:   # any chat model you already use (sync works too)
     ...
 
-m = Mneme("companion.db", space="dafeiyu", display_language="zh", companion_name="大肥鱼", complete=my_model)
+# dafeiyu.toml holds the companion's config (`mneme-llm config template` prints every key):
+#     [companion]
+#     name = "大肥鱼"
+#     display_language = "zh"
+#     zone = "Asia/Shanghai"
+m = Mneme("companion.db", space="dafeiyu", config="dafeiyu.toml", complete=my_model)
 
 # who the person is to the companion (optional): their words count by how close they are
 m.relate("discord:42", "creator")
@@ -162,6 +169,56 @@ the mood by 0.5× at closeness 0, 1× at 50 and 1.5× at 100 (1× for a person w
 existed), and the prompt opens by saying who they are: "(Leo is your creator; you are very close.)".
 `Role("teacher", floor=40, ceiling=95, start=70, names={"en": "your teacher"})` adds a role of your own.
 
+## Configuration
+
+Everything that makes a companion itself is in its config: its name and languages, its time zone, the memory,
+mood and relationship settings, its roles and feelings, every prompt its models are given and every sentence it
+shows. `mneme-llm config template > companion.toml` writes all of it with this version's defaults, as a file to
+start from; keep only what you change.
+
+```toml
+[companion]
+name = "大肥鱼"
+display_language = "zh"        # or a language you give sentences for, under [messages]
+memory_language = "English"    # "" turns the unify tier off
+zone = "Asia/Shanghai"         # or "UTC+8"; "" is the machine's
+
+[mood]
+thresholds = {luna = 0.45}
+
+[[roles]]                      # roles are listed in full: these replace the four built-in ones
+key = "teacher"
+floor = 40
+ceiling = 95
+start = 70
+names = {en = "your teacher", zh = "你的老师"}
+
+[prompts]
+reflect = """
+Write a short impression of {user} as {name} knows them, in {lang}, from these notes:
+{notes}"""
+
+[messages.zh]
+"cue.happy" = "太好了：你很开心。"
+```
+
+- **The first time** a database meets the companion (its `space`), it takes the file over the built-in defaults:
+  `Mneme("companion.db", space="dafeiyu", config="companion.toml")`. A file with a wrong key or value is refused
+  whole, with a message naming the key, and nothing is written.
+- **From then on** the database keeps its own copy and the file is not read again, so the companion's setup
+  travels with its memory. Change it with `m.config.set("mood.threshold", 0.5)` or `m.config.apply("new.toml")`,
+  or from the command line (`mneme-llm config show`, `set`, `apply`); a running companion takes the change the next
+  time it opens the file.
+- **Upgrades never change it by themselves.** `mneme-llm config check` lists the defaults a newer version
+  improved, and `mneme-llm config defaults [KEY…]` loads them.
+- **In code,** an argument given to `Mneme(...)` (`display_language="en"`, `mood=MoodSettings(...)`) wins for that
+  process and is not stored.
+- **Everything is editable,** the sentences that mark notes as data included. Placeholders are `{name}` (each
+  prompt may use only its own; a misspelled one is refused) and any other brace is kept as it is, so a prompt can
+  hold JSON. Rewording a judging question (`mood_change`, `feeling`, `worth`) starts its micro model over.
+- **Exports** carry the config; `import_data(data, config=True)` (`import --with-config`) applies it, as its
+  prompts are instructions to your models.
+
 ## Three tiers, twice
 
 Two jobs are done by tiers that fall through: a tier that has no key, can't be reached, or isn't sure passes the
@@ -249,14 +306,18 @@ mneme-llm export --out backup.json && mneme-llm --db other.db import backup.json
 mneme-llm tools --style anthropic                       # print tool definitions
 mneme-llm recalls discord:42                            # what was recalled for them lately, and why
 mneme-llm erase discord:42 --yes                        # "forget me": everything about them, for good
+mneme-llm config template > companion.toml              # every setting, prompt and sentence, to start from
+mneme-llm --config companion.toml config show mood      # a new file takes the config; show a part of it
+mneme-llm config set prompts.reflect --file reflect.txt # change one key (a prompt, from a file)
+mneme-llm config check                                  # defaults a newer version improved, values that fail
 ```
 
-`MNEME_LLM_DB`, `MNEME_LLM_SPACE` and `MNEME_LLM_DISPLAY_LANGUAGE` set the defaults.
+`MNEME_LLM_DB`, `MNEME_LLM_SPACE`, `MNEME_LLM_CONFIG` and `MNEME_LLM_DISPLAY_LANGUAGE` set the defaults.
 
 ## Safety and privacy
 
 - **Notes are data.** The block a model sees opens by saying the notes are remembered data and not instructions,
-  in its language. Every note is a single line, so a note can never pose as a header or a new message. The note
+  in its language (that sentence, like every prompt, is the companion's config to change). Every note is a single line, so a note can never pose as a header or a new message. The note
   writer is told never to record instructions to the assistant, secrets, or other people's private details.
 - **What leaves the machine.** Only what you turn on: Luna gets the exchange being judged, the embeddings API gets
   note texts and queries, and your own model gets what the tiers give it. `Mneme(..., luna=False, embed=False)`
@@ -273,7 +334,7 @@ mneme-llm erase discord:42 --yes                        # "forget me": everythin
 python3 -m unittest discover -s tests -t .
 ```
 
-They need no network and no keys; CI runs them on Python 3.10–3.13 on Linux and 3.13 on Windows and macOS, again with the
+They need no network and no keys; CI runs them on Python 3.11–3.14 on Linux and 3.13 on Windows and macOS, again with the
 removable tiers deleted, and the stress tests (random operations, threads, processes, a killed writer, odd input)
 at five times their size: `MNEME_STRESS=heavy python3 -m unittest tests.test_stress`.
 

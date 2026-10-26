@@ -101,9 +101,11 @@ role given, or a day of contact).
 At most one `creator` per space. With the built-in bands, closeness stays within the role's: creator 80–100, family
 60–100, friend 20–90, acquaintance 0–60. To read it at time *t*, with *d* = days since `updated_at`:
 
-    closeness(t) = max(min(closeness, floor), closeness − d / 30)     (the creator's does not fade)
+    closeness(t) = min(ceiling, max(floor, closeness − d / 30))       (the creator's does not fade: d = 0)
 
-A contact on a later day than `updated_at` (in the companion's zone) adds 1, up to the role's ceiling. The rates,
+The band is the role's as the host has it when the value is read, so a narrowed band holds the people already
+in it. A contact on a later day than `updated_at` (in the companion's zone) adds 1, up to the role's ceiling; a
+contact at a time before `updated_at` (a clock set back) changes nothing. The rates,
 the bands and the zone are settings, not part of the file.
 
 ### `note_terms`: the term index
@@ -124,6 +126,20 @@ The newest 200 per subject are kept.
 `question` (primary key: `name:sha1(type|instructions|labels…|tokenizer version)[:12]`), `kind`, `labels` (JSON list), `weights`
 (JSON `{"bias": [...], "w": {"feature": [...]}, "window": [0/1…]}`), `examples`, `updated_at`. Features are CRC-32
 hashes of search terms, masked to 18 bits. Implementations that don't run the micro model can ignore this table.
+
+### `config`: the companion's config
+
+`(space, key)` primary key; `value` (JSON); `origin` (`default`, `file`, `set` or `import`); `updated_at`. Keys
+are flat: `companion.name`, `companion.display_language`, `companion.memory_language` (`""`: no unifying language),
+`companion.zone` (`""`, `UTC+8`, or an IANA name), `memory.*`, `mood.*` (the mood's settings), `relations.growth`
+and `relations.fade_days`, `roles` and `emotions` (each a list of objects, in full), `prompts.<name>` (an
+instruction to a model) and `messages.<language>.<key>` (a sentence shown). `mneme-llm config template` prints
+every key with its default; `docs/DESIGN.md`, section 12, gives the rules.
+
+A space's rows are written whole the first time the space is opened (the defaults, then the config file over
+them), and change only when a host sets, applies or loads defaults. In prompts and sentences, `{name}` is a
+placeholder, and a text may use only those of its default; any other brace is literal. A reader that finds a value
+it cannot accept should use its own default for that key and say so; a key it does not know is left as it is.
 
 ### `meta`
 
@@ -146,7 +162,8 @@ were compared (`notes`) and, when there were enough, their median similarity (`b
 ```json
 {"mneme_llm": 1, "space": "dafeiyu", "exported_at": 1792885075.5,
  "memories": [{"id": 1, "subject": "discord:42", "key": "pet.name", "kind": "fact", "text": "…", "gloss": null, …}],
- "profiles": [...], "moods": [...], "mood_events": [...], "relationships": [...]}
+ "profiles": [...], "moods": [...], "mood_events": [...], "relationships": [...],
+ "config": [{"key": "companion.name", "value": "大肥鱼", "origin": "file"}, …]}
 ```
 
 Rows are the table rows as objects, without `terms` and `folded`. Vectors, word centroids, floors and micro models
@@ -162,6 +179,8 @@ a key, or else the first copy (the others are marked deleted). Moods are importe
 without their event links (the timeline is imported separately); an event identical to one already in the timeline
 is not added again. A relationship replaces the person's present one, its closeness kept within the role's band
 (0–100 for a role the host does not have); a second holder of a one-person role (a second creator) is skipped.
+The config is applied only when the importer asks for it (its prompts are instructions to the importer's models),
+row by row, a row with an unknown key or a value that does not pass skipped.
 
 ## Search terms
 
@@ -197,4 +216,6 @@ Files written before these were added open as before; a writer adds the missing 
   term index has every note's `terms` null or not; those not null are indexed when first needed (a reader indexes
   any live note of a subject whose `terms` is null, or that has terms but no rows, before using the index);
 - `relationships` (table), and the `floor:<embedder>` keys in `meta`. A file without them has no roles (everyone
-  counts as before) and floors not yet measured.
+  counts as before) and floors not yet measured;
+- `config` (table). A space without rows takes its config (the defaults and the host's config file) the next time
+  it is opened.

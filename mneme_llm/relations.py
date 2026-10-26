@@ -5,7 +5,8 @@
                 family never falls below 60 however much time passes, and an acquaintance never rises above 60
                 until the host calls them a friend
     closeness   grows by one point on each day the person talks to the companion, up to the role's ceiling, and
-                fades by one point for every 30 days without them, down to its floor (computed when read)
+                fades by one point for every 30 days without them, down to its floor (computed when read, and always
+                within the role's band as the host has it now)
     weight      how much the person's words move the mood: 0.5 at closeness 0, 1.0 at 50, 1.5 at 100. A person
                 with no role counts 1.0, as everyone did before roles existed
     telling     `line()` says it for the system prompt ("(Leo is your creator; you are very close.)")
@@ -20,7 +21,7 @@ from datetime import tzinfo
 from typing import Callable, Mapping
 
 from . import dates, text as texts
-from .i18n import has, say
+from .i18n import Speaks, Words, code, has, say
 from .store import Store
 
 DAY = 86400.0
@@ -42,10 +43,11 @@ class Role:
         if not 0 <= self.floor <= self.start <= self.ceiling <= 100:
             raise ValueError(f"role {self.key}: needs 0 <= floor <= start <= ceiling <= 100")
 
-    def label(self, lang: str) -> str:
-        if lang in self.names:
-            return self.names[lang]
-        return say(lang, f"role.{self.key}") if has(f"role.{self.key}") else self.names.get("en", self.key)
+    def label(self, lang: str | Words) -> str:
+        if code(lang) in self.names:
+            return self.names[code(lang)]
+        key = f"role.{self.key}"
+        return say(lang, key) if has(key, lang) else self.names.get("en", self.key)
 
 
 ROLES = (Role("creator", floor=80, ceiling=100, start=100, fades=False, unique=True),
@@ -64,13 +66,13 @@ class Relationship:
     updated_at: float  # when closeness was last written (given, or a day of contact)
 
 
-class Relations:
+class Relations(Speaks):
     def __init__(self, store: Store, space: str, *, roles: tuple[Role, ...] = ROLES, growth: float = 1.0,
-                 fade_days: float = 30.0, zone: tzinfo | None = None, display_language: str = "en",
+                 fade_days: float = 30.0, zone: tzinfo | None = None, display_language: str | Words = "en",
                  clock: Callable[[], float] = time.time):
         self.store, self.space, self.roles = store, space, {role.key: role for role in roles}
         self.growth, self.fade_days, self.zone = growth, fade_days, zone
-        self.display_language, self.clock = display_language, clock
+        self.words, self.clock = Words.of(display_language), clock
 
     # ---- reading -------------------------------------------------------------------------------------
     def get(self, subject: str, now: float | None = None) -> Relationship | None:
@@ -94,7 +96,7 @@ class Relations:
         relationship = self.get(subject)
         if relationship is None:
             return ""
-        lang = self.display_language
+        lang = self.words
         near = next(name for least, name in NEAR if round(relationship.closeness) >= least)
         return say(lang, "relation.line", who=user_name or subject, role=self._role(relationship.role).label(lang),
                    near=say(lang, f"near.{near}"))
@@ -102,7 +104,8 @@ class Relations:
     # ---- changing ------------------------------------------------------------------------------------
     def set(self, subject: str, role: str, *, closeness: float | None = None) -> Relationship:
         """Give a person a role (the host's call, never a model's). `closeness` defaults to the role's start, or to
-        the person's present closeness when the role stays the same; it must lie within the role's band."""
+        the person's present closeness when the role stays the same (then nothing changes: a host may say it at
+        every start); it must lie within the role's band."""
         texts.required(subject, "subject")
         if role not in self.roles:
             raise ValueError(f"no role {role!r}; the roles are {', '.join(self.roles)}")
@@ -110,8 +113,10 @@ class Relations:
         with self.store.transaction():
             now = self.clock()
             present = self.get(subject, now)
+            if closeness is None and present is not None and present.role == role:
+                return present  # already so: the day's contact and the fading stay as they were
             if closeness is None:
-                closeness = present.closeness if present is not None and present.role == role else kind.start
+                closeness = kind.start
             if isinstance(closeness, bool) or not isinstance(closeness, (int, float)) or not math.isfinite(closeness) \
                     or not kind.floor <= closeness <= kind.ceiling:
                 raise ValueError(f"closeness for {role} is a number from {kind.floor:g} to {kind.ceiling:g}")
@@ -120,20 +125,22 @@ class Relations:
                                        "subject != ?", (self.space, role, subject))
                 if other is not None:
                     raise ValueError(f"{other['subject']} is already the {role}; give them another role first")
-            since = present.since if present is not None and present.role == role else now
+            same = present is not None and present.role == role
+            since = present.since if same else now
+            updated = max(now, present.updated_at) if same else now  # (a clock set back moves no time back)
             self.store.execute(
                 "insert or replace into relationships (space, subject, role, closeness, since, updated_at) values "
-                "(?, ?, ?, ?, ?, ?)", (self.space, subject, role, float(closeness), since, now))
-        return Relationship(subject, role, float(closeness), since, now)
+                "(?, ?, ?, ?, ?, ?)", (self.space, subject, role, float(closeness), since, updated))
+        return Relationship(subject, role, float(closeness), since, updated)
 
     def seen(self, subject: str) -> Relationship | None:
         """A contact: the first one on a day (in the companion's zone) grows closeness by `growth`. A person with no
-        role is left without one."""
+        role is left without one. A clock that went back changes nothing (time never moves backwards here)."""
         with self.store.transaction():
             now = self.clock()
             present = self.get(subject, now)
-            if present is None:
-                return None
+            if present is None or now <= present.updated_at:
+                return present
             kind = self._role(present.role)
             closeness = present.closeness
             if dates.local(present.updated_at, self.zone).date() < dates.local(now, self.zone).date():
@@ -156,10 +163,11 @@ class Relations:
         role's band (0-100 for a role this host does not have), times are seconds, and a second holder of a
         one-person role (a second creator) is skipped."""
         now = self.clock()
+        rows = [row for row in rows if isinstance(row, dict)]
+        # one-person roles last, so who holds one does not depend on the order of the rows
+        rows.sort(key=lambda row: self._role(row["role"]).unique if isinstance(row.get("role"), str) else False)
         with self.store.transaction():
             for row in rows:
-                if not isinstance(row, dict):
-                    continue
                 subject, role = row.get("subject"), row.get("role")
                 if not isinstance(subject, str) or not subject.strip() or not isinstance(role, str) or \
                         not role.strip():
@@ -174,8 +182,9 @@ class Relations:
                 since = dates.seconds(row.get("since"))
                 self.store.execute(
                     "insert or replace into relationships (space, subject, role, closeness, since, updated_at) "
-                    "values (?, ?, ?, ?, ?, ?)", (self.space, subject, role, closeness, min(now, since or now),
-                                                  min(now, updated or now)))
+                    "values (?, ?, ?, ?, ?, ?)", (self.space, subject, role, closeness,
+                                                  now if since is None else min(now, since),
+                                                  now if updated is None else min(now, updated)))
 
     # ---- inside --------------------------------------------------------------------------------------
     def _role(self, key: str) -> Role:
@@ -186,8 +195,8 @@ class Relations:
         kind = self._role(row["role"])
         closeness = row["closeness"]
         if kind.fades and self.fade_days > 0:
-            faded = closeness - max(0.0, now - row["updated_at"]) / (self.fade_days * DAY)
-            closeness = max(min(closeness, kind.floor), faded)  # down to the floor, never below it
+            closeness -= max(0.0, now - row["updated_at"]) / (self.fade_days * DAY)
+        closeness = min(kind.ceiling, max(kind.floor, closeness))  # within the band, as the host has it now
         return Relationship(row["subject"], row["role"], closeness, row["since"], row["updated_at"])
 
 

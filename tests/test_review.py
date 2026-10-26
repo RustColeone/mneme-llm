@@ -1,6 +1,7 @@
 """Regression tests for the problems a pre-release review found, one test (or a few) per finding."""
 
 import asyncio
+import contextlib
 import io
 import json
 import os
@@ -966,6 +967,276 @@ class RefactorReviewTests(unittest.TestCase):
         m.observe("u", (pair for pair in [("Leo", "I play cello"), ("bot", "nice")]), user_name="Leo", mood=False)
         self.assertEqual(seen, ["Leo: I play cello\nbot: nice"])
 
+
+
+# ---- the review of relationships, floors and the config ---------------------------------------------------------
+
+def geometric(alike_topics=0.5, alike_notes=0.5, scale=1.0, poison=None):
+    """A fake model of known geometry for the floor's set (see tests/test_calibrate.py): a message and its note share
+    a topic direction; `alike_topics` of a shared one sets how alike unrelated texts are; a file's "note <n>" has its
+    own direction and `alike_notes` of the shared one. `scale` leaves the vectors unnormalized; `poison` is a text
+    whose vector is NaN."""
+    from mneme_llm.meaning import calibrate
+    places = {}
+    for index, (_, message, note) in enumerate(calibrate.TOPICS):
+        places[message], places[note] = index, index
+
+    def embed(texts):
+        vectors = []
+        for text in texts:
+            vector = [0.0] * 1300
+            if text == poison:
+                vector[0] = float("nan")
+            elif text in places:
+                vector[places[text]] = 1.0
+                vector[-1] = alike_topics
+            elif text.startswith("note "):
+                vector[40 + int(text.split()[1])] = 1.0
+                vector[-1] = alike_notes
+            else:
+                vector[-1] = 1.0
+            vectors.append([value * scale for value in vector])
+        return vectors
+    return embed
+
+
+class FloorReviewTests(unittest.TestCase):
+    def test_a_measurement_with_a_vector_that_is_not_finite_stores_nothing_and_is_tried_again(self):
+        from mneme_llm.meaning import FLOOR, calibrate
+        poisoned = {"on": True}
+
+        def embed(texts):
+            return geometric(poison=calibrate.TOPICS[3][1] if poisoned["on"] else None)(texts)
+        m = Mneme(":memory:", "t", luna=False, micro=False, memory_language=None, embed=Embeddings(embed, name="g"))
+        m.remember("u", "note 1", kind="fact")
+        asyncio.run(m.arecall("u", "x"))
+        self.assertIsNone(calibrate.read(m.store, "g"))
+        self.assertEqual(m.meaning.floor, FLOOR)
+        poisoned["on"], m.meaning.rest.until = False, 0
+        asyncio.run(m.arecall("u", "x"))
+        self.assertTrue(0.05 <= m.meaning.floor <= 0.9)
+
+    def test_the_sets_floor_is_kept_within_bounds(self):
+        m = Mneme(":memory:", "t", luna=False, micro=False, memory_language=None,
+                  embed=Embeddings(geometric(alike_topics=2.4), name="g"))  # unrelated pairs 0.85 alike
+        m.remember("u", "note 1", kind="fact")
+        asyncio.run(m.arecall("u", "x"))
+        self.assertEqual(m.meaning.floor, 0.9)
+
+    def test_a_floor_of_one_does_not_break_recall(self):
+        m = Mneme(":memory:", "t", luna=False, micro=False, memory_language=None,
+                  embed=Embeddings(geometric(), name="g", floor=1.0))
+        m.remember("u", "note 1", kind="fact")
+        asyncio.run(m.arecall("u", "note 1"))
+
+    def test_a_hosts_own_embedder_may_return_unnormalized_vectors(self):
+        class Loud:
+            name, floor = "loud", None
+
+            async def embed(self, texts):
+                return geometric(scale=5.0)(texts)
+        m = Mneme(":memory:", "t", luna=False, micro=False, memory_language=None, embed=Loud())
+        m.remember("u", "note 1", kind="fact")
+        found = asyncio.run(m.arecall("u", "unrelated words"))
+        stored = unpack(m.store.row("select vector from vectors")["vector"])
+        self.assertAlmostEqual(sum(value * value for value in stored), 1.0, places=4)
+        self.assertNotIn("similar", found.explain())  # 0.45 alike: under the measured floor
+
+    def test_vectors_that_are_not_finite_or_of_another_length_are_left_out(self):
+        def embed(texts):
+            return [[float("nan"), 1.0] if "bad" in text else [1.0, 0.0] for text in texts]
+        m = Mneme(":memory:", "t", luna=False, micro=False, memory_language=None,
+                  embed=Embeddings(embed, name="e", floor=0.3))
+        m.remember("u", "a bad note", kind="fact")
+        m.remember("u", "a good note", kind="fact")
+        asyncio.run(m.arecall("u", "good"))
+        self.assertEqual(m.store.row("select count(*) as n from vectors")["n"], 1)
+        m.store.execute("update vectors set vector = ?", (pack([1.0, 0.0, 0.0]),))  # as if another model
+        found = asyncio.run(m.meaning.find(m.memory.notes("u"), "good"))
+        self.assertEqual(found.similarities, {})
+
+    def test_the_files_sample_is_spread_over_all_its_notes(self):
+        def embed(texts):  # the older half of the notes 0.2 alike, the newer half 0.5
+            return [geometric(alike_notes=1.0 if text.startswith("note ") and int(text.split()[1]) >= 500
+                              else 0.5)([text])[0] for text in texts]
+        m = Mneme(":memory:", "t", luna=False, micro=False, memory_language=None, embed=Embeddings(embed, name="g"))
+        for n in range(1000):
+            m.remember("u", f"note {n}", kind="fact")
+        asyncio.run(m.arecall("u", "x"))
+        self.assertGreater(m.report()["meaning"]["floor"]["file"]["background"], 0.25)  # not the older notes alone
+
+    def test_a_file_with_too_few_vectors_is_tried_again_later_and_keeps_its_label(self):
+        m = Mneme(":memory:", "t", luna=False, micro=False, memory_language=None,
+                  embed=Embeddings(geometric(), name="g"))
+        for n in range(250):
+            m.remember("u", f"note {n}", kind="fact")
+        asyncio.run(m.meaning.prepare_vectors(m.memory.notes("u")[:150]))  # most notes have no vector yet
+        report = m.report()["meaning"]["floor"]
+        self.assertEqual((report["by"], report["file"]["tried"]), ("set", 250))
+        for n in range(250, 360):
+            m.remember("u", f"note {n}", kind="fact")
+        asyncio.run(m.arecall("u", "x"))  # 100 notes later, with vectors for all
+        report = m.report()["meaning"]["floor"]
+        self.assertEqual((report["by"], report["file"]["at"]), ("file", 360))
+        m.store.execute("delete from vectors where memory_id > 100")
+        for n in range(360, 800):
+            m.remember("u", f"note {n}", kind="fact")
+        asyncio.run(m.meaning._measure())  # due, but too few vectors: the shift measured before stays, labelled
+        self.assertEqual(m.report()["meaning"]["floor"]["by"], "file")
+
+
+class RelationsReviewTests(unittest.TestCase):
+    def test_a_band_the_host_narrowed_holds_the_people_already_in_it(self):
+        from mneme_llm import Role
+        m = plain()
+        m.relate("mum", "family", closeness=65)
+        m.relate("amy", "friend", closeness=90)
+        roles = (Role("family", floor=70, ceiling=100, start=80), Role("friend", floor=20, ceiling=80, start=50))
+        later = Mneme(":memory:", "t", luna=False, micro=False, embed=False, memory_language=None, roles=roles)
+        later.store, later.relations.store = m.store, m.store
+        self.assertEqual({r.subject: r.closeness for r in later.relations.all()}, {"mum": 70.0, "amy": 80.0})
+        later.relate("mum", "family")  # saying it again raises nothing
+
+    def test_saying_the_same_role_again_keeps_the_days_growth(self):
+        clock = [1_760_000_000.0]
+        m = plain(clock=lambda: clock[0])
+        m.relate("amy", "friend")
+        for _ in range(5):
+            clock[0] += 86400
+            m.relate("amy", "friend")  # as a host might at every start
+            m.relations.seen("amy")
+        self.assertAlmostEqual(m.relations.get("amy").closeness, 55 - 5 / 30)  # a point a day, less a day's fading
+
+    def test_a_clock_set_back_grows_nothing_twice(self):
+        clock = [1_760_000_000.0]
+        m = plain(clock=lambda: clock[0])
+        m.relate("amy", "friend")
+        clock[0] += 86400
+        m.relations.seen("amy")
+        clock[0] -= 2 * 86400  # back across midnight, then forward again
+        m.relations.seen("amy")
+        clock[0] += 2 * 86400 + 60
+        m.relations.seen("amy")
+        self.assertAlmostEqual(m.relations.get("amy").closeness, 51 - 1 / 30, places=3)  # one day's growth only
+
+    def test_import_keeps_a_time_of_zero_and_one_creator_whatever_the_order(self):
+        m = plain()
+        m.relate("a", "creator")
+        m.relations.import_rows([{"subject": "b", "role": "creator", "since": 0}, {"subject": "a", "role": "friend"}])
+        self.assertEqual({r.subject: r.role for r in m.relations.all()}, {"b": "creator", "a": "friend"})
+        self.assertEqual(m.relations.get("b").since, 0.0)
+
+    def test_the_cli_changes_closeness_within_the_present_role(self):
+        from mneme_llm.cli import main
+        path = os.path.join(tempfile.mkdtemp(), "c.db")
+
+        def run(*args):
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                return main(["--db", path, *args]), out.getvalue()
+        self.assertEqual(run("relate", "a", "--closeness", "80")[0], 2)  # no role to change it in
+        run("relate", "a", "friend")
+        self.assertIn("closeness 80", run("relate", "a", "--closeness", "80")[1])
+
+
+class ConfigReviewTests(unittest.TestCase):
+    def test_a_sentence_given_only_in_another_language_breaks_nothing(self):
+        m = plain(config={"roles": [{"key": "teacher"}], "emotions": [{"key": "happy"}, {"key": "proud"}],
+                          "messages": {"zh": {"role.teacher": "你的老师", "emotion.proud": "骄傲"}}})
+        m.relate("wu", "teacher")
+        m.mood.apply("wu", emotions={"proud": 40})
+        self.assertIn("(Ms Wu is teacher; you are friendly", m.prompt("wu", user_name="Ms Wu").replace(
+            "on friendly terms", "friendly"))  # the key itself, as with no sentence at all
+        self.assertIn("proud 40", m.mood.describe("wu"))
+
+    def test_a_companion_with_a_config_does_not_read_the_file_again(self):
+        path = os.path.join(tempfile.mkdtemp(), "m.db")
+        plain_file = Mneme(path, "t", luna=False, micro=False, embed=False, memory_language=None)
+        plain_file.close()
+        for given in ("/no/such/file.toml", {"voice": {"pitch": 1}}):
+            m = Mneme(path, "t", luna=False, micro=False, embed=False, memory_language=None, config=given)
+            m.close()
+
+    def test_texts_that_end_in_quotes_survive_the_round_trip(self):
+        import tomllib
+        from mneme_llm.config import load, to_toml
+        for text in ('Example:\n"""', 'a\n""""""', 'x\n"', '\n""', '"\n"', 'say "hi"\nand ""'):
+            values = {"prompts.judge": text}
+            self.assertEqual(load(tomllib.loads(to_toml(values, header=""))), values, repr(text))
+
+    def test_a_rolled_back_transaction_leaves_the_config_as_the_file_has_it(self):
+        m = plain()
+        data = plain(config={"companion": {"name": "Ghost"}}).export_data()
+        for change in (lambda: m.config.set("companion.name", "Ghost"), lambda: m.import_data(data, config=True)):
+            with self.assertRaises(RuntimeError):
+                with m.store.transaction():
+                    change()
+                    raise RuntimeError("undo")
+            self.assertEqual(m.config.get("companion.name"), "the assistant")
+            self.assertNotIn("Ghost", json.dumps(m.export_data()["config"]))
+
+    def test_a_number_too_large_for_a_float_is_a_wrong_value(self):
+        m = plain()
+        with self.assertRaises(ValueError):
+            m.config.set("mood.step", 10 ** 400)
+        with self.assertRaises(ValueError):
+            plain(config={"mood": {"step": 10 ** 400}})
+        self.assertEqual(m.config.import_rows([{"key": "mood.step", "value": 10 ** 400},
+                                               {"key": "mood.gain", "value": 30}]), 1)
+        m.store.execute("update config set value = ? where key = 'mood.step'", ("1" + "0" * 400,))
+        self.assertIn("mood.step", m.config.invalid)
+        self.assertEqual(m.config.mood_settings().step, 6.0)
+
+    def test_the_mood_band_holds_for_defaults_other_processes_and_imports(self):
+        m = plain(config={"mood": {"floor": 80, "baseline": 85, "ceiling": 90}})
+        with self.assertRaises(ValueError):
+            m.config.load_defaults(["mood.baseline"])  # 70 would fall under the floor
+        self.assertEqual(m.config.get("mood.baseline"), 85)
+        path = os.path.join(tempfile.mkdtemp(), "m.db")
+        a = Mneme(path, "t", luna=False, micro=False, embed=False, memory_language=None)
+        b = Mneme(path, "t", luna=False, micro=False, embed=False, memory_language=None)  # opened before a's change
+        a.config.apply({"mood": {"floor": 60, "baseline": 65}})
+        with self.assertRaises(ValueError):
+            b.config.set("mood.baseline", 50)  # checked against the file, not what b read at opening
+        a.close(), b.close()
+        high = plain(config={"mood": {"floor": 60, "baseline": 70, "ceiling": 80}})
+        band = [{"key": "mood.floor", "value": 0}, {"key": "mood.baseline", "value": 30},
+                {"key": "mood.ceiling", "value": 50}]
+        high.config.import_rows(band)
+        self.assertEqual([high.config.get(f"mood.{k}") for k in ("floor", "baseline", "ceiling")], [0, 30, 50])
+
+    def test_readers_never_see_a_config_half_written(self):
+        m = plain(config={"companion": {"name": "Fish"}})
+        seen, stop = set(), threading.Event()
+
+        def read():
+            while not stop.is_set():
+                seen.add(m.config.get("companion.name"))
+        reader = threading.Thread(target=read)
+        reader.start()
+        for n in range(30):
+            m.config.set("mood.threshold", 0.5 + n / 100)
+        stop.set()
+        reader.join()
+        self.assertEqual(seen, {"Fish"})
+
+    def test_small_points_of_the_config(self):
+        from mneme_llm.cli import _toml_value
+        from mneme_llm.i18n import Words, say
+        m = plain()
+        self.assertEqual((_toml_value("42", text_key=True), _toml_value('"42"', text_key=True),
+                          _toml_value("42")), ("42", "42", 42))
+        for zone in ("UTC+0860", "UTC+15"):
+            with self.assertRaises(ValueError):
+                m.config.set("companion.zone", zone)
+        with self.assertRaises(ValueError):
+            m.config.apply({}, origin="magic")
+        m.config.set("messages.en.mood.separator", " ")  # a space may be a separator
+        self.assertEqual(say(Words("zh-TW"), "face.good"), "开心")  # a regional code falls back to its language
+        de = plain(config={"companion": {"display_language": "de"},
+                           "messages": {"de": {"mood.line": "Stimmung {value}/100", "mood.now": "({mood})"}}})
+        de.mood.apply("u", delta=4, emotions={}, reason="")
+        self.assertTrue(de.mood.news("u").startswith("(Stimmung"))  # lowercased in English only
 
 if __name__ == "__main__":
     unittest.main()

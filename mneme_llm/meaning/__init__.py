@@ -17,13 +17,14 @@ measuring in `calibrate.py`; this module has the tiers work together. It compute
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Sequence
 
-from ..providers import Rest
+from ..providers import Rest, Unavailable
 from . import calibrate, ledger
 from .embedders import FLOOR, Embedder, Embeddings, OpenAIEmbeddings
-from .vectors import Vector, cosine, normalize, pack, unpack
+from .vectors import Vector, cosine, normalize, pack, unpack, usable
 
 log = logging.getLogger("mneme_llm.meaning")
 
@@ -68,9 +69,10 @@ class Meaning:
         gives the unify tier a chat model for this call."""
         await self.prepare_vectors(notes)
         found = await self.query(query, complete=complete)
-        if found.vector is not None:
+        if found.vector is not None:  # (a vector of another length is from another model under the same name)
             found.similarities = {id: cosine(found.vector, vector)
-                                  for id, vector in self.vectors([note.id for note in notes]).items()}
+                                  for id, vector in self.vectors([note.id for note in notes]).items()
+                                  if len(vector) == len(found.vector)}
         elif self.unify is not None and self.unify.ready(complete):  # nothing placed it: glosses help word matching
             found.glosses = await self.unify.glosses(notes, complete=complete)
         return found
@@ -80,7 +82,9 @@ class Meaning:
         centroids nothing: they hold words from notes only."""
         if self.embedder is not None and self.rest.up():
             try:
-                vector = (await self.embedder.embed([text]))[0]
+                vector = usable((await self.embedder.embed([text]))[0])
+                if vector is None:
+                    raise Unavailable(f"{self.name} gave the query a vector that is not finite")
             except Exception as error:
                 self._failed(error)
             else:
@@ -118,6 +122,8 @@ class Meaning:
             batch = missing[start:start + self.BATCH]
             try:
                 vectors = await self.embedder.embed([note.text for note in batch])
+                if len(vectors) != len(batch):
+                    raise Unavailable(f"{self.name} returned {len(vectors)} vectors for {len(batch)} texts")
             except Exception as error:
                 self._failed(error)
                 break
@@ -126,7 +132,9 @@ class Meaning:
             with self.store.transaction():
                 fresh = []
                 for note, vector in zip(batch, vectors):
-                    if self.store.row("select 1 from memories where id = ? and text = ?", (note.id, note.text)) is None:
+                    vector = usable(vector)  # normalized; a vector that is not finite is not kept
+                    if vector is None or self.store.row("select 1 from memories where id = ? and text = ?",
+                                                        (note.id, note.text)) is None:
                         continue
                     if self.store.execute("insert or ignore into vectors (memory_id, embedder, vector) values "
                                           "(?, ?, ?)", (note.id, self.name, pack(vector))).rowcount:
@@ -152,8 +160,9 @@ class Meaning:
                     self._failed(error)
                     return
                 calibrate.write(self.store, self.name, record)
-            if calibrate.due(self.store, record):
-                calibrate.write(self.store, self.name, calibrate.refine(self.store, self.name, record))
+            if calibrate.due(self.store, record):  # (thousands of products: off the event loop)
+                record = await asyncio.to_thread(calibrate.refine, self.store, self.name, record)
+                calibrate.write(self.store, self.name, record)
         finally:
             self._measuring = False
 

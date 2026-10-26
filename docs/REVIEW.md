@@ -13,11 +13,12 @@ What was checked before the first release, what was fixed, and, in detail, what 
 | Four bug-review passes | the whole package, then each pass's fixes and what they could have broken | 48 findings, all fixed |
 | Architecture review | coupling, layering, where each rule lives, whether the optional tiers really are optional | 11 refactors, all done (the last two after the owner's decisions, below) |
 | Review of the restructuring | everything the refactor could have changed or broken | 9 findings and 5 suspicions, all fixed |
+| Review of the decided items | relationships, the measured floors and the config, by two reviewers who had not seen the code written | 17 findings and 10 smaller points; all the findings and 9 of the points fixed, each with a regression test (`tests/test_review.py`) |
 | Stress and edge-case suite | `tests/test_stress.py`: random operations, two connections on one file, six threads, three processes, concurrent coroutines, a 20,000-note history (100,000 at five times the size), 300+ subjects, a 50,000-word query, a 1 MB tool call, a writer killed mid-transaction, odd text and odd values at every entry point | 7 more problems found, all fixed; after each test, `tests/invariants.py` checks every rule of the file |
 | Fuzzing | 370 seeds × 400 random operations over the course of the fixes (the last 30 on the release candidate), invariants checked every 100 | no broken rule |
 | Removable tiers | `tests/test_removable.py`, and the whole suite on a copy with the three tiers deleted | passes; 31 tier tests skip, nothing else fails |
 
-On the release candidate: 197 tests pass in about 18 s; the stress tests pass at five times their size in 31 s; the
+On the release candidate: 237 tests pass in about 25 s; the stress tests pass at five times their size in 31 s; the
 wheel and the sdist build and pass `twine check --strict`; the whale_chan plugin in the harness (the first host)
 passes its 28 tests against it.
 
@@ -74,6 +75,7 @@ The owner decided on each open item on 2026-10-25. What was done:
 | A note can still steer the model | by design | a user may want it; a host that does not can pre-filter |
 | Nothing said who a person is to the companion | build the proposed relationships, with a special role, the creator, and closeness from 0 to 100 | `Mneme.relate` (and the CLI's `relate`, `relations`): roles creator (one per space, never fades), family, friend, acquaintance or a host's own, each with a band of closeness; closeness grows a point on each day the person talks to the companion and fades a point a month without, within the band, so family stays family; a close person's words move the mood up to 1.5×, a distant one's down to 0.5×; the prompt says who they are. A new table, `relationships` (schema 1). |
 | The similarity floor was measured for one model | a bundled calibration set, refined by the file's own notes | `meaning/calibrate.py`: 32 topics in six languages embedded once per model (one request, about 550 tokens) place the floor (0.311 for the default model, 0.274 for the same model at 1,536 dimensions); from 200 notes, and each time they double, the file's own notes move it by up to 0.1. A `floor=` of the host's own skips it. |
+| The prompts were fixed in the code | configurable at setup: a config file seeds the database, which keeps its own copy, modifiable | `config.py` and `prompts.py`: a companion's name, languages, settings, roles, feelings, every prompt and every sentence (167 keys) come from a TOML file the first time a database meets the companion; from then on the database's copy is used and changed by `set`, `apply` and `load_defaults` (the CLI's `config` commands); upgrades never change it by themselves (`config check` lists newer defaults). Everything is editable, the data-not-instructions sentences included; exports carry the config, imports apply it only when asked. Python 3.11+ (for `tomllib`). |
 | Two tokenizers on one file; times before 1970; slowness after a reset; encryption at rest; the CLI's help in English | not worth patching now | left as they are, below |
 
 ## What is still open
@@ -125,7 +127,7 @@ plugin is already updated; other code written against the pushed build needs the
 ## Verification
 
 CI runs the whole suite, the suite with the tiers deleted and the stress tests at five times their size on Python
-3.10–3.13 on Linux and 3.13 on Windows and macOS. Not covered: Python 3.10–3.12 on Windows and macOS, and SQLite
+3.11–3.14 on Linux and 3.13 on Windows and macOS. Not covered: Python 3.11, 3.12 and 3.14 on Windows and macOS, and SQLite
 builds other than those the runners ship. A host passing `ZoneInfo(...)` as `zone=` on Windows needs
 `pip install tzdata`. The long fuzz is not in CI; `python3 -m tests.fuzz [seeds] [operations] [first seed]`
 repeats it anywhere.

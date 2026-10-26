@@ -1,11 +1,17 @@
 """Every word and sentence mneme-llm shows a person or a model, in English (`en`) and Chinese (`zh`): notes,
 mood, relationships, tool replies, dates, faces and the built-in feelings and roles.
 
-`say(lang, key, **values)` picks the language (English when a key or language is missing). To add a language,
-add a table with the same keys; `tests/test_i18n.py` checks that every table has every key and placeholder.
+`say(lang, key, **values)` picks the language (English when a key or language is missing). `lang` is a language
+code, or a companion's `Words`: its own sentences (from its config) over these. To add a language, add a table here
+or in a companion's config; `tests/test_i18n.py` checks that every table here has every key and placeholder.
 """
 
 from __future__ import annotations
+
+import re
+from typing import Mapping
+
+PLACEHOLDER = re.compile(r"\{([A-Za-z_]\w*)\}")
 
 MESSAGES = {
     "en": {
@@ -149,11 +155,75 @@ MESSAGES = {
 LANGUAGES = tuple(MESSAGES)
 
 
-def say(lang: str, key: str, **values) -> str:
+class Words:
+    """The sentences of one companion in one language: its own (`own[lang][key]`, from its config), else the
+    built-in ones; then the same for the language's base ("zh" for "zh-TW"); then English."""
+
+    def __init__(self, language: str = "en", own: Mapping[str, Mapping[str, str]] | None = None):
+        self.language, self.own = language, own or {}
+
+    def _tables(self):
+        languages = dict.fromkeys([self.language, self.language.split("-")[0], "en"])
+        for lang in languages:
+            yield lang, self.own.get(lang)
+            yield lang, MESSAGES.get(lang)
+
+    def source(self, key: str) -> str | None:
+        """The language whose sentence for `key` is used (None when there is none)."""
+        return next((lang for lang, table in self._tables() if table and table.get(key)), None)
+
+    def text(self, key: str) -> str:
+        lang = self.source(key)
+        if lang is None:
+            raise KeyError(key)
+        return next(table[key] for found, table in self._tables() if found == lang and table and table.get(key))
+
+    def has(self, key: str) -> bool:
+        return self.source(key) is not None
+
+    @classmethod
+    def of(cls, language: str | Words) -> Words:
+        return language if isinstance(language, Words) else cls(language)
+
+
+class Speaks:
+    """For a part that shows sentences: `words` are its companion's, `display_language` names their language (set
+    it, and the companion's own sentences for that language are used)."""
+    words: Words
+
+    @property
+    def display_language(self) -> str:
+        return self.words.language
+
+    @display_language.setter
+    def display_language(self, language: str) -> None:
+        self.words = Words(language, self.words.own)
+
+
+def say(lang: str | Words, key: str, **values) -> str:
+    if isinstance(lang, Words):
+        return fill(lang.text(key), **values)
     table = MESSAGES.get(lang) or MESSAGES["en"]
-    return (table.get(key) or MESSAGES["en"][key]).format(**values)
+    return fill(table.get(key) or MESSAGES["en"][key], **values)
 
 
-def has(key: str) -> bool:
-    """Whether there is a sentence for `key` (the built-in feelings have one; a host's own may not)."""
-    return key in MESSAGES["en"]
+def has(key: str, lang: str | Words | None = None) -> bool:
+    """Whether there is a sentence for `key` (the built-in feelings and roles have one; a host's own may not, unless
+    the companion's config gives it one)."""
+    return lang.has(key) if isinstance(lang, Words) else key in MESSAGES["en"]
+
+
+def code(lang: str | Words) -> str:
+    """The language code of `lang`."""
+    return lang.language if isinstance(lang, Words) else lang
+
+
+def fill(template: str, **values) -> str:
+    """`template` with each `{name}` it has a value for replaced; any other brace is left as it is, so a text may
+    hold JSON or a placeholder it does not use."""
+    return PLACEHOLDER.sub(lambda found: str(values[found.group(1)]) if found.group(1) in values else found.group(0),
+                           template)
+
+
+def placeholders(template: str) -> set[str]:
+    return set(PLACEHOLDER.findall(template))

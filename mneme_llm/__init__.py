@@ -1,7 +1,7 @@
 """mneme-llm: memory and mood for AI companions, kept in one SQLite file that any model, and any project, can use.
 
     from mneme_llm import Mneme
-    m = Mneme("companion.db", space="dafeiyu", display_language="zh", companion_name="大肥鱼", complete=my_model)
+    m = Mneme("companion.db", space="dafeiyu", config="dafeiyu.toml", complete=my_model)
     m.relate("discord:42", "creator")
     m.remember("discord:42", "养了一只叫年糕的猫", kind="fact", key="pet.name", importance=4)
     system_prompt += await m.aprompt("discord:42", query=user_message, user_name="Leo")
@@ -19,14 +19,15 @@ from datetime import tzinfo
 from typing import Callable
 
 from . import dates, exchange as exchanges, providers
-from .capture import WORTH, notes_in, reflect_prompt, writer_prompt
+from .capture import WORTH_NAME, notes_in, reflect_prompt, worth, writer_prompt
+from .config import STORED, Config
 from .decide import Answer, Chain, Choice, Luna, Predicate, Prompt, Score, fit
-from .i18n import say
+from .i18n import Words, say
 from .meaning import Embeddings, Meaning, OpenAIEmbeddings, ledger
 from .memory import KINDS, Memory, Note, Recall
 from .mood import Emotion, Mood, MoodEvent, MoodSettings
 from .providers import Unavailable, run
-from .relations import ROLES, Relations, Relationship, Role
+from .relations import Relations, Relationship, Role
 from .store import SCHEMA_VERSION, Store
 
 __version__ = "0.1.0"
@@ -52,8 +53,13 @@ class Observation:
 class Mneme:
     """Memory, mood, and the decision and meaning tiers of one space, in one object.
 
+    config         the companion's config file (TOML; or a table already read), taken when the database first
+                   meets this space: its name, languages and settings, its roles and feelings, its prompts and
+                   sentences (`config.py`). From then on the database keeps its own copy (`m.config`), whatever
+                   file is given. Each setting below that is left out comes from that copy; one given here wins
+                   for this process and is not stored.
     display_language  the language of everything shown to people and to the chat model: the notes' header,
-                   dates, moods, tool replies ("en" or "zh")
+                   dates, moods, tool replies ("en", "zh", or one the config gives sentences for)
     companion_name the companion's own name (the person's is given per call, as `user_name`)
     complete       your own chat model, `complete(system, user) -> str` (sync or async). It is the last tier of
                    decisions and of meaning, and it writes notes (`observe`, `capture`) and the profile card
@@ -71,30 +77,58 @@ class Mneme:
     """
     WRITER_INPUT = 12000  # characters of an exchange the note writer reads: its opening and its newest words
 
-    def __init__(self, path: str = "mneme.db", space: str = "default", *, display_language: str = "en",
-                 companion_name: str = "the assistant", zone: tzinfo | None = None, complete=None, luna=True,
-                 micro=True, embed=True, meaning_micro=True, memory_language="English",
-                 mood: MoodSettings = MoodSettings(), roles: tuple[Role, ...] = ROLES, half_life_days: float = 30.0,
-                 daily_quota: int = 8, clock: Callable[[], float] = time.time):
+    def __init__(self, path: str = "mneme.db", space: str = "default", *, config=None,
+                 display_language: str = STORED, companion_name: str = STORED, zone: tzinfo | None = STORED,
+                 complete=None, luna=True, micro=True, embed=True, meaning_micro=True, memory_language=STORED,
+                 mood: MoodSettings = STORED, roles: tuple[Role, ...] = STORED, half_life_days: float = STORED,
+                 daily_quota: int = STORED, clock: Callable[[], float] = time.time):
         self.store = Store(path)
-        ledger.repair(self.store)  # centroids changed by something that kept no account start over
-        self.space, self.complete = space, complete
-        self.display_language, self.companion_name = display_language, companion_name
+        try:
+            ledger.repair(self.store)  # centroids changed by something that kept no account start over
+            self.config = Config(self.store, space, clock)
+            self.config.seed(config)  # a new companion: the file over the defaults; otherwise its own copy
+        except BaseException:
+            self.store.close()
+            raise
+        own = self.config
+
+        def stored(given, key):
+            return own.get(key) if given is STORED else given
+        if memory_language is STORED:
+            memory_language = own.get("companion.memory_language") or None  # "" turns the tier off
+        self.space, self.complete, self.prompts = space, complete, own.prompts()
+        self.companion_name = stored(companion_name, "companion.name")
+        zone = own.zone() if zone is STORED else zone
+        words = Words(stored(display_language, "companion.display_language"), own.messages())
         self._tiers = [Luna() if luna is True else luna] if luna else []
         Micro = _optional("decide.micro", "Micro") if micro is True else None
         self.micro = (Micro(self.store) if Micro is not None else None) if micro is True else micro or None
         self._tiers += [self.micro] if self.micro is not None else []
         self.decider = self._chain(complete)
         self.meaning = self._meaning(embed, meaning_micro, memory_language, complete)
-        self.memory = Memory(self.store, space, half_life_days=half_life_days, daily_quota=daily_quota, zone=zone,
-                             display_language=display_language, meaning=self.meaning, clock=clock)
-        self.mood = Mood(self.store, space, decider=self.decider, settings=mood, companion_name=companion_name,
-                         display_language=display_language, clock=clock)
-        self.relations = Relations(self.store, space, roles=roles, zone=zone, display_language=display_language,
+        self.memory = Memory(self.store, space, half_life_days=stored(half_life_days, "memory.half_life_days"),
+                             daily_quota=stored(daily_quota, "memory.daily_quota"),
+                             max_notes=own.get("memory.max_notes"), semantic_window=own.get("memory.semantic_window"),
+                             zone=zone, display_language=words, meaning=self.meaning, clock=clock)
+        self.mood = Mood(self.store, space, decider=self.decider, settings=own.mood_settings() if mood is STORED
+                         else mood, companion_name=self.companion_name, display_language=words, prompts=self.prompts,
+                         clock=clock)
+        self.relations = Relations(self.store, space, roles=own.roles() if roles is STORED else roles,
+                                   growth=own.get("relations.growth"),
+                                   fade_days=own.get("relations.fade_days"), zone=zone, display_language=words,
                                    clock=clock)
 
+    @property
+    def display_language(self) -> str:
+        return self.memory.display_language
+
+    @display_language.setter
+    def display_language(self, language: str) -> None:
+        for part in (self.memory, self.mood, self.relations):
+            part.display_language = language
+
     def _chain(self, complete) -> Chain:
-        return Chain(*self._tiers, Prompt(complete) if complete is not None else None)
+        return Chain(*self._tiers, Prompt(complete, system=self.prompts["judge"]) if complete is not None else None)
 
     def _meaning(self, embed, meaning_micro, memory_language, complete) -> Meaning | None:
         embedder = None
@@ -112,7 +146,7 @@ class Mneme:
         unify = None
         if isinstance(memory_language, str) and memory_language.strip():  # a language: the tier, made here
             Unify = _optional("meaning.unify", "Unify")
-            unify = Unify(complete, memory_language) if Unify is not None else None
+            unify = Unify(complete, memory_language, prompts=self.prompts) if Unify is not None else None
         elif memory_language:  # a tier of the host's own
             unify = memory_language
         if embedder is None and centroids is None and unify is None:
@@ -206,17 +240,17 @@ class Mneme:
         decider = self._decider(complete)
         judge_mood = mood and source not in self.mood.settings.skip
         keep_notes = capture and source == "user" and writer is not None
-        questions = (self.mood.questions() if judge_mood else []) + ([WORTH] if keep_notes else [])
+        questions = (self.mood.questions() if judge_mood else []) + ([self._worth()] if keep_notes else [])
         answers = {}
         if questions and decider.tiers:
             framed = exchanges.frame(exchange, source=source, user_name=user_name,
-                                     companion_name=self.companion_name)
+                                     companion_name=self.companion_name, prompts=self.prompts)
             answers = await decider.adecide(framed, questions)
         event = (self.mood.apply_answers(subject, answers, exchange, source=source, user_name=user_name,
                                          weight=self.relations.weight(subject)) if judge_mood else None)
         if source == "user":
             self.relations.seen(subject)
-        notes, worth, error = [], answers.get(WORTH.name), ""
+        notes, worth, error = [], answers.get(WORTH_NAME), ""
         if keep_notes:
             try:
                 notes = await self._capture(subject, exchange, user_name, worth, gate, writer)
@@ -231,13 +265,17 @@ class Mneme:
     async def acapture(self, subject: str, exchange, *, user_name: str = "the user", gate: float = 0.5,
                        complete=None) -> list[Note]:
         """Notes kept from one exchange, without judging the mood (source "auto", so the daily quota applies).
-        `WORTH` is asked first when a decision tier is there; the note writer only when it says yes."""
-        worth = None
+        "Worth remembering?" is asked first when a decision tier is there; the note writer only when it says yes."""
+        found = None
         decider = self._decider(complete)
         if decider.tiers and gate > 0:
-            framed = exchanges.frame(exchange, source="user", user_name=user_name, companion_name=self.companion_name)
-            worth = (await decider.adecide(framed, [WORTH])).get(WORTH.name)
-        return await self._capture(subject, exchange, user_name, worth, gate, complete or self.complete)
+            framed = exchanges.frame(exchange, source="user", user_name=user_name, companion_name=self.companion_name,
+                                     prompts=self.prompts)
+            found = (await decider.adecide(framed, [self._worth()])).get(WORTH_NAME)
+        return await self._capture(subject, exchange, user_name, found, gate, complete or self.complete)
+
+    def _worth(self):
+        return worth(self.prompts["worth"])
 
     def capture(self, subject: str, exchange, **options) -> list[Note]:
         """`acapture` for code without an event loop."""
@@ -252,7 +290,8 @@ class Mneme:
         known = [item.note.text for item in memory.recall(subject, exchange, log=False).chosen]
         unify = self.meaning.unify if self.meaning is not None else None
         today = dates.local(memory.clock(), memory.zone).strftime("%Y-%m-%d (%A)")
-        system = writer_prompt(user_name, known, today, getattr(unify, "language", None) if unify else None)
+        system = writer_prompt(user_name, known, today, getattr(unify, "language", None) if unify else None,
+                               prompts=self.prompts)
         reply = await providers.ask(complete, system, exchange)
         kept = []
         for fields in notes_in(reply, memory.clock(), memory.zone):
@@ -270,8 +309,8 @@ class Mneme:
         notes = self.memory.leading(subject, limit)
         if not notes:
             return None
-        system = reflect_prompt(user_name, self.companion_name, say(self.display_language, "reflect.language"),
-                                notes)
+        system = reflect_prompt(user_name, self.companion_name, say(self.memory.words, "reflect.language"), notes,
+                                prompts=self.prompts)
         card = (await providers.ask(complete or self.complete, system, "Write the impression now.")).strip()
         if card:
             self.memory.set_profile(subject, card)
@@ -310,20 +349,25 @@ class Mneme:
 
     # ---- moving between projects ------------------------------------------------------------------
     def export_data(self) -> dict:
-        """This space as plain JSON (see docs/FORMAT.md)."""
+        """This space as plain JSON (see docs/FORMAT.md), its config included."""
         return {"mneme_llm": SCHEMA_VERSION, "space": self.space, "exported_at": time.time(),
-                **self.memory.export_rows(), **self.mood.export_rows(), **self.relations.export_rows()}
+                **self.memory.export_rows(), **self.mood.export_rows(), **self.relations.export_rows(),
+                **self.config.export_rows()}
 
-    def import_data(self, data: dict) -> int:
-        """Add an export to this space, held to the rules of writing; returns how many notes were added."""
+    def import_data(self, data: dict, *, config: bool = False) -> int:
+        """Add an export to this space, held to the rules of writing; returns how many notes were added. The
+        export's config (its prompts are instructions to your models) is applied only with `config=True`, and
+        is in use once the file is next opened."""
         if not isinstance(data, dict):
             raise TypeError("an export is a JSON object")
         rows = {name: data.get(name) if isinstance(data.get(name), list) else []
-                for name in ("memories", "profiles", "moods", "mood_events", "relationships")}
+                for name in ("memories", "profiles", "moods", "mood_events", "relationships", "config")}
         with self.store.transaction():
             added = self.memory.import_rows(rows["memories"], rows["profiles"])
             self.mood.import_rows(rows["moods"], rows["mood_events"])
             self.relations.import_rows(rows["relationships"])
+            if config:
+                self.config.import_rows(rows["config"])
         return added
 
     def close(self) -> None:
@@ -339,6 +383,7 @@ class Mneme:
         self.close()
 
 
-__all__ = ["Answer", "Chain", "Choice", "Embeddings", "Emotion", "KINDS", "Luna", "Meaning", "Memory", "Mneme",
-           "Mood", "MoodEvent", "MoodSettings", "Note", "Observation", "OpenAIEmbeddings", "Predicate", "Prompt",
-           "Recall", "Relations", "Relationship", "Role", "Score", "Store", "Unavailable", "__version__"]
+__all__ = ["Answer", "Chain", "Choice", "Config", "Embeddings", "Emotion", "KINDS", "Luna", "Meaning", "Memory",
+           "Mneme", "Mood", "MoodEvent", "MoodSettings", "Note", "Observation", "OpenAIEmbeddings", "Predicate",
+           "Prompt", "Recall", "Relations", "Relationship", "Role", "STORED", "Score", "Store", "Unavailable",
+           "__version__"]

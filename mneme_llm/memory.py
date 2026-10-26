@@ -25,7 +25,7 @@ from datetime import tzinfo
 from typing import Callable, Iterable
 
 from . import dates, text as texts
-from .i18n import say
+from .i18n import Speaks, Words, say
 from .meaning import Found, ledger
 from .store import Store, dumps
 
@@ -136,17 +136,18 @@ class Recall:
         return "\n".join(lines)
 
 
-class Memory:
+class Memory(Speaks):
     """The notes of one space. Every method takes the subject the note is about."""
 
     def __init__(self, store: Store, space: str, *, half_life_days: float = 30.0, daily_quota: int = 8,
                  max_notes: int = 50_000, semantic_window: int = 5000, zone: tzinfo | None = None,
-                 display_language: str = "en", meaning=None,
+                 display_language: str | Words = "en", meaning=None,
                  clock: Callable[[], float] = time.time):
         self.store, self.space = store, space
         self.half_life_days, self.daily_quota, self.max_notes = half_life_days, daily_quota, max_notes
         self.semantic_window = semantic_window  # the most notes meaning is searched among (words reach them all)
-        self.zone, self.display_language, self.meaning, self.clock = zone, display_language, meaning, clock
+        self.words = Words.of(display_language)
+        self.zone, self.meaning, self.clock = zone, meaning, clock
 
     # ---- writing ---------------------------------------------------------------------------------
     def remember(self, subject: str, text: str, **options) -> Note | None:
@@ -356,15 +357,15 @@ class Memory:
         if not found.chosen and not card:
             return ""
         now = self.clock()
-        lines = [header or say(self.display_language, "notes.header", who=user_name or subject)]
+        lines = [header or say(self.words, "notes.header", who=user_name or subject)]
         if card:
-            lines.append(say(self.display_language, "notes.impression") + texts.clip(card, MAX_PROFILE))
+            lines.append(say(self.words, "notes.impression") + texts.clip(card, MAX_PROFILE))
         for item in found.chosen:
             note = item.note
             if note.kind in LASTING:
                 lines.append(f"- {note.text}")
             else:
-                lines.append(f"- [{dates.when(note.happened_at, now, self.zone, self.display_language)}] {note.text}")
+                lines.append(f"- [{dates.when(note.happened_at, now, self.zone, self.words)}] {note.text}")
         return "\n".join(lines)
 
     def _rank(self, subject: str, query: str, found: Found, limit: int, budget: int, important: int, recent: int,
@@ -381,8 +382,9 @@ class Memory:
         # Only the notes with the most evidence are read and scored in full: freshness, importance and feeling
         # weigh a note by a factor of at most about 10, which decides among them, not against all of them.
         relevance = {id: sum(weights[term] for term in terms) for id, terms in matches.items()}
+        span = max(1e-6, 1 - found.floor)  # (a host's own floor of 1 divides by nothing)
         for id, value in similar.items():
-            relevance[id] = relevance.get(id, 0.0) + SEMANTIC_WEIGHT * (value - found.floor) / (1 - found.floor)
+            relevance[id] = relevance.get(id, 0.0) + SEMANTIC_WEIGHT * (value - found.floor) / span
         best = heapq.nlargest(CANDIDATES, relevance, key=relevance.get)
         scored = self._score(self._get_many(best), weights, matches, similar, found.floor, now)
 
@@ -432,7 +434,7 @@ class Memory:
             matched = tuple(term for term in weights if term in matches.get(note.id, ()))
             evidence = sum(weights[term] for term in matched)
             similarity = similar.get(note.id)
-            closeness = max(0.0, (similarity - floor) / (1 - floor)) if similarity is not None else 0.0
+            closeness = max(0.0, (similarity - floor) / max(1e-6, 1 - floor)) if similarity is not None else 0.0
             relevance = evidence + SEMANTIC_WEIGHT * closeness
             if relevance <= 0:
                 continue

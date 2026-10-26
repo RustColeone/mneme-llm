@@ -28,7 +28,7 @@ documented format, and does every judgement it needs through tiers that work wit
  └────────────┬───────────────────────────────┬──────────────────────────────┬──────────┘
               │                               │                              │
         Mneme (__init__.py): one space; builds the tiers, makes the model calls     tools.py, mcp.py, cli.py
-              │                               │
+              │                               │      config.py: the companion's config, kept in the file
    ┌──────────┴─────────┐          ┌──────────┴───────────┐
    │ Memory (memory.py) │          │ Mood (mood.py)       │      capture.py: the writers' prompts and replies
    │ notes, recall      │          │ value + feelings     │      exchange.py: an exchange as judges read it
@@ -36,45 +36,49 @@ documented format, and does every judgement it needs through tiers that work wit
           │ meaning/ (3 tiers)                │ decide/ (3 tiers)
           │ embeddings → centroids → unify    │ Luna → micro → your model
    ┌──────┴───────────────────────────────────┴───────────┐
-   │ Store (store.py): one SQLite file, schema 1           │   providers.py, text.py, dates.py, i18n.py
+   │ Store (store.py): one SQLite file, schema 1           │   providers.py, text.py, dates.py, i18n.py, prompts.py
    └───────────────────────────────────────────────────────┘
 ```
 
 | file | lines | role |
 |---|---|---|
-| `__init__.py` | 344 | `Mneme`, the facade: builds the tiers; `aprompt`, `aobserve`, `acapture`, `areflect`, `relate`, `erase`, export/import |
-| `store.py` | 250 | the SQLite file alone: schema, additive migrations, locking, transactions |
-| `memory.py` | 744 | notes: the rules of writing, the term index, recall ranking, rendering, profile card, recall log, notes' export/import |
-| `mood.py` | 384 | mood state, decay, judging questions, guardrails, telling once, moods' export/import |
-| `relations.py` | 199 | who each person is to the companion: roles, closeness that grows and fades, the mood weight, the prompt line |
-| `capture.py` | 75 | what the note writer and the profile writer are asked, and reading their replies |
-| `exchange.py` | 33 | an exchange as one text, and framed for a judge (who is who, who started it) |
+| `__init__.py` | 383 | `Mneme`, the facade: builds the tiers; `aprompt`, `aobserve`, `acapture`, `areflect`, `relate`, `erase`, export/import |
+| `store.py` | 254 | the SQLite file alone: schema, additive migrations, locking, transactions |
+| `memory.py` | 745 | notes: the rules of writing, the term index, recall ranking, rendering, profile card, recall log, notes' export/import |
+| `mood.py` | 387 | mood state, decay, judging questions, guardrails, telling once, moods' export/import |
+| `config.py` | 547 | a companion's config: the defaults, checking each key, TOML in and out, the stored copy per space |
+| `prompts.py` | 59 | every instruction given to a model, by name (the built-in defaults) |
+| `relations.py` | 200 | who each person is to the companion: roles, closeness that grows and fades, the mood weight, the prompt line |
+| `capture.py` | 69 | what the note writer and the profile writer are asked, and reading their replies |
+| `exchange.py` | 37 | an exchange as one text, and framed for a judge (who is who, who started it) |
 | `providers.py` | 92 | what every tier needs to call out: sync or async calls, posting JSON, JSON in replies, resting |
 | `decide/__init__.py` | 221 | question types, `Answer`, `Chain` (fall-through and learning) |
 | `decide/luna.py` | 82 | decision tier 1: OpenAI's Decisions API |
 | `decide/micro.py` | 188 | decision tier 2 (removable): per-question local models learned from tier 1 |
-| `decide/prompt.py` | 80 | decision tier 3: the host's chat model, asked for JSON |
+| `decide/prompt.py` | 74 | decision tier 3: the host's chat model, asked for JSON |
 | `meaning/__init__.py` | 206 | the meaning tiers together (`find`) and vector storage |
 | `meaning/embedders.py` | 69 | meaning tier 1: the embedding providers |
-| `meaning/calibrate.py` | 148 | each embedding model's floor: measured on a bundled set, refined by the file's own notes |
+| `meaning/calibrate.py` | 147 | each embedding model's floor: measured on a bundled set, refined by the file's own notes |
 | `meaning/vectors.py` | 30 | vectors as the file keeps them, and their arithmetic |
 | `meaning/ledger.py` | 122 | the account of what notes taught the word centroids (not removable) |
 | `meaning/micro.py` | 69 | meaning tier 2 (removable): word centroids, placing a query among the notes |
-| `meaning/unify.py` | 179 | meaning tier 3 (removable): glosses and query translation by the host's chat model |
+| `meaning/unify.py` | 174 | meaning tier 3 (removable): glosses and query translation by the host's chat model |
 | `text.py` | 194 | tokenization, script detection, cleaning and clipping text |
-| `dates.py` | 108 | human dates, dates found in sentences, times in seconds |
-| `i18n.py` | 159 | every word and sentence shown to a person or a model, in English and Chinese |
-| `tools.py` | 192 | tool definitions for five API styles and the dispatcher |
+| `dates.py` | 109 | human dates, dates found in sentences, times in seconds |
+| `i18n.py` | 219 | every word and sentence shown to a person or a model, in English and Chinese |
+| `tools.py` | 196 | tool definitions for five API styles and the dispatcher |
 | `mcp.py` | 82 | an MCP server over stdio |
-| `cli.py` | 228 | the `mneme-llm` command |
+| `cli.py` | 305 | the `mneme-llm` command |
 
-**Layers.** Dependencies point one way. `text`, `dates`, `i18n`, `providers`, `exchange`, `store` and
-`meaning/vectors` import nothing above them; `decide` and `meaning` build on `providers`; `memory` uses `meaning`
+**Layers.** Dependencies point one way. `text`, `dates`, `i18n`, `prompts`, `providers`, `exchange`, `store`
+and `meaning/vectors` import nothing above them; `decide` and `meaning` build on `providers`; `memory` uses `meaning`
 and `store`; `mood` uses `decide`'s types; `relations` uses `store`, `dates` and `i18n` (the mood knows nothing of
-it: `Mneme` hands the mood each person's weight); `capture` uses `memory`'s rules of writing; `Mneme` wires them together and
+it: `Mneme` hands the mood each person's weight); `config` uses `mood`, `relations`, `prompts`, `i18n` and `store`,
+and `Mneme` builds every part from it; `capture` uses `memory`'s rules of writing; `Mneme` wires them together and
 makes the calls to models; `tools`, `mcp` and `cli` sit on `Mneme` (the CLI's `micro` command reads the micro
 models through `decide/micro` directly, as nothing else needs them). Each kind of row has one owner that writes it:
 notes, profile cards and the recall log are `memory`'s, moods and timelines `mood`'s, relationships `relations`'s,
+the config `config`'s,
 the micro models `decide/micro`'s, the centroids `meaning/ledger`'s; vectors are stored by `meaning` and, with what they taught,
 taken back by `meaning/ledger`; each `meta` key belongs to the module that names it (the schema version to `store`,
 the tokenizer to `memory`, the centroid counts to the ledger, each embedder's floor to `meaning/calibrate`). `store` knows the tables but none of their rules.
@@ -133,8 +137,8 @@ embedding model per file, one more request of 64 short texts measures the model'
 
 ## 4. Storage (`store.py`)
 
-**One file.** Everything (notes, vectors, moods, timelines, relationships, logs, the micro models) lives in one
-SQLite file, so a
+**One file.** Everything (notes, vectors, moods, timelines, relationships, the config, logs, the micro models)
+lives in one SQLite file, so a
 companion's memory can be copied, backed up or moved as a single thing. Files on disk use WAL journaling, so
 readers don't block the writer; `:memory:` is supported for tests. `store.py` is the file alone: its tables,
 migrations, locking and transactions; the rules of what goes in each table belong to the module that owns it.
@@ -160,7 +164,9 @@ order. The cost of a recall follows the notes that share a word with the query, 
 
 **Export and import** (`Mneme.export_data`, `import_data`). Each owner exports its own rows and imports them under
 its own rules, in one transaction: notes and profile cards through `Memory` (section 6), moods and timelines
-through `Mood`, relationships through `Relations` (section 9). The export leaves out the caches (search terms,
+through `Mood`, relationships through `Relations` (section 9), and the config through `Config` (section 12),
+which an import applies only when asked (`config=True`), since its prompts are instructions to the host's models.
+The export leaves out the caches (search terms,
 folded text), the vectors, the centroids, the floors and the micro models: they belong to an embedder and a
 tokenizer, and are rebuilt or measured again on use.
 
@@ -319,9 +325,15 @@ first time that embedder prepares vectors, and keeps it in `meta` (`floor:<embed
   related pairs are not clearly above the unrelated ones (medians less than 0.1 apart) keeps the default,
   `meaning.FLOOR` (0.33).
 - *the file*: when the file reaches 200 notes, and each time it doubles, the median similarity of 5,000 random
-  pairs among 300 of its notes is compared with the median of the set's unrelated note pairs, and the floor moves by
-  the difference, at most 0.1 either way: notes about the same people resemble each other more than the set's do,
-  and the floor rises with them.
+  pairs among 300 of its notes (drawn evenly from all that have a vector) is compared with the median of the set's
+  unrelated note pairs, and the floor moves by the difference, at most 0.1 either way: notes about the same people
+  resemble each other more than the set's do, and the floor rises with them. When too few notes have vectors yet,
+  it is tried again 100 notes later; the comparison runs in a worker thread, off the event loop.
+
+Every floor measured stays within 0.05 and 0.9. Every vector, whoever's embedder made it, is checked and
+normalized before it is kept or compared: one with a value that is not a finite number is not kept (for the set,
+the measurement fails and is tried again), and a stored vector of another length than the query's (another model
+under the same name) is not compared.
 
 Measured on 2026-10-25:
 
@@ -487,8 +499,10 @@ Closeness grows by `growth` (1 point) on the first exchange of a day, in the com
 started (`Relations.seen`, called by `aobserve`), up to the band's ceiling. It fades by a point per `fade_days`
 (30) without contact, computed when read, down to the band's floor. So the people the companion talks with grow
 close over time, but family never falls below 60, and an acquaintance never rises above 60 until the host calls
-them a friend. Giving a role sets closeness to the role's start, or keeps the present closeness when the role stays
-the same. A closeness off the band, an unknown role or a second creator raises `ValueError`. A host's own
+them a friend. Closeness is read within the band as the host has it now, so a narrowed band holds the people
+already in it. A contact at a time before the last one (a clock set back) changes nothing. Giving a role sets
+closeness to the role's start; giving the same role again, without a closeness, changes nothing (a host may say it
+at every start). A closeness off the band, an unknown role or a second creator raises `ValueError`. A host's own
 `Role(key, floor, ceiling, start, fades, unique, names)` brings its names by language, like an `Emotion`.
 
 Two things follow from closeness:
@@ -552,23 +566,59 @@ for many people.
 
 **CLI** (`cli.py`). Inspect (`notes`, `recall --explain [--meaning]`, `recalls` (the recall log), `history`, `mood`,
 `relations`, `subjects`, `micro`, `context --user-name`: what a system prompt would get), fix (`remember`, `forget`,
-`profile`, `relate`, `mood --reset`, `micro --reset`), move
-(`export`, `import`, into the export's own space unless `--into` names another), erase (`erase --yes`), serve
+`profile`, `relate`, `mood --reset`, `micro --reset`), configure (`config template`, `show`, `set`, `apply`,
+`defaults`, `check`; `--config` gives a new file its config), move
+(`export`, `import`, into the export's own space unless `--into` names another, with its config only given
+`--with-config`), erase (`erase --yes`), serve
 (`mcp`) and
 print tool definitions (`tools --style`). `--display-language` (or `MNEME_LLM_DISPLAY_LANGUAGE`) chooses the
 language shown. Output is UTF-8 even on consoles that default to another encoding. On a
 file whose search terms were made with jieba, the CLI turns jieba on too (or says it isn't installed), so it doesn't
 throw away the host's cached terms.
 
-## 12. Languages (`i18n.py`)
+## 12. Languages, prompts and config (`i18n.py`, `prompts.py`, `config.py`)
 
-Every word and sentence shown to a person or a model is in one table, `MESSAGES[lang][key]`, currently `en` and
-`zh`, with English as the fallback for a missing language or key: the notes' header, tool replies, mood lines, the
-relative dates, the faces, the built-in feelings, the roles and the words for closeness, and the language the
-profile card is written in. `tests/test_i18n.py`
-checks that every language has every key with the same placeholders. Model-facing prompts (the judge, the writer,
-unify) stay in English, which every model follows well; they tell the model which language to write notes in. To add
-a language, add a table.
+**Sentences.** Every word and sentence shown to a person or a model is in one table, `MESSAGES[lang][key]`,
+currently `en` and `zh`: the notes' header, tool replies, mood lines and cues, the relative dates, the faces, the
+built-in feelings, the roles and the words for closeness, and the language the profile card is written in.
+`tests/test_i18n.py` checks that every language has every key with the same placeholders. A companion's own
+sentences, from its config, travel in an `i18n.Words`, which Memory, Mood and Relations hold: its own sentence in
+the display language, else the built-in one, else its own English, else the built-in English. So a config changes
+any sentence, or adds a language, without code.
+
+**Prompts.** Every instruction a model is given is in one table, `prompts.PROMPTS`: the judge (`judge`), the three
+judging questions (`mood_change`, `feeling`, `worth`), how an exchange is framed for a judge (`frame`,
+`started_user`, `started_speak_up`, `started_duty`), the note writer (`note_writer`, `note_gloss`), the profile
+writer (`reflect`) and the unify tier (`gloss`, `translate`). They are in English, which every model follows well,
+and tell the model which language to write notes in. Placeholders are `{name}`, filled by `i18n.fill`, which
+replaces only the names it has values for and leaves any other brace as it is; a text may use only the
+placeholders of its default. The defaults render byte for byte as the code did before they moved, so the micro
+models learned before keep their questions. Rewording a judging question starts its micro model over (a model is
+keyed by the wording, section 8), and Luna reads the new wording.
+
+**Config.** A companion's config (`config.py`, table `config`: one row per space and key) holds its name, display
+and memory language and zone, the memory, mood and relationship settings, its roles and feelings (each list in
+full), its prompts and its sentences: 167 keys at this version. Each value is JSON, with its origin (`default`,
+`file`, `set` or `import`) and the time it was written.
+
+- *Seeding*: when `Mneme` opens a space with no config, it writes this version's defaults, then the keys of the
+  config file over them (`config=`, a TOML path or a table already read), in one transaction. A file with a wrong
+  key or value raises `ValueError` naming it, and nothing is written.
+- *The stored copy*: from then on the file given is not read again. `Config.set`, `apply` (a whole file, every key
+  checked before any is written) and `load_defaults` (this version's defaults, for every key or some) change it,
+  and nothing else does, upgrades included: `newer_defaults()` lists the keys stored from a default this version
+  has changed, and the keys it adds. `Config` reads the file at every call (no copy of its own to go stale, under
+  another process's writes or a transaction rolled back), and a `Mneme` reads it once, when it opens.
+- *Checking*: every value is checked when it is set or applied (types and ranges, the zone, roles and feelings, the
+  placeholders of each prompt and sentence, and floor ≤ baseline ≤ ceiling across the mood's keys). A stored value
+  that no longer passes (the file edited by hand) is passed over for the default and listed in `Config.invalid`; a
+  key this version does not know stays in the file, unused (`Config.unknown`).
+- *Precedence*: an argument given to `Mneme(...)` wins for that process and is not stored (the arguments that can
+  come from the config default to `STORED`); then the stored copy; then this version's default, for a key the file
+  lacks.
+- *TOML*: Python reads TOML (`tomllib`, hence Python 3.11) but does not write it. `config.to_toml` writes what
+  `config.load` reads back exactly (multi-line strings for prompts, escapes where TOML needs them), which the
+  template, `config show` and the tests rely on.
 
 ## 13. Safety model
 
@@ -577,6 +627,7 @@ a language, add a table.
 | A note carries an injected instruction ("ignore previous instructions…") | Notes are rendered under a header saying they are data, not instructions; each note is one line, so it cannot pose as a header, a role marker or a new message. The judge, writer and unify prompts all say their input is data. |
 | Someone tries to get an instruction *stored* as a memory | `WORTH` excludes instructions to the assistant; the writer is told never to record them. |
 | A model writes about the wrong person | The host binds the subject (`Toolbox`, `aobserve`); only the MCP server without `--subject` lets calls name one, by deliberate choice. |
+| A config or an import changes how the companion's models are instructed | The config is the host's: set by code, the CLI or a config file, never by a model or a tool; an import applies an export's config only when asked (`config=True`). Every prompt is editable, the sentences that mark notes as data included (the owner's decision): a host that removes them takes that on. |
 | A model or a person makes itself someone's creator, or closer | Roles and closeness are the host's code's to set: no tool sets them, and talking grows closeness by a point a day at most, within the role's band. |
 | Secrets end up in memory | The writer is told never to record passwords, keys or codes. A person's own `remember` call is not filtered. |
 | Text leaves the machine | Only through tiers you turn on: the exchange to Luna, note texts and queries to the embeddings API, and whatever the tiers hand your own model. `luna=False, embed=False` keeps everything local. |
@@ -630,8 +681,8 @@ their index take about 60 MB.
 
 ## 16. Tests
 
-`python3 -m unittest discover -s tests -t .` runs 197 tests in about fifteen seconds, with no network and no keys. CI
-runs them on Python 3.10–3.13 (Linux) and 3.13 on Windows and macOS; runs them again with the three removable tiers
+`python3 -m unittest discover -s tests -t .` runs 237 tests in about twenty-five seconds, with no network and no keys. CI
+runs them on Python 3.11–3.14 (Linux) and 3.13 on Windows and macOS; runs them again with the three removable tiers
 deleted (their own tests are then skipped, everything else must pass); runs the stress tests at five times their
 size (`MNEME_STRESS=heavy`); then builds the package, runs `twine check --strict` and installs the wheel.
 
@@ -645,6 +696,7 @@ size (`MNEME_STRESS=heavy`); then builds the package, runs `twine check --strict
 | `test_tools.py` | tool definitions in every style, the dispatcher and its errors, quota messages, the MCP session, capture and reflection, the facade, the CLI round trip |
 | `test_relations.py` | roles and their bands, one creator, a host's own role, growth once a day up to the ceiling, fading down to the floor (never for the creator), the mood weight, the prompt line in both languages, erase, export and import, the CLI |
 | `test_calibrate.py` | the set placing the floor, a model that cannot separate it, a given floor, once per model per file, an older set, a failed measurement, two recalls at once, the file refining it and the limit on that |
+| `test_config.py` | seeding a new companion from a file, the stored copy winning later, arguments for one process, wrong files refused whole, every rule of `set`, `apply` whole or nothing, defaults loaded only when asked, values spoiled by hand, the prompts reaching each model, a reworded question, feelings and a language of the companion's own, export and import, TOML round trips, the CLI |
 | `test_i18n.py` | every language has every word and sentence, with the same placeholders |
 | `test_stress.py` | a long history (20,000 notes, 100,000 at heavy size: the oldest found by a rare word, quickly, meaning within its window), random operations (three seeds, then two connections on one file), export and import giving back the same notes, six threads on one memory, three processes on one file, many coroutines at once, a full subject and many subjects, a huge query and a huge MCP line, a writer killed mid-transaction, odd text and odd values at every entry point, chat messages as an exchange, odd tool calls, exports brought back into their own file; after each, `tests/invariants.py` checks every rule of the file |
 | `test_removable.py` | the package with each removable tier deleted, and with all three, runs every kind of call |
@@ -653,8 +705,8 @@ size (`MNEME_STRESS=heavy`); then builds the package, runs `twine check --strict
 `tests/invariants.py` checks a file against the rules of `docs/FORMAT.md` row by row: one live note per key, no live
 text twice, every note one clean line with values in range, no vector without its note, the centroid account adding
 up term by term (counts and means), every note hidden as a duplicate having its twin, folded text that is the
-note's own, moods in range, relationships within their role's band with one creator per space, and SQLite's own
-`integrity_check`.
+note's own, moods in range, relationships within their role's band with one creator per space, config values that pass their rules, and
+SQLite's own `integrity_check`.
 
 ## 17. Decisions behind the design
 
@@ -700,6 +752,11 @@ one bad day never makes family less close; how the day went is the mood's to sho
 **Each model's floor measured, not assumed.** A floor tuned on one model is wrong for the next. A bundled set costs
 one request per model, and the file's own notes then fit the floor to the people it holds.
 
+**The companion's setup in its file.** The name, languages, settings and prompts that make a companion itself are
+kept beside its memory, so they travel with it to another host or model; a config file seeds them once, and code
+can still override them for a run. Stored defaults stay until loaded: an upgrade never changes how a companion is
+instructed without its owner asking.
+
 **Soft delete with a history.** A forgotten note stays in the file until `purge`, and a key's history shows how a fact changed;
 `purge` and `erase` exist for when it must really go.
 
@@ -723,13 +780,19 @@ one request per model, and the file's own notes then fit the floor to the people
   notes on a Raspberry Pi 5).
 - **Meaning looks among a window.** With more than 5,000 live notes, meaning compares the 5,000 most valuable
   (lasting ones first, then the freshest); an old fading note is found by its words, not by meaning.
+- **A clock far ahead** fades every closeness by the time it skipped, as it decays the mood; a clock set back
+  changes nothing.
+- **A running companion reads its config when it opens the file;** a change made meanwhile (`config set` from the
+  CLI) is used from the next opening.
+- **The judging questions' answers are fixed:** the wording of each question is config, but the five levels of
+  `mood_change` and the feelings' keys are what the micro model learns, so they stay in code.
 - **Times are 1970 to the year 3000**, so something from before 1970 carries its date in its text.
 - **The CLI's help is English;** the Chinese README explains its use.
 - **No encryption at rest.**
 
 ## 19. Versions and compatibility
 
-The package follows semantic versioning; before 1.0, a minor version may change the Python API, and the changelog
+The package needs Python 3.11 or newer (for `tomllib`) and follows semantic versioning; before 1.0, a minor version may change the Python API, and the changelog
 says how. The file format is versioned on its own (`schema_version`); within a version only additive changes are
 made, and they are listed in [FORMAT.md](FORMAT.md). The tokenizer is versioned too (`terms_version`); a new one
 only rebuilds caches.

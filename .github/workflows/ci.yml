@@ -12,7 +12,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        python: ["3.10", "3.11", "3.12", "3.13"]
+        python: ["3.11", "3.12", "3.13", "3.14"]
         include:
           - {os: windows-latest, python: "3.13"}
           - {os: macos-latest, python: "3.13"}
@@ -67,4 +67,6 @@ jobs:
           python -m pip install dist/*.whl
           cd "$RUNNER_TEMP"
           mneme-llm --version
+          mneme-llm config template > companion.toml
+          mneme-llm --db companion.db --config companion.toml config check
           python -c "import mneme_llm, pathlib; assert (pathlib.Path(mneme_llm.__file__).parent / 'py.typed').is_file()"

@@ -4,10 +4,12 @@
 broke instead of only that something did.
 """
 
+import json
 from collections import Counter, defaultdict
 
 from mneme_llm import text as texts
 from mneme_llm.meaning import unpack
+from mneme_llm.config import ORIGINS, check as check_setting
 from mneme_llm.relations import ROLES
 
 
@@ -105,6 +107,16 @@ def check(store) -> list[str]:
             problems.append(f"{row['subject']}: closeness {row['closeness']} off the band of {row['role']!r}")
     creators = Counter(row["space"] for row in relationships if row["role"] == "creator")
     problems += [f"{count} creators in space {space}" for space, count in creators.items() if count > 1]
+
+    # The config: every known key's value passes its rule, from a known origin.
+    for row in store.rows("select * from config"):
+        if row["origin"] not in ORIGINS:
+            problems.append(f"config {row['key']} has origin {row['origin']!r}")
+        try:
+            check_setting(row["key"], json.loads(row["value"]))
+        except ValueError as error:
+            if "no such setting" not in str(error):
+                problems.append(f"config {row['key']} does not pass: {error}")
 
     result = store.row("pragma integrity_check")[0]
     if result != "ok":

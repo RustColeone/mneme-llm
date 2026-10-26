@@ -15,6 +15,18 @@ def normalize(vector: Sequence[float]) -> Vector:
     return [value / norm for value in vector]
 
 
+def usable(vector) -> Vector | None:
+    """A vector as it can be stored and compared (normalized), or None for one with a value that is not a finite
+    number, or with no length at all."""
+    try:
+        values = [float(value) for value in vector]
+    except (TypeError, ValueError):
+        return None
+    if not values or not all(math.isfinite(value) for value in values) or not any(values):
+        return None
+    return normalize(values)
+
+
 def pack(vector: Sequence[float]) -> bytes:
     return array("f", vector).tobytes()
 

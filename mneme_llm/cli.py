@@ -3,6 +3,7 @@
     mneme-llm --db companion.db --space whale_chan notes discord:42
     mneme-llm recall discord:42 "考试" --explain        mneme-llm relate discord:42 creator
     mneme-llm export > backup.json        mneme-llm import backup.json --into other_space
+    mneme-llm config template > companion.toml        mneme-llm --config companion.toml config show
 """
 
 from __future__ import annotations
@@ -11,9 +12,10 @@ import argparse
 import json
 import os
 import sys
+import tomllib
 
-from . import KINDS, Mneme, __version__
-from . import text as texts
+from . import KINDS, STORED, Mneme, __version__
+from . import config as configs, text as texts
 from .dates import noon, stamp
 
 
@@ -21,8 +23,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mneme-llm", description="Memory and mood for AI companions, for any LLM.")
     parser.add_argument("--db", default=os.environ.get("MNEME_LLM_DB", "mneme.db"), help="the memory file")
     parser.add_argument("--space", default=os.environ.get("MNEME_LLM_SPACE", "default"), help="whose memory (an app)")
-    parser.add_argument("--display-language", default=os.environ.get("MNEME_LLM_DISPLAY_LANGUAGE", "en"),
-                        choices=("en", "zh"), help="the language of what is shown (headers, dates, moods)")
+    parser.add_argument("--config", default=os.environ.get("MNEME_LLM_CONFIG"),
+                        help="a config file (TOML) for a companion this file does not know yet")
+    parser.add_argument("--display-language", default=os.environ.get("MNEME_LLM_DISPLAY_LANGUAGE"),
+                        help="the language of what is shown (headers, dates, moods); the companion's own otherwise")
     parser.add_argument("--version", action="version", version=f"mneme-llm {__version__}")
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -92,6 +96,24 @@ def main(argv: list[str] | None = None) -> int:
     load = commands.add_parser("import", help="add an export to this file")
     load.add_argument("file")
     load.add_argument("--into", help="a space other than the export's own")
+    load.add_argument("--with-config", action="store_true",
+                      help="apply the export's config too (its prompts are instructions to your models)")
+
+    conf = commands.add_parser("config", help="the companion's config in this file: settings, roles, prompts")
+    actions = conf.add_subparsers(dest="action", required=True)
+    show = actions.add_parser("show", help="the config as TOML")
+    show.add_argument("prefix", nargs="?", default="", help="only keys starting with this (mood, prompts.judge…)")
+    show.add_argument("--origins", action="store_true", help="where each stored value came from, instead")
+    actions.add_parser("template", help="this version's defaults, as a config file to start from")
+    put = actions.add_parser("set", help="set one key")
+    put.add_argument("key")
+    put.add_argument("value", nargs="?", help="a TOML value (0.5, true, \"text\"), or plain text")
+    put.add_argument("--file", help="the value is this file's text (for a prompt)")
+    apply = actions.add_parser("apply", help="apply a config file to this companion (every key it gives)")
+    apply.add_argument("file")
+    defaults = actions.add_parser("defaults", help="load this version's defaults (every key, or the keys given)")
+    defaults.add_argument("keys", nargs="*")
+    actions.add_parser("check", help="keys with a newer default, unknown keys, values that do not pass")
 
     tools = commands.add_parser("tools", help="print the tool definitions for a model API")
     tools.add_argument("--style", default="openai", choices=("openai", "responses", "anthropic", "gemini", "mcp"))
@@ -109,14 +131,21 @@ def main(argv: list[str] | None = None) -> int:
         from .tools import specs
         print(json.dumps(specs(args.style), ensure_ascii=False, indent=2))
         return 0
+    if args.command == "config" and args.action == "template":
+        print(configs.to_toml(configs.DEFAULTS), end="")
+        return 0
     space = args.space
     if args.command == "import":  # into --into, or back into the space it came from
         with open(args.file, encoding="utf-8") as handle:
             args.data = json.load(handle)
         space = args.into or str(args.data.get("space") or args.space)
     meaning = args.command == "mcp" or getattr(args, "meaning", False)
-    m = Mneme(args.db, space, display_language=args.display_language, luna=False, embed=meaning,
-              memory_language=None)
+    try:
+        m = Mneme(args.db, space, config=args.config, display_language=args.display_language or STORED, luna=False,
+                  embed=meaning, memory_language=None)
+    except (ValueError, OSError) as error:  # a config file that is missing, or has a wrong key or value
+        print(error, file=sys.stderr)
+        return 2
     if (m.store.meta("terms_version") or "").endswith("+jieba") and not texts.use_jieba():
         print("note: this file's search terms were made with jieba, which is not installed here; they will be "
               "rebuilt without it (pip install mneme-llm[jieba])", file=sys.stderr)
@@ -148,11 +177,12 @@ def _run(m: Mneme, args) -> int:
     elif args.command == "notes":
         for note in memory.notes(args.subject, kinds=[args.kind] if args.kind else None):
             key = f" {note.key}" if note.key else ""
-            print(f"#{note.id} {stamp(note.happened_at)} {note.kind}{key} ({note.importance}) {note.text}")
+            when = stamp(note.happened_at, memory.zone)
+            print(f"#{note.id} {when} {note.kind}{key} ({note.importance}) {note.text}")
     elif args.command == "history":
         for note in memory.history(args.subject, args.key):
             state = "removed" if note.deleted_at else ("replaced" if note.superseded_by else "live")
-            print(f"#{note.id} {stamp(note.created_at)} {state}: {note.text}")
+            print(f"#{note.id} {stamp(note.created_at, memory.zone)} {state}: {note.text}")
     elif args.command == "forget":
         print(f"forgot {memory.forget(args.subject, id=args.id, key=args.key)}")
     elif args.command == "erase":
@@ -166,7 +196,7 @@ def _run(m: Mneme, args) -> int:
     elif args.command == "recalls":
         for entry in memory.recalls(args.subject, args.limit):
             chosen = ", ".join(f"#{id} ({why})" for id, why in entry["chosen"])
-            print(f"{stamp(entry['at'])} {entry['query']!r}: {chosen or '(nothing)'}")
+            print(f"{stamp(entry['at'], memory.zone)} {entry['query']!r}: {chosen or '(nothing)'}")
     elif args.command == "profile":
         if args.text is not None:
             memory.set_profile(args.subject, args.text)
@@ -175,23 +205,30 @@ def _run(m: Mneme, args) -> int:
         if args.remove:
             print("removed" if m.relations.remove(args.subject) else "(no role)")
             return 0
-        if args.role:
+        role = args.role
+        if role is None and args.closeness is not None:  # a new closeness within the present role
+            present = m.relations.get(args.subject)
+            if present is None:
+                print("give a role with --closeness: this subject has none", file=sys.stderr)
+                return 2
+            role = present.role
+        if role:
             try:
-                m.relate(args.subject, args.role, closeness=args.closeness)
+                m.relate(args.subject, role, closeness=args.closeness)
             except ValueError as error:
                 print(error, file=sys.stderr)
                 return 2
         found = m.relations.get(args.subject)
-        print(_relationship(found) if found else "(no role)")
+        print(_relationship(found, memory.zone) if found else "(no role)")
     elif args.command == "relations":
-        print("\n".join(_relationship(found) for found in m.relations.all()) or "(nobody has a role)")
+        print("\n".join(_relationship(found, memory.zone) for found in m.relations.all()) or "(nobody has a role)")
     elif args.command == "mood":
         if args.reset:
             m.mood.reset(args.subject)
         print(m.mood.describe(args.subject))
         for event in m.mood.timeline(args.subject, 15):
-            print(f"  {stamp(event.at)} {event.value:5.1f} ({event.delta:+.1f}) [{event.source}/{event.judge}] "
-                  f"{event.reason}")
+            print(f"  {stamp(event.at, memory.zone)} {event.value:5.1f} ({event.delta:+.1f}) "
+                  f"[{event.source}/{event.judge}] {event.reason}")
     elif args.command == "export":
         text = json.dumps(m.export_data(), ensure_ascii=False, indent=1)
         if args.out:
@@ -200,7 +237,13 @@ def _run(m: Mneme, args) -> int:
         else:
             print(text)
     elif args.command == "import":
-        print(f"imported {m.import_data(args.data)} notes into {m.space}")
+        print(f"imported {m.import_data(args.data, config=args.with_config)} notes into {m.space}")
+    elif args.command == "config":
+        try:
+            return _config(m.config, args)
+        except (ValueError, OSError) as error:
+            print(error, file=sys.stderr)
+            return 2
     elif args.command == "micro":
         try:
             from .decide.micro import Micro
@@ -211,7 +254,7 @@ def _run(m: Mneme, args) -> int:
             Micro(m.store).reset()
         rows = Micro.saved(m.store)
         for row in rows:
-            print(f"{row['question']}: {row['examples']} lessons, saved {stamp(row['updated_at'])}")
+            print(f"{row['question']}: {row['examples']} lessons, saved {stamp(row['updated_at'], memory.zone)}")
         if not rows:
             print("(nothing learned yet)")
     elif args.command == "mcp":
@@ -220,8 +263,51 @@ def _run(m: Mneme, args) -> int:
     return 0
 
 
-def _relationship(found) -> str:
-    return f"{found.subject}: {found.role}, closeness {found.closeness:.0f} (since {stamp(found.since)})"
+def _config(config, args) -> int:
+    if args.action == "show":
+        if args.origins:
+            rows = [row for row in config.rows() if row["key"].startswith(args.prefix)]
+            print("\n".join(f"{row['key']}: {row['origin']}" for row in rows))
+        else:
+            print(config.to_toml(args.prefix), end="")
+    elif args.action == "set":
+        if args.file:
+            with open(args.file, encoding="utf-8") as handle:
+                value = handle.read().removesuffix("\n")
+        elif args.value is None:
+            print("give a value, or --file", file=sys.stderr)
+            return 2
+        else:
+            value = _toml_value(args.value, text_key=isinstance(configs.DEFAULTS.get(args.key, ""), str))
+        config.set(args.key, value)
+        print(f"set {args.key}")
+    elif args.action == "apply":
+        print(f"applied {config.apply(args.file)} keys")
+    elif args.action == "defaults":
+        print(f"loaded {config.load_defaults(args.keys or None)} defaults")
+    elif args.action == "check":
+        newer = config.newer_defaults()
+        print(f"newer defaults: {', '.join(newer)} (`mneme-llm config defaults KEY…` loads them)" if newer
+              else "every stored default is this version's")
+        for key, error in config.invalid.items():
+            print(f"not valid, so the default is used: {error}")
+        if config.unknown:
+            print(f"unknown to this version (kept, not used): {', '.join(config.unknown)}")
+    return 0
+
+
+def _toml_value(text: str, *, text_key: bool = False):
+    """A value as TOML reads it (0.5, true, "text", {luna = 0.4}), or else the text itself. For a key that holds
+    text, a value is text unless it is quoted ("42" and 42 are both the text 42)."""
+    try:
+        value = tomllib.loads(f"value = {text}")["value"]
+    except tomllib.TOMLDecodeError:
+        return text
+    return text if text_key and not isinstance(value, str) else value
+
+
+def _relationship(found, zone) -> str:
+    return f"{found.subject}: {found.role}, closeness {found.closeness:.0f} (since {stamp(found.since, zone)})"
 
 
 if __name__ == "__main__":

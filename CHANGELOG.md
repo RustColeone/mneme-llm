@@ -29,15 +29,26 @@ The first release.
 - **Interfaces:** tool definitions for OpenAI-style, responses, Claude, Gemini and MCP; an MCP server; the
   `mneme-llm` command.
 - **Languages:** English and Chinese for everything shown to people and models, and for the documentation.
+- **Config:** a companion's name, languages, settings, roles, feelings, prompts and sentences, seeded from a TOML
+  file the first time a database meets it and kept in the database from then on (`m.config`, `mneme-llm config`);
+  defaults are loaded only when asked.
 - **File format:** schema 1, documented in `docs/FORMAT.md`, with additive migrations.
 - **Structure:** one owner per table and dependencies in one direction (`docs/DESIGN.md`, section 2); the three
   optional tiers can each be deleted, which a test and a CI job check.
 - **Long histories:** a term index, at most 1,000 candidates scored per recall, meaning within a 5,000-note window,
   and up to 50,000 live notes per person; 100,000 notes are recalled in 50–400 ms on a Raspberry Pi 5.
-- **Tests:** 197, plus stress tests (random operations, threads, processes, coroutines, a long history, a writer
+- **Tests:** 237, plus stress tests (random operations, threads, processes, coroutines, a long history, a writer
   killed mid-transaction, odd input at every entry point) that check every rule of the file after each run.
 
 Changed from the code first pushed to GitHub (before any release on PyPI):
+
+- Python 3.11 or newer (the config file is read with `tomllib`);
+- the settings of `Mneme(...)` that can come from the config (`display_language`, `companion_name`, `zone`,
+  `memory_language`, `mood`, `roles`, `half_life_days`, `daily_quota`) default to `STORED`; given, they win for the
+  process; the prompts moved to `prompts.PROMPTS` (`capture.CAPTURE`, `REFLECT`, `GLOSS_FIELD`, `unify.GLOSS`,
+  `TRANSLATE` and `decide.prompt.SYSTEM` are gone; `capture.worth()` builds the yes/no question); placeholders
+  are filled by `i18n.fill`, so a literal brace needs no doubling; the CLI's `--display-language` takes any code
+  and defaults to the companion's own, and its times are in the companion's zone;
 
 - clearer names: `display_language` (was `lang`), `memory_language` (was `language`; it also takes a `Unify` of
   your own), `companion_name` (was `name`), and `user_name` for the person in every call (`prompt`, `aprompt`,

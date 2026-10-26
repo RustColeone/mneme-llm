@@ -3,7 +3,7 @@
 Every row belongs to a `space` (whose memory it is: an app or a character, "whale_chan") and most to a `subject`
 (who it is about: "discord:1234"). This module is the file alone: its tables, migrations, locking and
 transactions. The rules of what goes in them belong to the modules that own each table (memory, mood, meaning,
-relations).
+relations, config).
 """
 
 from __future__ import annotations
@@ -77,6 +77,10 @@ create table if not exists note_terms (
     primary key (space, subject, term, memory_id)
 ) without rowid;
 create index if not exists note_terms_memory on note_terms(memory_id);
+create table if not exists config (
+    space text not null, key text not null, value text not null, origin text not null, updated_at real not null,
+    primary key (space, key)
+);
 create table if not exists relationships (
     space text not null, subject text not null, role text not null, closeness real not null, since real not null,
     updated_at real not null,

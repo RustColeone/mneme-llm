@@ -2,28 +2,22 @@
 
 You pass `complete(system, user) -> str` (or an async function returning str): DeepSeek, Claude, a local model,
 anything. It is slower and costs output tokens, but it never needs a second provider and it can also say why
-(each answer may carry a short `reason`).
+(each answer may carry a short `reason`). How it is asked is `system` (`prompts.PROMPTS["judge"]` by default).
 """
 
 from __future__ import annotations
 
 from typing import Sequence
 
+from ..prompts import PROMPTS
 from ..providers import Complete, ask, json_in
 from . import Answer, Question, fit, normalized
-
-SYSTEM = """You judge a piece of text and answer questions about it. Reply with only one JSON object, no prose,
-with one entry per question name:
-- yes/no question: {"probability": <0..1 that it is true>}
-- choice: {"choice": "<one of the listed values>", "confidence": <0..1>}
-- score: {"level": "<one of the listed labels>", "confidence": <0..1>}
-Any entry may add "reason": one short sentence. Use only the listed values and labels."""
 
 
 class Prompt:
     name = "prompt"
 
-    def __init__(self, complete: Complete | None, *, system: str = SYSTEM, max_input: int = 12000):
+    def __init__(self, complete: Complete | None, *, system: str = PROMPTS["judge"], max_input: int = 12000):
         self.complete, self.system, self.max_input = complete, system, max_input
         self.calls = 0
 

@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from typing import Mapping
+
+from .i18n import fill
+from .prompts import PROMPTS
+
 
 def as_text(exchange) -> str:
     """An exchange as one text: a string as it is, or a list of `(who, said)` pairs or of chat messages
@@ -22,12 +27,11 @@ def as_text(exchange) -> str:
     return "\n".join(lines)
 
 
-def frame(exchange, *, source: str = "user", user_name: str = "the user",
-          companion_name: str = "the assistant") -> str:
-    """What a judge reads: who is who and who started it, then the exchange. The questions name nobody, so one
-    learned model serves every person; the names are said here instead."""
-    user, assistant = user_name, companion_name
-    started = {"user": f"{user} is talking to {assistant}.",
-               "speak-up": f"{assistant} reached out to {user} on their own, because they wanted to (not as a task).",
-               "duty": f"{assistant} is doing a scheduled task."}.get(source, "")
-    return f"[{started} The assistant is {assistant}; the user is {user}.]\n{as_text(exchange)}"
+def frame(exchange, *, source: str = "user", user_name: str = "the user", companion_name: str = "the assistant",
+          prompts: Mapping[str, str] = PROMPTS) -> str:
+    """What a judge reads: who is who and who started it (`prompts["frame"]`, `started_user` …), then the
+    exchange. The questions name nobody, so one learned model serves every person; the names are said here instead."""
+    names = {"user": user_name, "assistant": companion_name}
+    started = {"user": "started_user", "speak-up": "started_speak_up", "duty": "started_duty"}.get(source)
+    said = fill(prompts[started], **names) if started else ""
+    return fill(prompts["frame"], started=said, **names) + "\n" + as_text(exchange)

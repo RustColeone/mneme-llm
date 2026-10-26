@@ -26,7 +26,8 @@ from typing import Callable, Mapping, Sequence
 
 from . import dates, exchange as exchanges, text as texts
 from .decide import Answer, Chain, Choice, Score
-from .i18n import LANGUAGES, has, say
+from .i18n import LANGUAGES, Speaks, Words, code, has, say
+from .prompts import PROMPTS
 from .providers import run
 from .store import Store, dumps
 
@@ -39,10 +40,11 @@ class Emotion:
     lowers: bool = False  # may this feeling pull her mood down?
     names: Mapping[str, str] = field(default_factory=dict)
 
-    def label(self, lang: str) -> str:
-        if lang in self.names:
-            return self.names[lang]
-        return say(lang, f"emotion.{self.key}") if has(f"emotion.{self.key}") else self.names.get("en", self.key)
+    def label(self, lang: str | Words) -> str:
+        if code(lang) in self.names:
+            return self.names[code(lang)]
+        key = f"emotion.{self.key}"
+        return say(lang, key) if has(key, lang) else self.names.get("en", self.key)
 
     def description(self) -> str:
         """For the judge: the name in English, then in the other languages ("happy (开心)")."""
@@ -105,12 +107,14 @@ class MoodEvent:
     value: float
 
 
-class Mood:
+class Mood(Speaks):
     def __init__(self, store: Store, space: str, *, decider: Chain | None = None,
                  settings: MoodSettings = MoodSettings(), companion_name: str = "the assistant",
-                 display_language: str = "en", clock: Callable[[], float] = time.time):
+                 display_language: str | Words = "en", prompts: Mapping[str, str] = PROMPTS,
+                 clock: Callable[[], float] = time.time):
         self.store, self.space, self.decider, self.settings = store, space, decider, settings
-        self.companion_name, self.display_language, self.clock = companion_name, display_language, clock
+        self.words, self.prompts = Words.of(display_language), prompts
+        self.companion_name, self.clock = companion_name, clock
 
     # ---- reading -------------------------------------------------------------------------------------
     def state(self, subject: str, now: float | None = None) -> MoodState:
@@ -128,7 +132,7 @@ class Mood:
     def describe(self, subject: str) -> str:
         """How the companion feels now, in one line ("Mood 74/100 (good); feeling: aching for them 31")."""
         state = self.state(subject)
-        lang = self.display_language
+        lang = self.words
         names = {e.key: e.label(lang) for e in self.settings.emotions}
         feelings = say(lang, "mood.separator").join(f"{names.get(key, key)} {round(value)}"
                                                     for key, value in state.strongest())
@@ -152,13 +156,14 @@ class Mood:
             if mark:
                 self.store.execute("update moods set told_event = ? where space = ? and subject = ?",
                                    (row["last_event"], self.space, subject))
-        lang = self.display_language
+        lang = self.words
         mood = self.describe(subject)
-        mood = mood if lang == "zh" else mood[0].lower() + mood[1:]
         cue = self._cue(json.loads(event["emotions"] or "{}"))
         reason = event["reason"].rstrip(" .。!！") if s.tell == "event" else ""
-        key = "mood.news" if reason else "mood.now"
-        return say(lang, key + ("_cue" if cue else ""), mood=mood, reason=reason, cue=cue)
+        key = ("mood.news" if reason else "mood.now") + ("_cue" if cue else "")
+        if lang.source(key) == "en":  # "(Your mood 74/100 …)": in the English sentence only
+            mood = mood[0].lower() + mood[1:]
+        return say(lang, key, mood=mood, reason=reason, cue=cue)
 
     def timeline(self, subject: str, limit: int = 40) -> list[MoodEvent]:
         rows = self.store.rows("select * from mood_events where space = ? and subject = ? order by id desc limit ?",
@@ -173,12 +178,10 @@ class Mood:
         choices = {e.key: e.description() for e in self.settings.emotions}
         choices["none"] = "nothing in particular"
         return [
-            Score("mood_change", "How did this move the assistant's own mood, from the assistant's side? Who "
-                                 "started it is said at the top. Being annoyed at the user does not lower it; only "
-                                 "aching for them, worry or sadness does.",
+            Score("mood_change", self.prompts["mood_change"],
                   {"-2": "clearly worse", "-1": "a little worse", "0": "no real change", "1": "a little better",
                    "2": "clearly better"}),
-            Choice("feeling", "The assistant's strongest feeling after this.", choices),
+            Choice("feeling", self.prompts["feeling"], choices),
         ]
 
     async def ajudge(self, subject: str, exchange: str | Sequence[tuple[str, str]], *, source: str = "user",
@@ -191,7 +194,8 @@ class Mood:
         decider = decider or self.decider
         if source in self.settings.skip or decider is None:
             return None
-        framed = exchanges.frame(exchange, source=source, user_name=user_name, companion_name=self.companion_name)
+        framed = exchanges.frame(exchange, source=source, user_name=user_name, companion_name=self.companion_name,
+                                 prompts=self.prompts)
         answers = await decider.adecide(framed, self.questions())
         return self.apply_answers(subject, answers, exchange, source=source, user_name=user_name, weight=weight)
 
@@ -321,7 +325,7 @@ class Mood:
     def _reason(self, exchange: str, source: str, user_name: str) -> str:
         """What moved the mood, when the judge gave no reason: the person's last words (one line, quoted, at most
         40 characters), or that the companion reached out. The feeling itself is said by the cue."""
-        lang = self.display_language
+        lang = self.words
         if source == "speak-up":
             return say(lang, "mood.reason_reached", user=user_name)
         for line in reversed(exchange.splitlines()):
@@ -335,8 +339,8 @@ class Mood:
         if not emotions:
             return ""
         key = max(emotions, key=emotions.get)
-        lang = self.display_language
-        if has(f"cue.{key}"):
+        lang = self.words
+        if has(f"cue.{key}", lang):
             return say(lang, f"cue.{key}")
         emotion = {e.key: e for e in self.settings.emotions}.get(key)
         return say(lang, "cue.other", feeling=emotion.label(lang) if emotion else key)

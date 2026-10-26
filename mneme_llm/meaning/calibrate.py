@@ -8,7 +8,10 @@ a query. Models differ (one puts unrelated texts near 0.1, another near 0.4), so
                that cannot tell the two apart keeps the default floor.
     the file   once the file holds 200 notes, and again each time it doubles, random pairs of its own notes are
                compared with pairs of the set's notes: notes about the same people resemble each other more than
-               the set's do, and the floor moves by the difference of the medians (at most 0.1 either way).
+               the set's do, and the floor moves by the difference of the medians (at most 0.1 either way). When
+               too few of its notes have vectors yet, it is tried again 100 notes later.
+
+Every floor stays within 0.05 and 0.9.
 
 The result is kept in the file, per embedder (meta `floor:<embedder>`). An embedder given its own `floor=` is never
 measured.
@@ -20,9 +23,11 @@ import json
 import random
 from typing import Sequence
 
+from collections import Counter
+
 from ..providers import Unavailable
 from ..store import dumps
-from .vectors import cosine, normalize, unpack
+from .vectors import cosine, unpack, usable
 
 VERSION = 1           # of the set: a changed set measures every model again
 KEY = "floor:{}"
@@ -31,6 +36,8 @@ FILE_NOTES = 200      # notes the file needs before its own pairs refine the flo
 SAMPLE = 300          # of its notes compared, in
 PAIRS = 5000          # random pairs
 SHIFT = 0.1           # the most the file moves the floor
+RETRY = 100           # notes more before the file is tried again, when too few of its notes had vectors
+LOWEST, HIGHEST = 0.05, 0.9
 
 # (tags, what the person says, a note that bears on it). Topics sharing a tag are never paired as unrelated.
 TOPICS = (
@@ -89,47 +96,56 @@ async def measure(embedder, default: float) -> dict:
     vectors = await embedder.embed([message for _, message, _ in TOPICS] + [note for _, _, note in TOPICS])
     if len(vectors) != 2 * count:
         raise Unavailable(f"{embedder.name} returned {len(vectors)} vectors for {2 * count} texts")
-    vectors = [normalize(vector) for vector in vectors]
+    vectors = [usable(vector) for vector in vectors]
+    if any(vector is None for vector in vectors) or len({len(vector) for vector in vectors}) != 1:
+        raise Unavailable(f"{embedder.name} returned vectors that are not finite, or not all of one length")
     said, notes = vectors[:count], vectors[count:]
     related = [cosine(said[i], notes[i]) for i in range(count)]
     unrelated = [cosine(said[i], notes[j]) for i, j in UNRELATED]
     background = [cosine(notes[i], notes[j]) for i, j in UNRELATED if i < j]
     separated = quantile(related, 0.5) - quantile(unrelated, 0.5) >= MARGIN
-    floor = (quantile(related, 0.25) + quantile(unrelated, 0.95)) / 2 if separated else default
+    floor = _clip((quantile(related, 0.25) + quantile(unrelated, 0.95)) / 2) if separated else default
     measured = {"floor": round(floor, 3), "related": round(quantile(related, 0.25), 3),
                 "unrelated": round(quantile(unrelated, 0.95), 3), "background": round(quantile(background, 0.5), 3)}
     return {"version": VERSION, "floor": round(floor, 3), "separated": separated, "set": measured, "file": None}
 
 
 def due(store, record: dict) -> bool:
-    """Whether the file has grown enough to refine the floor (to 200 notes, then to twice the last time)."""
+    """Whether the file has grown enough to refine the floor (to 200 notes, then to twice the last time; 100 notes
+    after an attempt that found too few vectors)."""
     if not record.get("separated"):
         return False
-    last = (record.get("file") or {}).get("at", 0)
-    return _top(store) >= max(FILE_NOTES, 2 * last)
+    file = record.get("file") or {}
+    top = _top(store)
+    return top >= max(FILE_NOTES, 2 * file.get("at", 0)) and top >= file.get("tried", -RETRY) + RETRY
 
 
 def refine(store, embedder: str, record: dict) -> dict:
     """Move the set's floor by how much more the file's own notes resemble each other than the set's do."""
     top = _top(store)
     rng = random.Random(top)
-    ids = rng.sample(range(1, top + 1), min(top, 3 * SAMPLE))  # some are erased or have no vector: ask for more
+    ids = [row["memory_id"] for row in store.rows("select memory_id from vectors where embedder = ?", (embedder,))]
+    ids = rng.sample(ids, min(len(ids), SAMPLE))  # uniformly among the notes that have a vector
     vectors = []
     for start in range(0, len(ids), 500):
         chunk = ids[start:start + 500]
         rows = store.rows(f"select vector from vectors where embedder = ? and memory_id in "
                           f"({', '.join('?' * len(chunk))})", (embedder, *chunk))
-        vectors += [unpack(row["vector"]) for row in rows]
-    vectors = vectors[:SAMPLE]
-    record = {**record, "file": {"at": top, "notes": len(vectors)}}
-    if len(vectors) < FILE_NOTES:
-        return record
+        vectors += [vector for vector in (usable(unpack(row["vector"])) for row in rows) if vector is not None]
+    if vectors:  # of one model only: the length most of them have
+        length = Counter(len(vector) for vector in vectors).most_common(1)[0][0]
+        vectors = [vector for vector in vectors if len(vector) == length]
+    if len(vectors) < FILE_NOTES:  # too few have vectors yet: what was measured before stays
+        return {**record, "file": {**(record.get("file") or {"at": 0}), "tried": top}}
     pairs = [rng.sample(range(len(vectors)), 2) for _ in range(PAIRS)]
     background = quantile([cosine(vectors[i], vectors[j]) for i, j in pairs], 0.5)
     shift = max(-SHIFT, min(SHIFT, background - record["set"]["background"]))
-    record["file"].update(background=round(background, 3), shift=round(shift, 3))
-    record["floor"] = round(max(0.05, min(0.9, record["set"]["floor"] + shift)), 3)
-    return record
+    file = {"at": top, "notes": len(vectors), "background": round(background, 3), "shift": round(shift, 3)}
+    return {**record, "file": file, "floor": round(_clip(record["set"]["floor"] + shift), 3)}
+
+
+def _clip(floor: float) -> float:
+    return max(LOWEST, min(HIGHEST, floor))
 
 
 def quantile(values: Sequence[float], q: float) -> float:
