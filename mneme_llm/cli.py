@@ -2,6 +2,7 @@
 
     mneme-llm --db companion.db --space whale_chan notes discord:42
     mneme-llm recall discord:42 "考试" --explain        mneme-llm relate discord:42 creator
+    mneme-llm alias discord:42 鲸酱        mneme-llm relations
     mneme-llm export > backup.json        mneme-llm import backup.json --into other_space
     mneme-llm config template > companion.toml        mneme-llm --config companion.toml config show
 """
@@ -85,6 +86,11 @@ def main(argv: list[str] | None = None) -> int:
     relate.add_argument("--remove", action="store_true", help="take the role away")
 
     commands.add_parser("relations", help="everyone with a role, closest first")
+
+    alias = commands.add_parser("alias", help="show or set what a subject calls the companion")
+    alias.add_argument("subject")
+    alias.add_argument("alias", nargs="?", help="their name for the companion (40 characters at most)")
+    alias.add_argument("--remove", action="store_true", help="take the alias away")
 
     mood = commands.add_parser("mood", help="a subject's mood and its timeline")
     mood.add_argument("subject")
@@ -187,7 +193,7 @@ def _run(m: Mneme, args) -> int:
         print(f"forgot {memory.forget(args.subject, id=args.id, key=args.key)}")
     elif args.command == "erase":
         if not args.yes:
-            print("this deletes every note, the profile, the mood and the role of the subject; add --yes",
+            print("this deletes every note, the profile, the mood, the role and the alias of the subject; add --yes",
                   file=sys.stderr)
             return 2
         print(f"erased {m.erase(args.subject)} notes")
@@ -222,6 +228,17 @@ def _run(m: Mneme, args) -> int:
         print(_relationship(found, memory.zone) if found else "(no role)")
     elif args.command == "relations":
         print("\n".join(_relationship(found, memory.zone) for found in m.relations.all()) or "(nobody has a role)")
+    elif args.command == "alias":
+        if args.remove:
+            print("removed" if m.aliases.remove(args.subject) else "(no alias)")
+            return 0
+        if args.alias is not None:
+            try:
+                m.alias(args.subject, args.alias)
+            except ValueError as error:
+                print(error, file=sys.stderr)
+                return 2
+        print(m.aliases.get(args.subject) or "(no alias)")
     elif args.command == "mood":
         if args.reset:
             m.mood.reset(args.subject)

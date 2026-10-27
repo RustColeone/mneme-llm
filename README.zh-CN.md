@@ -9,7 +9,7 @@
 - **只用标准库。** Python 3.11+，无依赖。装上 `jieba` 后，`mneme_llm.text.use_jieba()` 也能把中文分词。
 - **任何 LLM。** 提供 OpenAI 风格 API（DeepSeek、Qwen、vLLM、Ollama……）、OpenAI responses API、Claude 和 Gemini 的工具定义；还有 MCP 服务器；也可以是一段放进系统提示词的文本。
 - **任何语言都能找到"意思"**，哪怕混在一句话里。词匹配、向量，再加上你自己的模型统一语言，一层不行就退到下一层。
-- **分得清谁是谁。** 每个对象都可以有角色（创造者、家人、朋友，或你自己定义的角色），以及随相处时间增长的亲近度；亲近的人说的话更能影响心情，而家人始终是家人。
+- **分得清谁是谁。** 每个对象都可以有角色（创造者、家人、朋友，或你自己定义的角色），以及随相处时间增长的亲近度；亲近的人说的话更能影响心情，而家人始终是家人。每个人还可以给伴侣起一个自己的称呼。
 - **一份配置文件管全部设置。** 伴侣的名字、语言、角色、感受和各项设置，以及它的模型看到的每一条提示词和每一句语句，都在一个 TOML 文件里；数据库里存有自己的一份，随时可以改。
 - **为长历史而生。** 回忆读的是检索词索引，而不是每一条笔记：一个有 100,000 条笔记的对象，在 Raspberry Pi 5 上回忆耗时远低于一秒。
 - **结构上就是安全的。** 笔记送进模型时标记为数据，绝不当作指令；每条只占一行。
@@ -129,6 +129,8 @@ await m.aobserve("discord:42", [("Leo", user_message), ("大肥鱼", reply)], us
 对方和伴侣说话（`observe`）的每一天，亲近度增长 1 点，直到区间上限；每 30 天没有来往，亲近度淡去 1 点，但绝不低于下限。朋友可以经年累月变得亲近，但家人始终是家人，认识的人在你把对方设为朋友之前，也一直只是认识的人。对方的话对心情的影响在亲近度 0 时是 0.5×，50 时是 1×，100 时是 1.5×（没有角色的人为 1×，和还没有角色时一样）；提示词开头会说明对方是谁："（Leo是创造你的人，你们非常亲近。）"。
 `Role("teacher", floor=40, ceiling=95, start=70, names={"en": "your teacher"})` 可以添加你自己的角色。
 
+**称呼**（alias）是每个人对伴侣的叫法，与它对所有人都用的名字（`companion_name`）并存。由你的代码在对方选定时记录，绝不由模型设定：`m.alias("discord:42", "鲸酱")`；`m.alias("discord:42", None)` 会把它去掉。称呼只占一行，最多 40 个字符；之后提示词会在说明对方是谁之后加上一句："（Leo叫你鲸酱。）"。
+
 ## 配置
 
 一个伴侣之所以成为它自己，全部都在它的配置里：名字和语言、时区、记忆、心情和关系设置、角色和感受、它交给模型的每一个提示词，以及它显示的每一句话。`mneme-llm config template > companion.toml` 会按这个版本的默认值写出全部内容，作为一个起始文件；只保留你修改的部分。
@@ -242,6 +244,7 @@ mneme-llm remember discord:42 "对芒果过敏" --kind fact --key user.allergy -
 mneme-llm forget discord:42 --key user.allergy
 mneme-llm mood discord:42                               # 值、情绪、最近的变化，以及是谁做的判断
 mneme-llm relate discord:42 family --closeness 90       # 对方是伴侣的什么人；`relations` 列出全部
+mneme-llm alias discord:42 鲸酱                         # 对方怎么称呼伴侣（--remove 去掉）
 mneme-llm export --out backup.json && mneme-llm --db other.db import backup.json --into dafeiyu
 mneme-llm tools --style anthropic                       # 打印工具定义
 mneme-llm recalls discord:42                            # 最近为对方回忆起了什么，以及为什么
@@ -270,7 +273,7 @@ mneme-llm config check                                  # 新版本改进过的�
   它仍留在文件和其键的历史中），`m.purge()` 会彻底删除
   已隐藏和被替换的笔记及其向量，`m.erase(subject)` 会删除
   关于对方的全部内容：笔记、历史、向量、其笔记教给词向量中心的内容、
-  印象卡片、回忆日志、心情和时间线，以及其角色。在此之前，
+  印象卡片、回忆日志、心情和时间线，以及其角色和称呼。在此之前，
   回忆日志会按对方保留最近 200 条查询（`mneme-llm recalls`）。
 
 ## 测试

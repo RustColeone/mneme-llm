@@ -32,7 +32,7 @@ documented format, and does every judgement it needs through tiers that work wit
    ┌──────────┴─────────┐          ┌──────────┴───────────┐
    │ Memory (memory.py) │          │ Mood (mood.py)       │      capture.py: the writers' prompts and replies
    │ notes, recall      │          │ value + feelings     │      exchange.py: an exchange as judges read it
-   └──────┬─────────────┘          └──────────┬───────────┘      relations.py: who each person is to it
+   └──────┬─────────────┘          └──────────┬───────────┘      relations.py: who each person is to it; aliases.py: their name for it
           │ meaning/ (3 tiers)                │ decide/ (3 tiers)
           │ embeddings → centroids → unify    │ Luna → micro → your model
    ┌──────┴───────────────────────────────────┴───────────┐
@@ -42,13 +42,14 @@ documented format, and does every judgement it needs through tiers that work wit
 
 | file | lines | role |
 |---|---|---|
-| `__init__.py` | 383 | `Mneme`, the facade: builds the tiers; `aprompt`, `aobserve`, `acapture`, `areflect`, `relate`, `erase`, export/import |
-| `store.py` | 254 | the SQLite file alone: schema, additive migrations, locking, transactions |
+| `__init__.py` | 403 | `Mneme`, the facade: builds the tiers; `aprompt`, `aobserve`, `acapture`, `areflect`, `relate`, `alias`, `erase`, export/import |
+| `store.py` | 258 | the SQLite file alone: schema, additive migrations, locking, transactions |
 | `memory.py` | 745 | notes: the rules of writing, the term index, recall ranking, rendering, profile card, recall log, notes' export/import |
 | `mood.py` | 387 | mood state, decay, judging questions, guardrails, telling once, moods' export/import |
 | `config.py` | 547 | a companion's config: the defaults, checking each key, TOML in and out, the stored copy per space |
 | `prompts.py` | 59 | every instruction given to a model, by name (the built-in defaults) |
 | `relations.py` | 200 | who each person is to the companion: roles, closeness that grows and fades, the mood weight, the prompt line |
+| `aliases.py` | 81 | what each person calls the companion: one short line each, the prompt line |
 | `capture.py` | 69 | what the note writer and the profile writer are asked, and reading their replies |
 | `exchange.py` | 37 | an exchange as one text, and framed for a judge (who is who, who started it) |
 | `providers.py` | 92 | what every tier needs to call out: sync or async calls, posting JSON, JSON in replies, resting |
@@ -78,7 +79,7 @@ and `Mneme` builds every part from it; `capture` uses `memory`'s rules of writin
 makes the calls to models; `tools`, `mcp` and `cli` sit on `Mneme` (the CLI's `micro` command reads the micro
 models through `decide/micro` directly, as nothing else needs them). Each kind of row has one owner that writes it:
 notes, profile cards and the recall log are `memory`'s, moods and timelines `mood`'s, relationships `relations`'s,
-the config `config`'s,
+aliases `aliases`'s, the config `config`'s,
 the micro models `decide/micro`'s, the centroids `meaning/ledger`'s; vectors are stored by `meaning` and, with what they taught,
 taken back by `meaning/ledger`; each `meta` key belongs to the module that names it (the schema version to `store`,
 the tokenizer to `memory`, the centroid counts to the ledger, each embedder's floor to `meaning/calibrate`). `store` knows the tables but none of their rules.
@@ -518,6 +519,13 @@ Two things follow from closeness:
 `erase` removes the role. Export and import carry it, held to the bands (0–100 for a role this host does not have),
 and an imported second creator is skipped.
 
+**Aliases** (`aliases.py`) are what each person calls the companion, beside the name it has for everyone. One per
+person, set by the host when the person chooses it (never by a model), cleaned onto one line and cut to 40
+characters. `aprompt` says it after the relationship line: "(Leo calls you 鲸酱.)". Unlike that line, an alias is
+the person's own words; it stands outside the notes' block all the same, because it only ever reaches that
+person's own prompts, where they could say as much in a message, and it is too short to carry more than a name.
+`erase` removes it; export and import carry it under the same rule.
+
 ## 10. Capture and reflection (`capture.py`, `Mneme`)
 
 Notes are written **after** the reply, not by the chat model during it:
@@ -681,7 +689,7 @@ their index take about 60 MB.
 
 ## 16. Tests
 
-`python3 -m unittest discover -s tests -t .` runs 237 tests in about twenty-five seconds, with no network and no keys. CI
+`python3 -m unittest discover -s tests -t .` runs 243 tests in about forty seconds on a Raspberry Pi 5, with no network and no keys. CI
 runs them on Python 3.11–3.14 (Linux) and 3.13 on Windows and macOS; runs them again with the three removable tiers
 deleted (their own tests are then skipped, everything else must pass); runs the stress tests at five times their
 size (`MNEME_STRESS=heavy`); then builds the package, runs `twine check --strict` and installs the wheel.
@@ -695,6 +703,7 @@ size (`MNEME_STRESS=heavy`); then builds the package, runs `twine check --strict
 | `test_observe.py` | one request for mood and capture, the gate, speak-ups taking no notes, the writer's rules, stable micro signatures, the injection header and one-line notes, Chinese tool replies, file migration, the terms cache, `py.typed` |
 | `test_tools.py` | tool definitions in every style, the dispatcher and its errors, quota messages, the MCP session, capture and reflection, the facade, the CLI round trip |
 | `test_relations.py` | roles and their bands, one creator, a host's own role, growth once a day up to the ceiling, fading down to the floor (never for the creator), the mood weight, the prompt line in both languages, erase, export and import, the CLI |
+| `test_aliases.py` | an alias set, replaced and removed, the prompt line in both languages, one short line, its own space, erase, export and import under the same rule, a 0.1 file gaining the table, the CLI |
 | `test_calibrate.py` | the set placing the floor, a model that cannot separate it, a given floor, once per model per file, an older set, a failed measurement, two recalls at once, the file refining it and the limit on that |
 | `test_config.py` | seeding a new companion from a file, the stored copy winning later, arguments for one process, wrong files refused whole, every rule of `set`, `apply` whole or nothing, defaults loaded only when asked, values spoiled by hand, the prompts reaching each model, a reworded question, feelings and a language of the companion's own, export and import, TOML round trips, the CLI |
 | `test_i18n.py` | every language has every word and sentence, with the same placeholders |

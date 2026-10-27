@@ -108,6 +108,12 @@ def check(store) -> list[str]:
     creators = Counter(row["space"] for row in relationships if row["role"] == "creator")
     problems += [f"{count} creators in space {space}" for space, count in creators.items() if count > 1]
 
+    # Aliases: a name on one line, 40 characters at most, never blank.
+    for row in store.rows("select * from aliases"):
+        alias = row["alias"]
+        if not alias.strip() or len(alias) > 40 or "\n" in alias:
+            problems.append(f"{row['subject']}: alias {alias!r} is not one short line")
+
     # The config: every known key's value passes its rule, from a known origin.
     for row in store.rows("select * from config"):
         if row["origin"] not in ORIGINS:

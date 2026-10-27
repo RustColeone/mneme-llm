@@ -3,6 +3,7 @@
     from mneme_llm import Mneme
     m = Mneme("companion.db", space="dafeiyu", config="dafeiyu.toml", complete=my_model)
     m.relate("discord:42", "creator")
+    m.alias("discord:42", "鲸酱")
     m.remember("discord:42", "养了一只叫年糕的猫", kind="fact", key="pet.name", importance=4)
     system_prompt += await m.aprompt("discord:42", query=user_message, user_name="Leo")
     await m.aobserve("discord:42", [("Leo", user_message), ("大肥鱼", reply)], user_name="Leo")
@@ -19,6 +20,7 @@ from datetime import tzinfo
 from typing import Callable
 
 from . import dates, exchange as exchanges, providers
+from .aliases import Aliases
 from .capture import WORTH_NAME, notes_in, reflect_prompt, worth, writer_prompt
 from .config import STORED, Config
 from .decide import Answer, Chain, Choice, Luna, Predicate, Prompt, Score, fit
@@ -30,7 +32,7 @@ from .providers import Unavailable, run
 from .relations import Relations, Relationship, Role
 from .store import SCHEMA_VERSION, Store
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 
 def _optional(module: str, name: str):
@@ -117,6 +119,7 @@ class Mneme:
                                    growth=own.get("relations.growth"),
                                    fade_days=own.get("relations.fade_days"), zone=zone, display_language=words,
                                    clock=clock)
+        self.aliases = Aliases(self.store, space, display_language=words, clock=clock)
 
     @property
     def display_language(self) -> str:
@@ -124,7 +127,7 @@ class Mneme:
 
     @display_language.setter
     def display_language(self, language: str) -> None:
-        for part in (self.memory, self.mood, self.relations):
+        for part in (self.memory, self.mood, self.relations, self.aliases):
             part.display_language = language
 
     def _chain(self, complete) -> Chain:
@@ -186,6 +189,14 @@ class Mneme:
         Their words then move the mood by their closeness, and the prompt says who they are."""
         return self.relations.set(subject, role, closeness=closeness)
 
+    def alias(self, subject: str, alias: str | None) -> str | None:
+        """Record what a person calls the companion (see `Aliases.set`), or take it away with None. The prompt then
+        tells the companion: "(Leo calls you 鲸酱.)". Your code sets it, never a model."""
+        if alias is None:
+            self.aliases.remove(subject)
+            return None
+        return self.aliases.set(subject, alias)
+
     def forget(self, subject: str, *, id: int | None = None, key: str | None = None) -> int:
         """Hide a note (by id) or a key's live note; it stays in the history until `purge`."""
         return self.memory.forget(subject, id=id, key=key)
@@ -196,18 +207,19 @@ class Mneme:
 
     def erase(self, subject: str) -> int:
         """Everything about a person, gone for good ("forget me"): notes, history, vectors, what they taught the
-        word centroids, profile card, recall log, mood and its timeline, and their role. Returns how many notes
-        there were."""
+        word centroids, profile card, recall log, mood and its timeline, their role and their alias. Returns how
+        many notes there were."""
         with self.store.transaction():
             count = self.memory.erase(subject)
             self.mood.reset(subject)
             self.relations.remove(subject)
+            self.aliases.remove(subject)
         return count
 
     def prompt(self, subject: str, query: str = "", *, user_name: str | None = None, mark: bool = True, limit: int = 6,
                budget: int = 800, important: int = 2, recent: int = 1, header: str | None = None) -> str:
-        """What to add to the system prompt this turn (word matching only): who the person is to the companion,
-        notes for `query`, and the mood's news, told once. `user_name` is how they are named; the rest is as in
+        """What to add to the system prompt this turn (word matching only): who the person is to the companion and
+        what they call it, notes for `query`, and the mood's news, told once. `user_name` is how they are named; the rest is as in
         `Memory.context`."""
         notes = self.memory.context(subject, query, user_name=user_name, limit=limit, budget=budget,
                                     important=important, recent=recent, header=header)
@@ -222,7 +234,8 @@ class Mneme:
         return self._prompt(subject, user_name, notes, mark)
 
     def _prompt(self, subject: str, user_name: str | None, notes: str, mark: bool) -> str:
-        parts = (self.relations.line(subject, user_name), notes, self.mood.news(subject, mark=mark) or "")
+        parts = (self.relations.line(subject, user_name), self.aliases.line(subject, user_name), notes,
+                 self.mood.news(subject, mark=mark) or "")
         return "\n\n".join(part for part in parts if part)
 
     async def aobserve(self, subject: str, exchange, *, source: str = "user", user_name: str = "the user",
@@ -352,7 +365,7 @@ class Mneme:
         """This space as plain JSON (see docs/FORMAT.md), its config included."""
         return {"mneme_llm": SCHEMA_VERSION, "space": self.space, "exported_at": time.time(),
                 **self.memory.export_rows(), **self.mood.export_rows(), **self.relations.export_rows(),
-                **self.config.export_rows()}
+                **self.aliases.export_rows(), **self.config.export_rows()}
 
     def import_data(self, data: dict, *, config: bool = False) -> int:
         """Add an export to this space, held to the rules of writing; returns how many notes were added. The
@@ -361,11 +374,12 @@ class Mneme:
         if not isinstance(data, dict):
             raise TypeError("an export is a JSON object")
         rows = {name: data.get(name) if isinstance(data.get(name), list) else []
-                for name in ("memories", "profiles", "moods", "mood_events", "relationships", "config")}
+                for name in ("memories", "profiles", "moods", "mood_events", "relationships", "aliases", "config")}
         with self.store.transaction():
             added = self.memory.import_rows(rows["memories"], rows["profiles"])
             self.mood.import_rows(rows["moods"], rows["mood_events"])
             self.relations.import_rows(rows["relationships"])
+            self.aliases.import_rows(rows["aliases"])
             if config:
                 self.config.import_rows(rows["config"])
         return added
@@ -383,7 +397,7 @@ class Mneme:
         self.close()
 
 
-__all__ = ["Answer", "Chain", "Choice", "Config", "Embeddings", "Emotion", "KINDS", "Luna", "Meaning", "Memory",
+__all__ = ["Aliases", "Answer", "Chain", "Choice", "Config", "Embeddings", "Emotion", "KINDS", "Luna", "Meaning", "Memory",
            "Mneme", "Mood", "MoodEvent", "MoodSettings", "Note", "Observation", "OpenAIEmbeddings", "Predicate",
            "Prompt", "Recall", "Relations", "Relationship", "Role", "STORED", "Score", "Store", "Unavailable",
            "__version__"]

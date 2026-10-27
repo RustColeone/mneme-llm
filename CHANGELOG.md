@@ -3,7 +3,16 @@
 All notable changes to mneme-llm are listed here. The project follows [semantic versioning](https://semver.org);
 before 1.0, a minor version may change the Python API, and this file says how.
 
-## 0.1.0 (unreleased)
+## 0.2.0 (unreleased)
+
+- **Aliases:** what each person calls the companion, beside its own name: `Mneme.alias(subject, name)` (None takes
+  it away), `Mneme.aliases`, `mneme-llm alias`. The prompt says it after who the person is ("(Leo calls you
+  鲸酱.)"); `erase` removes it, and export and import carry it. A new table, `aliases`, within schema 1: files from
+  0.1 gain it on open, and 0.1 still opens files that have it.
+- **Tests** keep their temporary files in one folder that is removed when the run ends (before, about 50 folders
+  were left in the system's temporary directory by each run).
+
+## 0.1.0 (2026-10-26)
 
 The first release.
 

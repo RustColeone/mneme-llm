@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mneme-llm"
-version = "0.1.0"
+version = "0.2.0"
 description = "Memory and mood for AI companions that outlive any one model: one SQLite file, usable by every LLM"
 readme = "README.md"
 requires-python = ">=3.11"

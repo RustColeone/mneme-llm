@@ -3,7 +3,7 @@
 Every row belongs to a `space` (whose memory it is: an app or a character, "whale_chan") and most to a `subject`
 (who it is about: "discord:1234"). This module is the file alone: its tables, migrations, locking and
 transactions. The rules of what goes in them belong to the modules that own each table (memory, mood, meaning,
-relations, config).
+relations, aliases, config).
 """
 
 from __future__ import annotations
@@ -84,6 +84,10 @@ create table if not exists config (
 create table if not exists relationships (
     space text not null, subject text not null, role text not null, closeness real not null, since real not null,
     updated_at real not null,
+    primary key (space, subject)
+);
+create table if not exists aliases (
+    space text not null, subject text not null, alias text not null, updated_at real not null,
     primary key (space, subject)
 );
 """

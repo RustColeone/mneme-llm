@@ -108,6 +108,11 @@ embedder 的词向量中心会删除它的行和两个 meta 键，并把它的�
 `updated_at` 的某一天（按伴侣所在时区）有一次来往，就加 1，直到角色的上限；在 `updated_at` 之前的
 时间（时钟被调回）有来往则什么也不改变。速率、区间和时区都是设置，不属于文件。
 
+### `aliases`：每个人怎么称呼伴侣
+
+`(space, subject)` 主键；`alias`（一行，最多 40 个字符，不能为空白）；`updated_at`（设定的时间）。没有
+称呼的人没有这一行。
+
 ### `note_terms`：检索词索引
 
 `(space, subject, term, memory_id)` 主键，并在 `memory_id` 上有索引。一条笔记的行恰好是它的
@@ -161,7 +166,7 @@ embedder 的词向量中心会删除它的行和两个 meta 键，并把它的�
 ```json
 {"mneme_llm": 1, "space": "dafeiyu", "exported_at": 1792885075.5,
  "memories": [{"id": 1, "subject": "discord:42", "key": "pet.name", "kind": "fact", "text": "…", "gloss": null, …}],
- "profiles": [...], "moods": [...], "mood_events": [...], "relationships": [...],
+ "profiles": [...], "moods": [...], "mood_events": [...], "relationships": [...], "aliases": [...],
  "config": [{"key": "companion.name", "value": "大肥鱼", "origin": "file"}, …]}
 ```
 
@@ -218,4 +223,6 @@ embedder 的词向量中心会删除它的行和两个 meta 键，并把它的�
 - `relationships`（表），以及 `meta` 中的 `floor:<embedder>` 键。没有这些内容的
   文件没有角色（每个人仍和以前一样计数），下限也尚未测量；
 - `config`（表）。没有行的空间会在下次打开时采用其配置（默认值以及宿主程序
-  的配置文件）。
+  的配置文件）；
+- `aliases`（表，mneme-llm 0.2）。没有它的文件没有称呼；mneme-llm 0.1 能打开
+  带有这张表的文件，并且不会动它。

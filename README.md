@@ -15,7 +15,8 @@ worried about them last night. Nothing in the file depends on the model that wro
 - **Finds what you mean, in any language,** even mixed in one sentence. Word matching, plus embeddings, plus your
   own model unifying the language, each tier falling back to the next.
 - **Knows who is who.** Each person can have a role (creator, family, friend, or one of your own) and a closeness
-  that grows with time together; a close person's words move the mood more, and family stays family.
+  that grows with time together; a close person's words move the mood more, and family stays family. Each person
+  can also have a name of their own for the companion.
 - **One file of settings.** The companion's name, languages, roles, feelings and settings, and every prompt and
   sentence its models see, in one TOML file; the database keeps its own copy, which you can change at any time.
 - **Made for long histories.** Recall reads a term index, not every note: a person with 100,000 notes is recalled
@@ -169,6 +170,11 @@ the mood by 0.5× at closeness 0, 1× at 50 and 1.5× at 100 (1× for a person w
 existed), and the prompt opens by saying who they are: "(Leo is your creator; you are very close.)".
 `Role("teacher", floor=40, ceiling=95, start=70, names={"en": "your teacher"})` adds a role of your own.
 
+**Aliases** are what each person calls the companion, beside the name it has for everyone (`companion_name`).
+Your code records one when the person chooses it, never a model: `m.alias("discord:42", "鲸酱")`, and
+`m.alias("discord:42", None)` takes it away. It is one line of at most 40 characters, and the prompt then says
+"(Leo calls you 鲸酱.)", after who they are.
+
 ## Configuration
 
 Everything that makes a companion itself is in its config: its name and languages, its time zone, the memory,
@@ -302,6 +308,7 @@ mneme-llm remember discord:42 "对芒果过敏" --kind fact --key user.allergy -
 mneme-llm forget discord:42 --key user.allergy
 mneme-llm mood discord:42                               # value, feelings, the last changes and who judged them
 mneme-llm relate discord:42 family --closeness 90       # who they are to the companion; `relations` lists all
+mneme-llm alias discord:42 鲸酱                         # what they call the companion (--remove takes it away)
 mneme-llm export --out backup.json && mneme-llm --db other.db import backup.json --into dafeiyu
 mneme-llm tools --style anthropic                       # print tool definitions
 mneme-llm recalls discord:42                            # what was recalled for them lately, and why
@@ -325,7 +332,7 @@ mneme-llm config check                                  # defaults a newer versi
 - **Forgetting.** `m.forget` hides a note (it stays in the file and in its key's history until `purge`),
   `m.purge()` erases hidden and replaced notes and their vectors for good, and `m.erase(subject)` removes
   everything about a person: notes, history, vectors, what their notes taught the word centroids, profile card,
-  recall log, mood and timeline, and their role. The recall log keeps the last 200 queries per person (`mneme-llm recalls`) until
+  recall log, mood and timeline, their role and their alias. The recall log keeps the last 200 queries per person (`mneme-llm recalls`) until
   then.
 
 ## Tests

@@ -108,6 +108,11 @@ in it. A contact on a later day than `updated_at` (in the companion's zone) adds
 contact at a time before `updated_at` (a clock set back) changes nothing. The rates,
 the bands and the zone are settings, not part of the file.
 
+### `aliases`: what each person calls the companion
+
+`(space, subject)` primary key; `alias` (one line, at most 40 characters, never blank); `updated_at` (when it was
+set). A person without an alias has no row.
+
 ### `note_terms`: the term index
 
 `(space, subject, term, memory_id)` primary key, and an index on `memory_id`. A note's rows are exactly the terms
@@ -162,7 +167,7 @@ were compared (`notes`) and, when there were enough, their median similarity (`b
 ```json
 {"mneme_llm": 1, "space": "dafeiyu", "exported_at": 1792885075.5,
  "memories": [{"id": 1, "subject": "discord:42", "key": "pet.name", "kind": "fact", "text": "…", "gloss": null, …}],
- "profiles": [...], "moods": [...], "mood_events": [...], "relationships": [...],
+ "profiles": [...], "moods": [...], "mood_events": [...], "relationships": [...], "aliases": [...],
  "config": [{"key": "companion.name", "value": "大肥鱼", "origin": "file"}, …]}
 ```
 
@@ -218,4 +223,6 @@ Files written before these were added open as before; a writer adds the missing 
 - `relationships` (table), and the `floor:<embedder>` keys in `meta`. A file without them has no roles (everyone
   counts as before) and floors not yet measured;
 - `config` (table). A space without rows takes its config (the defaults and the host's config file) the next time
-  it is opened.
+  it is opened;
+- `aliases` (table, mneme-llm 0.2). A file without it has no aliases; mneme-llm 0.1 opens a file that has it and
+  leaves the table alone.
