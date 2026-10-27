@@ -9,6 +9,13 @@ before 1.0, a minor version may change the Python API, and this file says how.
   it away), `Mneme.aliases`, `mneme-llm alias`. The prompt says it after who the person is ("(Leo calls you
   鲸酱.)"); `erase` removes it, and export and import carry it. A new table, `aliases`, within schema 1: files from
   0.1 gain it on open, and 0.1 still opens files that have it.
+- **One person, several accounts:** `Mneme.link(subject, person)` records that a subject is another account of a
+  person ("web:leo" is "discord:42"): from then on every call with either means them (notes, mood, role, alias,
+  profile card), and what was kept under the account joins the person (one live note per key, the newest; the
+  closer role; the newer mood, card and alias; both mood timelines). `Mneme.unlink`, `Mneme.person`,
+  `Mneme.people`, `mneme-llm link`, `unlink` and `people`; `erase` from any account takes the person and their
+  links, and export and import carry them. A new table, `people`, within schema 1: files from 0.1 gain it on open;
+  0.1 opens files that have it, but does not read it.
 - **Tests** keep their temporary files in one folder that is removed when the run ends (before, about 50 folders
   were left in the system's temporary directory by each run).
 

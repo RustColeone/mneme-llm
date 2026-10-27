@@ -13,19 +13,21 @@ from typing import Callable
 
 from . import dates, text as texts
 from .i18n import Speaks, Words, say
+from .people import People, Resolves
 from .store import Store
 
 LIMIT = 40  # characters: a name, not a sentence (it goes into every prompt for that person)
 
 
-class Aliases(Speaks):
+class Aliases(Speaks, Resolves):
     def __init__(self, store: Store, space: str, *, display_language: str | Words = "en",
-                 clock: Callable[[], float] = time.time):
-        self.store, self.space, self.clock = store, space, clock
+                 people: People | None = None, clock: Callable[[], float] = time.time):
+        self.store, self.space, self.people, self.clock = store, space, people, clock
         self.words = Words.of(display_language)
 
     # ---- reading -------------------------------------------------------------------------------------
     def get(self, subject: str) -> str | None:
+        subject = self.who(subject)
         row = self.store.row("select alias from aliases where space = ? and subject = ?", (self.space, subject))
         return row["alias"] if row is not None else None
 
@@ -45,6 +47,7 @@ class Aliases(Speaks):
         cut to 40 characters. Returns the alias as stored."""
         texts.required(subject, "subject")
         texts.required(alias, "alias")
+        subject = self.who(subject)
         alias = texts.clip(alias, LIMIT)
         if texts.blank(alias):
             raise ValueError("alias must not be empty")
@@ -54,7 +57,17 @@ class Aliases(Speaks):
 
     def remove(self, subject: str) -> bool:
         return bool(self.store.execute("delete from aliases where space = ? and subject = ?",
-                                       (self.space, subject)).rowcount)
+                                       (self.space, self.who(subject))).rowcount)
+
+    def join(self, old: str, new: str) -> None:
+        """`old` is the person `new` now (`People.link`): of two aliases the newer is kept."""
+        with self.store.transaction():
+            rows = {row["subject"]: row for row in self.store.rows(
+                "select * from aliases where space = ? and subject in (?, ?)", (self.space, old, new))}
+            if old in rows and (new not in rows or rows[old]["updated_at"] > rows[new]["updated_at"]):
+                self.store.execute("insert or replace into aliases (space, subject, alias, updated_at) values "
+                                   "(?, ?, ?, ?)", (self.space, new, rows[old]["alias"], rows[old]["updated_at"]))
+            self.store.execute("delete from aliases where space = ? and subject = ?", (self.space, old))
 
     # ---- moving between files ------------------------------------------------------------------------
     def export_rows(self) -> dict:

@@ -103,7 +103,12 @@ def act(m: Mneme, rng: random.Random) -> None:
             m.memory.context(subject, sentence(rng))
         elif roll < 0.96:  # notes as an earlier build left them, before the folded text was kept
             m.store.execute("update memories set folded = null where id % 3 = 0")
-        elif roll < 0.98:
+        elif roll < 0.97:  # one person under two accounts, and apart again (a link to someone else fails)
+            if rng.random() < 0.7:
+                m.link(subject, rng.choice(SUBJECTS))
+            else:
+                m.unlink(subject)
+        elif roll < 0.985:
             data = m.export_data()
             copy = open_memory(":memory:")
             copy.import_data(data)

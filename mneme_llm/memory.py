@@ -27,6 +27,7 @@ from typing import Callable, Iterable
 from . import dates, text as texts
 from .i18n import Speaks, Words, say
 from .meaning import Found, ledger
+from .people import People, Resolves
 from .store import Store, dumps
 
 KINDS = ("fact", "preference", "episode", "plan", "reflection")
@@ -136,14 +137,15 @@ class Recall:
         return "\n".join(lines)
 
 
-class Memory(Speaks):
-    """The notes of one space. Every method takes the subject the note is about."""
+class Memory(Speaks, Resolves):
+    """The notes of one space. Every method takes the subject the note is about (or, with `people`, any subject the
+    person goes by)."""
 
     def __init__(self, store: Store, space: str, *, half_life_days: float = 30.0, daily_quota: int = 8,
                  max_notes: int = 50_000, semantic_window: int = 5000, zone: tzinfo | None = None,
-                 display_language: str | Words = "en", meaning=None,
+                 display_language: str | Words = "en", meaning=None, people: People | None = None,
                  clock: Callable[[], float] = time.time):
-        self.store, self.space = store, space
+        self.store, self.space, self.people = store, space, people
         self.half_life_days, self.daily_quota, self.max_notes = half_life_days, daily_quota, max_notes
         self.semantic_window = semantic_window  # the most notes meaning is searched among (words reach them all)
         self.words = Words.of(display_language)
@@ -165,6 +167,7 @@ class Memory(Speaks):
         """`remember`, also saying what happened: "kept", "replaced" (a key's older note), "known" (the same
         text was already there) or "over quota". `gloss` is the note in the unifying language, if known. `kind`
         is "episode" when not given (and a note taking over a key keeps its own)."""
+        subject = self.who(subject)
         texts.required(subject, "subject")
         fields = note_fields(text, kind=kind, key=key, importance=importance, feeling=feeling,
                              happened_at=happened_at, gloss=gloss)
@@ -225,6 +228,7 @@ class Memory(Speaks):
     def forget(self, subject: str, *, id: int | None = None, key: str | None = None) -> int:
         """Remove a note (by id) or the live note of a key; returns how many were removed. History stays on disk
         (soft delete) until `purge`."""
+        subject = self.who(subject)
         if (id is None) == (key is None):
             raise ValueError("forget takes exactly one of id or key")
         where, value = ("id = ?", id) if id is not None else ("key = ?", normal_key(key))
@@ -238,7 +242,7 @@ class Memory(Speaks):
         sql = "delete from memories where space = ? and (deleted_at is not null or superseded_by is not null)"
         parameters: tuple = (self.space,)
         if subject is not None:
-            sql, parameters = sql + " and subject = ?", (self.space, subject)
+            sql, parameters = sql + " and subject = ?", (self.space, self.who(subject))
         with self.store.transaction():
             ids = [row["id"] for row in self.store.rows(sql.replace("delete from", "select id from", 1), parameters)]
             ledger.unteach(self.store, ids)
@@ -250,6 +254,7 @@ class Memory(Speaks):
         """Every note about a subject gone for good, with their history, vectors, profile card and recall log;
         what the notes taught the word centroids is taken back, so none of their words stay. (`Mneme.erase` also
         resets the mood, for "forget me".)"""
+        subject = self.who(subject)
         with self.store.transaction():
             ledger.unteach(self.store, [row["id"] for row in self.store.rows(
                 "select id from memories where space = ? and subject = ?", (self.space, subject))])
@@ -259,6 +264,21 @@ class Memory(Speaks):
                 self.store.execute(f"delete from {table} where space = ? and subject = ?", (self.space, subject))
         return count
 
+    def join(self, old: str, new: str) -> None:
+        """`old` is the person `new` now (`People.link`): its notes, their index and its recall log become the
+        person's, held to the rules writing keeps (one live note per key, the newest; no text twice); of two profile
+        cards the newer is kept."""
+        with self.store.transaction():
+            for table in ("memories", "note_terms", "recalls"):
+                self.store.execute(f"update {table} set subject = ? where space = ? and subject = ?",
+                                   (new, self.space, old))
+            cards = {row["subject"]: row for row in self.store.rows(
+                "select * from profiles where space = ? and subject in (?, ?)", (self.space, old, new))}
+            if old in cards and (new not in cards or cards[old]["updated_at"] > cards[new]["updated_at"]):
+                self._put_profile(new, cards[old]["text"], cards[old]["updated_at"])
+            self.store.execute("delete from profiles where space = ? and subject = ?", (self.space, old))
+            self._settle(new, self.clock())
+
     # ---- reading ---------------------------------------------------------------------------------
     def get(self, id: int) -> Note | None:
         row = self.store.row("select * from memories where id = ? and space = ?", (id, self.space))
@@ -266,6 +286,7 @@ class Memory(Speaks):
 
     def notes(self, subject: str, *, kinds: Iterable[str] | None = None) -> list[Note]:
         """The live notes of a subject, newest first."""
+        subject = self.who(subject)
         found = self._live_where(subject)
         if kinds is not None:
             wanted = set(kinds)
@@ -274,6 +295,7 @@ class Memory(Speaks):
 
     def leading(self, subject: str, limit: int) -> list[Note]:
         """The most important live notes of a subject, the newest first among equals (for the profile card)."""
+        subject = self.who(subject)
         rows = self.store.rows("select * from memories where space = ? and subject = ? and deleted_at is null and "
                                "superseded_by is null order by importance desc, id desc limit ?",
                                (self.space, subject, limit))
@@ -282,6 +304,7 @@ class Memory(Speaks):
     def history(self, subject: str, key: str) -> list[Note]:
         """Every version a key has had, oldest first (the last is live unless it was forgotten; an older note that
         took the key over comes after the ones it replaced)."""
+        subject = self.who(subject)
         notes = [Note.of(row) for row in self.store.rows("select * from memories where space = ? and subject = ? and "
                                                           "key = ? order by id", (self.space, subject,
                                                                                   normal_key(key)))]
@@ -318,12 +341,14 @@ class Memory(Speaks):
         `important` adds that many lasting notes of importance 4+ that did not match, and `recent` that many of
         the newest episodes, so a fresh conversation has something to go on.
         """
+        subject = self.who(subject)
         return self._rank(subject, self._query(query), Found(), limit, budget, important, recent, log)
 
     async def arecall(self, subject: str, query: str, *, limit: int = 6, budget: int = 800, important: int = 2,
                       recent: int = 1, log: bool = True, complete=None) -> Recall:
         """`recall` with the meaning tiers: notes close in meaning count as evidence too, in any language.
         `complete` gives the unify tier a chat model for this call."""
+        subject = self.who(subject)
         query = self._query(query)
         window = self._window(subject) if self.meaning is not None and query.strip() else []
         if not window:
@@ -341,6 +366,7 @@ class Memory(Speaks):
         `user_name` is how the header names the person (their id otherwise). Returns "" when there is nothing to say,
         so callers can always append it.
         """
+        subject = self.who(subject)
         found = self.recall(subject, query, limit=limit, budget=budget, important=important, recent=recent)
         return self._render(subject, found, user_name, header)
 
@@ -348,6 +374,7 @@ class Memory(Speaks):
                        budget: int = 800, important: int = 2, recent: int = 1, header: str | None = None,
                        complete=None) -> str:
         """`context` with the meaning tiers (see `arecall`)."""
+        subject = self.who(subject)
         found = await self.arecall(subject, query, limit=limit, budget=budget, important=important, recent=recent,
                                    complete=complete)
         return self._render(subject, found, user_name, header)
@@ -520,16 +547,19 @@ class Memory(Speaks):
 
     # ---- profile card ------------------------------------------------------------------------------
     def profile(self, subject: str) -> str | None:
+        subject = self.who(subject)
         row = self.store.row("select text from profiles where space = ? and subject = ?", (self.space, subject))
         return row["text"] if row else None
 
     def profile_updated_at(self, subject: str) -> float | None:
         """When the profile card was last written (None if there is none), so hosts can refresh it daily."""
+        subject = self.who(subject)
         row = self.store.row("select updated_at from profiles where space = ? and subject = ?", (self.space, subject))
         return row["updated_at"] if row else None
 
     def set_profile(self, subject: str, text: str | None) -> None:
         """A short standing impression of the subject (a few sentences), shown above the notes."""
+        subject = self.who(subject)
         texts.required(subject, "subject")
         if text is not None and not isinstance(text, str):
             raise TypeError(f"a profile must be a string, not {type(text).__name__}")
@@ -545,6 +575,7 @@ class Memory(Speaks):
 
     def recalls(self, subject: str, limit: int = 20) -> list[dict]:
         """The most recent recalls of a subject, newest first: what was asked, chosen and skipped."""
+        subject = self.who(subject)
         rows = self.store.rows("select * from recalls where space = ? and subject = ? order by id desc limit ?",
                                (self.space, subject, limit))
         return [{"at": row["at"], "query": row["query"], "chosen": json.loads(row["chosen"]),

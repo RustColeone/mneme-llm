@@ -175,6 +175,15 @@ Your code records one when the person chooses it, never a model: `m.alias("disco
 `m.alias("discord:42", None)` takes it away. It is one line of at most 40 characters, and the prompt then says
 "(Leo calls you 鲸酱.)", after who they are.
 
+**One person, several accounts.** Someone may reach the companion as `discord:42` on one app and `web:leo` on
+another. When your code knows it is the same person (they logged in, or they are your own accounts),
+`m.link("web:leo", "discord:42")` makes them one: from then on every call with either subject means them (notes,
+mood, role, alias, profile card), and what was kept under `web:leo` joins what is kept under `discord:42`. Joining
+keeps the rules of writing: one live note per key (the newest), no text twice; the closer relationship (since the
+earlier day), the newer mood, profile card and alias, and both mood timelines. `m.person("web:leo")` says who a
+subject stands for, `m.unlink("web:leo")` makes it its own again (what was joined stays), and `erase` from any of
+the accounts erases the person and their links. A model never links accounts.
+
 ## Configuration
 
 Everything that makes a companion itself is in its config: its name and languages, its time zone, the memory,
@@ -309,6 +318,7 @@ mneme-llm forget discord:42 --key user.allergy
 mneme-llm mood discord:42                               # value, feelings, the last changes and who judged them
 mneme-llm relate discord:42 family --closeness 90       # who they are to the companion; `relations` lists all
 mneme-llm alias discord:42 鲸酱                         # what they call the companion (--remove takes it away)
+mneme-llm link web:leo discord:42                       # the same person on another account; `people` lists links
 mneme-llm export --out backup.json && mneme-llm --db other.db import backup.json --into dafeiyu
 mneme-llm tools --style anthropic                       # print tool definitions
 mneme-llm recalls discord:42                            # what was recalled for them lately, and why
@@ -332,7 +342,7 @@ mneme-llm config check                                  # defaults a newer versi
 - **Forgetting.** `m.forget` hides a note (it stays in the file and in its key's history until `purge`),
   `m.purge()` erases hidden and replaced notes and their vectors for good, and `m.erase(subject)` removes
   everything about a person: notes, history, vectors, what their notes taught the word centroids, profile card,
-  recall log, mood and timeline, their role and their alias. The recall log keeps the last 200 queries per person (`mneme-llm recalls`) until
+  recall log, mood and timeline, their role, their alias and the links of their other accounts. The recall log keeps the last 200 queries per person (`mneme-llm recalls`) until
   then.
 
 ## Tests

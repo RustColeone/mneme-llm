@@ -22,6 +22,7 @@ from typing import Callable, Mapping
 
 from . import dates, text as texts
 from .i18n import Speaks, Words, code, has, say
+from .people import People, Resolves
 from .store import Store
 
 DAY = 86400.0
@@ -66,16 +67,18 @@ class Relationship:
     updated_at: float  # when closeness was last written (given, or a day of contact)
 
 
-class Relations(Speaks):
+class Relations(Speaks, Resolves):
     def __init__(self, store: Store, space: str, *, roles: tuple[Role, ...] = ROLES, growth: float = 1.0,
                  fade_days: float = 30.0, zone: tzinfo | None = None, display_language: str | Words = "en",
-                 clock: Callable[[], float] = time.time):
+                 people: People | None = None, clock: Callable[[], float] = time.time):
         self.store, self.space, self.roles = store, space, {role.key: role for role in roles}
+        self.people = people
         self.growth, self.fade_days, self.zone = growth, fade_days, zone
         self.words, self.clock = Words.of(display_language), clock
 
     # ---- reading -------------------------------------------------------------------------------------
     def get(self, subject: str, now: float | None = None) -> Relationship | None:
+        subject = self.who(subject)
         row = self.store.row("select * from relationships where space = ? and subject = ?", (self.space, subject))
         return self._of(row, self.clock() if now is None else now) if row is not None else None
 
@@ -107,6 +110,7 @@ class Relations(Speaks):
         the person's present closeness when the role stays the same (then nothing changes: a host may say it at
         every start); it must lie within the role's band."""
         texts.required(subject, "subject")
+        subject = self.who(subject)
         if role not in self.roles:
             raise ValueError(f"no role {role!r}; the roles are {', '.join(self.roles)}")
         kind = self.roles[role]
@@ -136,6 +140,7 @@ class Relations(Speaks):
     def seen(self, subject: str) -> Relationship | None:
         """A contact: the first one on a day (in the companion's zone) grows closeness by `growth`. A person with no
         role is left without one. A clock that went back changes nothing (time never moves backwards here)."""
+        subject = self.who(subject)
         with self.store.transaction():
             now = self.clock()
             present = self.get(subject, now)
@@ -151,7 +156,24 @@ class Relations(Speaks):
 
     def remove(self, subject: str) -> bool:
         return bool(self.store.execute("delete from relationships where space = ? and subject = ?",
-                                       (self.space, subject)).rowcount)
+                                       (self.space, self.who(subject))).rowcount)
+
+    def join(self, old: str, new: str) -> None:
+        """`old` is the person `new` now (`People.link`): of two relationships the closer is kept (the person's own
+        when they are as close), since the earlier of the two days."""
+        with self.store.transaction():
+            now = self.clock()
+            rows = {row["subject"]: row for row in self.store.rows(
+                "select * from relationships where space = ? and subject in (?, ?)", (self.space, old, new))}
+            if old not in rows:
+                return
+            self.store.execute("delete from relationships where space = ? and subject = ?", (self.space, old))
+            kept = rows[old] if new not in rows or self._of(rows[old], now).closeness > \
+                self._of(rows[new], now).closeness else rows[new]
+            since = min(row["since"] for row in rows.values())
+            self.store.execute(
+                "insert or replace into relationships (space, subject, role, closeness, since, updated_at) values "
+                "(?, ?, ?, ?, ?, ?)", (self.space, new, kept["role"], kept["closeness"], since, kept["updated_at"]))
 
     # ---- moving between files ------------------------------------------------------------------------
     def export_rows(self) -> dict:

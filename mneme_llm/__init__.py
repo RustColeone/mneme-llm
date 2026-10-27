@@ -4,6 +4,7 @@
     m = Mneme("companion.db", space="dafeiyu", config="dafeiyu.toml", complete=my_model)
     m.relate("discord:42", "creator")
     m.alias("discord:42", "鲸酱")
+    m.link("web:leo", "discord:42")   # the same person on another account
     m.remember("discord:42", "养了一只叫年糕的猫", kind="fact", key="pet.name", importance=4)
     system_prompt += await m.aprompt("discord:42", query=user_message, user_name="Leo")
     await m.aobserve("discord:42", [("Leo", user_message), ("大肥鱼", reply)], user_name="Leo")
@@ -28,6 +29,7 @@ from .i18n import Words, say
 from .meaning import Embeddings, Meaning, OpenAIEmbeddings, ledger
 from .memory import KINDS, Memory, Note, Recall
 from .mood import Emotion, Mood, MoodEvent, MoodSettings
+from .people import People
 from .providers import Unavailable, run
 from .relations import Relations, Relationship, Role
 from .store import SCHEMA_VERSION, Store
@@ -108,18 +110,20 @@ class Mneme:
         self._tiers += [self.micro] if self.micro is not None else []
         self.decider = self._chain(complete)
         self.meaning = self._meaning(embed, meaning_micro, memory_language, complete)
+        self.people = People(self.store, space, clock=clock)
         self.memory = Memory(self.store, space, half_life_days=stored(half_life_days, "memory.half_life_days"),
                              daily_quota=stored(daily_quota, "memory.daily_quota"),
                              max_notes=own.get("memory.max_notes"), semantic_window=own.get("memory.semantic_window"),
-                             zone=zone, display_language=words, meaning=self.meaning, clock=clock)
+                             zone=zone, display_language=words, meaning=self.meaning, people=self.people,
+                             clock=clock)
         self.mood = Mood(self.store, space, decider=self.decider, settings=own.mood_settings() if mood is STORED
                          else mood, companion_name=self.companion_name, display_language=words, prompts=self.prompts,
-                         clock=clock)
+                         people=self.people, clock=clock)
         self.relations = Relations(self.store, space, roles=own.roles() if roles is STORED else roles,
                                    growth=own.get("relations.growth"),
                                    fade_days=own.get("relations.fade_days"), zone=zone, display_language=words,
-                                   clock=clock)
-        self.aliases = Aliases(self.store, space, display_language=words, clock=clock)
+                                   people=self.people, clock=clock)
+        self.aliases = Aliases(self.store, space, display_language=words, people=self.people, clock=clock)
 
     @property
     def display_language(self) -> str:
@@ -197,6 +201,28 @@ class Mneme:
             return None
         return self.aliases.set(subject, alias)
 
+    def link(self, subject: str, person: str) -> str:
+        """Record that `subject` is the same person as `person` (another account of theirs; see `People`): from now
+        on every call with either means them, and what was kept under `subject` joins what is kept under `person`.
+        Your code links accounts it knows to be one person, never a model. Returns the person's own subject."""
+        with self.store.transaction():
+            person, new = self.people.link(subject, person)
+            if new:
+                self._join(subject, person)
+        return person
+
+    def unlink(self, subject: str) -> bool:
+        """`subject` is its own person again from now on; what was joined stays with the person it was linked to."""
+        return self.people.unlink(subject)
+
+    def person(self, subject: str) -> str:
+        """The person a subject stands for: the subject it is linked to, or itself."""
+        return self.people.of(subject)
+
+    def _join(self, old: str, new: str) -> None:
+        for part in (self.memory, self.mood, self.relations, self.aliases):
+            part.join(old, new)
+
     def forget(self, subject: str, *, id: int | None = None, key: str | None = None) -> int:
         """Hide a note (by id) or a key's live note; it stays in the history until `purge`."""
         return self.memory.forget(subject, id=id, key=key)
@@ -207,13 +233,15 @@ class Mneme:
 
     def erase(self, subject: str) -> int:
         """Everything about a person, gone for good ("forget me"): notes, history, vectors, what they taught the
-        word centroids, profile card, recall log, mood and its timeline, their role and their alias. Returns how
-        many notes there were."""
+        word centroids, profile card, recall log, mood and its timeline, their role, their alias and the links of
+        their other accounts. Returns how many notes there were."""
         with self.store.transaction():
+            subject = self.people.of(subject)
             count = self.memory.erase(subject)
             self.mood.reset(subject)
             self.relations.remove(subject)
             self.aliases.remove(subject)
+            self.people.remove(subject)
         return count
 
     def prompt(self, subject: str, query: str = "", *, user_name: str | None = None, mark: bool = True, limit: int = 6,
@@ -365,21 +393,30 @@ class Mneme:
         """This space as plain JSON (see docs/FORMAT.md), its config included."""
         return {"mneme_llm": SCHEMA_VERSION, "space": self.space, "exported_at": time.time(),
                 **self.memory.export_rows(), **self.mood.export_rows(), **self.relations.export_rows(),
-                **self.aliases.export_rows(), **self.config.export_rows()}
+                **self.aliases.export_rows(), **self.people.export_rows(), **self.config.export_rows()}
 
     def import_data(self, data: dict, *, config: bool = False) -> int:
-        """Add an export to this space, held to the rules of writing; returns how many notes were added. The
-        export's config (its prompts are instructions to your models) is applied only with `config=True`, and
-        is in use once the file is next opened."""
+        """Add an export to this space, held to the rules of writing; returns how many notes were added. Its links
+        come along (an account this file links to someone else stays so), and what it kept under a linked account
+        joins the person. The export's config (its prompts are instructions to your models) is applied only with
+        `config=True`, and is in use once the file is next opened."""
         if not isinstance(data, dict):
             raise TypeError("an export is a JSON object")
         rows = {name: data.get(name) if isinstance(data.get(name), list) else []
-                for name in ("memories", "profiles", "moods", "mood_events", "relationships", "aliases", "config")}
+                for name in ("memories", "profiles", "moods", "mood_events", "relationships", "aliases", "people",
+                             "config")}
         with self.store.transaction():
             added = self.memory.import_rows(rows["memories"], rows["profiles"])
             self.mood.import_rows(rows["moods"], rows["mood_events"])
             self.relations.import_rows(rows["relationships"])
             self.aliases.import_rows(rows["aliases"])
+            for subject, person in self.people.rows_of(rows["people"]):
+                try:
+                    self.link(subject, person)
+                except ValueError:  # linked to someone else here: this file's link stays
+                    pass
+            for subject, person in self.people.all().items():
+                self._join(subject, person)  # what the export kept under a linked account is the person's
             if config:
                 self.config.import_rows(rows["config"])
         return added
@@ -398,6 +435,6 @@ class Mneme:
 
 
 __all__ = ["Aliases", "Answer", "Chain", "Choice", "Config", "Embeddings", "Emotion", "KINDS", "Luna", "Meaning", "Memory",
-           "Mneme", "Mood", "MoodEvent", "MoodSettings", "Note", "Observation", "OpenAIEmbeddings", "Predicate",
+           "Mneme", "Mood", "MoodEvent", "MoodSettings", "Note", "Observation", "OpenAIEmbeddings", "People", "Predicate",
            "Prompt", "Recall", "Relations", "Relationship", "Role", "STORED", "Score", "Store", "Unavailable",
            "__version__"]

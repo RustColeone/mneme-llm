@@ -3,7 +3,7 @@
 Every row belongs to a `space` (whose memory it is: an app or a character, "whale_chan") and most to a `subject`
 (who it is about: "discord:1234"). This module is the file alone: its tables, migrations, locking and
 transactions. The rules of what goes in them belong to the modules that own each table (memory, mood, meaning,
-relations, aliases, config).
+relations, aliases, people, config).
 """
 
 from __future__ import annotations
@@ -90,6 +90,11 @@ create table if not exists aliases (
     space text not null, subject text not null, alias text not null, updated_at real not null,
     primary key (space, subject)
 );
+create table if not exists people (
+    space text not null, subject text not null, person text not null, updated_at real not null,
+    primary key (space, subject)
+);
+create index if not exists people_person on people(space, person);
 """
 # Columns added after a table first shipped, so files made by earlier builds gain them on open.
 ADDED_COLUMNS = {"memories": {"gloss": "text", "terms": "text", "folded": "text"}, "vectors": {"taught": "text"}}

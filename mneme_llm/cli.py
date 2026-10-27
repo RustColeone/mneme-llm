@@ -92,6 +92,13 @@ def main(argv: list[str] | None = None) -> int:
     alias.add_argument("alias", nargs="?", help="their name for the companion (40 characters at most)")
     alias.add_argument("--remove", action="store_true", help="take the alias away")
 
+    link = commands.add_parser("link", help="one person under another account: what each kept becomes one")
+    link.add_argument("subject", help="the other account (web:leo)")
+    link.add_argument("person", help="the account it is the same person as (discord:42)")
+    unlink = commands.add_parser("unlink", help="an account is its own person again (what was joined stays)")
+    unlink.add_argument("subject")
+    commands.add_parser("people", help="every account linked to a person")
+
     mood = commands.add_parser("mood", help="a subject's mood and its timeline")
     mood.add_argument("subject")
     mood.add_argument("--reset", action="store_true")
@@ -193,7 +200,8 @@ def _run(m: Mneme, args) -> int:
         print(f"forgot {memory.forget(args.subject, id=args.id, key=args.key)}")
     elif args.command == "erase":
         if not args.yes:
-            print("this deletes every note, the profile, the mood, the role and the alias of the subject; add --yes",
+            print("this deletes every note, the profile, the mood, the role, the alias and the links of the subject; "
+                  "add --yes",
                   file=sys.stderr)
             return 2
         print(f"erased {m.erase(args.subject)} notes")
@@ -239,6 +247,16 @@ def _run(m: Mneme, args) -> int:
                 print(error, file=sys.stderr)
                 return 2
         print(m.aliases.get(args.subject) or "(no alias)")
+    elif args.command == "link":
+        try:
+            print(f"{args.subject} is {m.link(args.subject, args.person)}")
+        except ValueError as error:
+            print(error, file=sys.stderr)
+            return 2
+    elif args.command == "unlink":
+        print("unlinked" if m.unlink(args.subject) else "(not linked)")
+    elif args.command == "people":
+        print("\n".join(f"{subject} -> {person}" for subject, person in m.people.all().items()) or "(no links)")
     elif args.command == "mood":
         if args.reset:
             m.mood.reset(args.subject)

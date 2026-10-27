@@ -113,6 +113,17 @@ the bands and the zone are settings, not part of the file.
 `(space, subject)` primary key; `alias` (one line, at most 40 characters, never blank); `updated_at` (when it was
 set). A person without an alias has no row.
 
+### `people`: one person under several subjects
+
+`(space, subject)` primary key, and an index on `(space, person)`; `person` (the subject the person's rows are kept
+under), `updated_at` (when it was linked). A row says that `subject` is `person`: every reader and writer takes
+`person` wherever it is given `subject`, so no other table keeps rows under a linked subject. A link is one step
+deep: `person` is never itself linked, and never equals `subject`. Linking moves what was kept under `subject` to
+`person`: its notes, term index rows and recall log (then, as after an import, one live note per key, the newest,
+and no live text twice), its mood timeline; of two profile cards, moods (with their event links) or aliases the
+newer `updated_at` is kept, and of two relationships the closer one now (the person's own when equal), with the
+earlier `since`. A subject without a row is its own person.
+
 ### `note_terms`: the term index
 
 `(space, subject, term, memory_id)` primary key, and an index on `memory_id`. A note's rows are exactly the terms
@@ -168,7 +179,7 @@ were compared (`notes`) and, when there were enough, their median similarity (`b
 {"mneme_llm": 1, "space": "dafeiyu", "exported_at": 1792885075.5,
  "memories": [{"id": 1, "subject": "discord:42", "key": "pet.name", "kind": "fact", "text": "…", "gloss": null, …}],
  "profiles": [...], "moods": [...], "mood_events": [...], "relationships": [...], "aliases": [...],
- "config": [{"key": "companion.name", "value": "大肥鱼", "origin": "file"}, …]}
+ "people": [...], "config": [{"key": "companion.name", "value": "大肥鱼", "origin": "file"}, …]}
 ```
 
 Rows are the table rows as objects, without `terms` and `folded`. Vectors, word centroids, floors and micro models
@@ -184,7 +195,8 @@ a key, or else the first copy (the others are marked deleted). Moods are importe
 without their event links (the timeline is imported separately); an event identical to one already in the timeline
 is not added again. A relationship replaces the person's present one, its closeness kept within the role's band
 (0–100 for a role the host does not have); a second holder of a one-person role (a second creator) is skipped.
-The config is applied only when the importer asks for it (its prompts are instructions to the importer's models),
+Links are added as by linking (a subject the file already links to another person keeps its link), and then what
+the import put under any linked subject joins its person. The config is applied only when the importer asks for it (its prompts are instructions to the importer's models),
 row by row, a row with an unknown key or a value that does not pass skipped.
 
 ## Search terms
@@ -225,4 +237,7 @@ Files written before these were added open as before; a writer adds the missing 
 - `config` (table). A space without rows takes its config (the defaults and the host's config file) the next time
   it is opened;
 - `aliases` (table, mneme-llm 0.2). A file without it has no aliases; mneme-llm 0.1 opens a file that has it and
-  leaves the table alone.
+  leaves the table alone;
+- `people` (table) with the index `people_person` (mneme-llm 0.2). A file without it links no one. mneme-llm 0.1
+  opens a file that has it but does not read it: a linked subject is then its own person again, without its
+  notes.

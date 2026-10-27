@@ -114,6 +114,16 @@ def check(store) -> list[str]:
         if not alias.strip() or len(alias) > 40 or "\n" in alias:
             problems.append(f"{row['subject']}: alias {alias!r} is not one short line")
 
+    # Links: one step deep (a person is never linked on), never to itself, and nothing kept under a linked subject.
+    links = {(row["space"], row["subject"]): row["person"] for row in store.rows("select * from people")}
+    for (space, subject), person in links.items():
+        if person == subject or (space, person) in links:
+            problems.append(f"{subject} is linked to {person}, which is not a person's own subject")
+        for table in ("memories", "profiles", "moods", "mood_events", "relationships", "aliases", "note_terms",
+                      "recalls"):
+            if store.row(f"select 1 from {table} where space = ? and subject = ?", (space, subject)) is not None:
+                problems.append(f"{table} keeps rows under {subject}, which is linked to {person}")
+
     # The config: every known key's value passes its rule, from a known origin.
     for row in store.rows("select * from config"):
         if row["origin"] not in ORIGINS:

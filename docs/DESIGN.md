@@ -33,6 +33,7 @@ documented format, and does every judgement it needs through tiers that work wit
    │ Memory (memory.py) │          │ Mood (mood.py)       │      capture.py: the writers' prompts and replies
    │ notes, recall      │          │ value + feelings     │      exchange.py: an exchange as judges read it
    └──────┬─────────────┘          └──────────┬───────────┘      relations.py: who each person is to it; aliases.py: their name for it
+          │                                   │                  people.py: one person under several subjects
           │ meaning/ (3 tiers)                │ decide/ (3 tiers)
           │ embeddings → centroids → unify    │ Luna → micro → your model
    ┌──────┴───────────────────────────────────┴───────────┐
@@ -42,14 +43,15 @@ documented format, and does every judgement it needs through tiers that work wit
 
 | file | lines | role |
 |---|---|---|
-| `__init__.py` | 403 | `Mneme`, the facade: builds the tiers; `aprompt`, `aobserve`, `acapture`, `areflect`, `relate`, `alias`, `erase`, export/import |
-| `store.py` | 258 | the SQLite file alone: schema, additive migrations, locking, transactions |
-| `memory.py` | 745 | notes: the rules of writing, the term index, recall ranking, rendering, profile card, recall log, notes' export/import |
-| `mood.py` | 387 | mood state, decay, judging questions, guardrails, telling once, moods' export/import |
+| `__init__.py` | 440 | `Mneme`, the facade: builds the tiers; `aprompt`, `aobserve`, `acapture`, `areflect`, `relate`, `alias`, `link`, `erase`, export/import |
+| `store.py` | 263 | the SQLite file alone: schema, additive migrations, locking, transactions |
+| `memory.py` | 777 | notes: the rules of writing, the term index, recall ranking, rendering, profile card, recall log, notes' export/import |
+| `mood.py` | 411 | mood state, decay, judging questions, guardrails, telling once, moods' export/import |
 | `config.py` | 547 | a companion's config: the defaults, checking each key, TOML in and out, the stored copy per space |
 | `prompts.py` | 59 | every instruction given to a model, by name (the built-in defaults) |
-| `relations.py` | 200 | who each person is to the companion: roles, closeness that grows and fades, the mood weight, the prompt line |
-| `aliases.py` | 81 | what each person calls the companion: one short line each, the prompt line |
+| `relations.py` | 230 | who each person is to the companion: roles, closeness that grows and fades, the mood weight, the prompt line |
+| `aliases.py` | 94 | what each person calls the companion: one short line each, the prompt line |
+| `people.py` | 95 | one person under several subjects (their accounts): links one step deep, and who a subject stands for |
 | `capture.py` | 69 | what the note writer and the profile writer are asked, and reading their replies |
 | `exchange.py` | 37 | an exchange as one text, and framed for a judge (who is who, who started it) |
 | `providers.py` | 92 | what every tier needs to call out: sync or async calls, posting JSON, JSON in replies, resting |
@@ -526,6 +528,18 @@ the person's own words; it stands outside the notes' block all the same, because
 person's own prompts, where they could say as much in a message, and it is too short to carry more than a name.
 `erase` removes it; export and import carry it under the same rule.
 
+**People** (`people.py`) are the persons behind the subjects. One person may reach the companion under several
+subjects, one per account ("discord:42", "web:leo"); the host, which knows who is behind each (a login, the owner's
+own accounts), links them: `m.link("web:leo", "discord:42")`. Memory, mood, relations and aliases each take the
+person wherever they are given a subject (`Resolves.who`, one indexed lookup per call), so a host keeps calling
+with whatever account a message came from and every part reads and writes one person's rows. Linking joins what was
+already kept, part by part (each owns its tables): notes under the rules of writing (one live note per key, the
+newest; no text twice, as after an import), both mood timelines, the newer mood, profile card and alias, and the
+closer relationship since the earlier day. Links are kept one step deep (a subject always names a person's own
+subject), so a lookup never follows a chain, and linking a person on moves their own links along. `unlink` makes
+an account its own again from then on and leaves what was joined; `erase` from any account erases the person and
+their links. Links come along in exports; an import joins what it put under a linked subject.
+
 ## 10. Capture and reflection (`capture.py`, `Mneme`)
 
 Notes are written **after** the reply, not by the chat model during it:
@@ -704,6 +718,7 @@ size (`MNEME_STRESS=heavy`); then builds the package, runs `twine check --strict
 | `test_tools.py` | tool definitions in every style, the dispatcher and its errors, quota messages, the MCP session, capture and reflection, the facade, the CLI round trip |
 | `test_relations.py` | roles and their bands, one creator, a host's own role, growth once a day up to the ceiling, fading down to the floor (never for the creator), the mood weight, the prompt line in both languages, erase, export and import, the CLI |
 | `test_aliases.py` | an alias set, replaced and removed, the prompt line in both languages, one short line, its own space, erase, export and import under the same rule, a 0.1 file gaining the table, the CLI |
+| `test_people.py` | either account meaning the same person in every part, joining what each kept (keys, duplicates, the closer role, the newer mood, card and alias, both timelines), the person's own winning a tie, links one step deep, unlinking, erase from any account, export and import, a file gaining the table, the CLI |
 | `test_calibrate.py` | the set placing the floor, a model that cannot separate it, a given floor, once per model per file, an older set, a failed measurement, two recalls at once, the file refining it and the limit on that |
 | `test_config.py` | seeding a new companion from a file, the stored copy winning later, arguments for one process, wrong files refused whole, every rule of `set`, `apply` whole or nothing, defaults loaded only when asked, values spoiled by hand, the prompts reaching each model, a reworded question, feelings and a language of the companion's own, export and import, TOML round trips, the CLI |
 | `test_i18n.py` | every language has every word and sentence, with the same placeholders |

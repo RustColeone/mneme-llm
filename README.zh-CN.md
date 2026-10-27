@@ -131,6 +131,8 @@ await m.aobserve("discord:42", [("Leo", user_message), ("大肥鱼", reply)], us
 
 **称呼**（alias）是每个人对伴侣的叫法，与它对所有人都用的名字（`companion_name`）并存。由你的代码在对方选定时记录，绝不由模型设定：`m.alias("discord:42", "鲸酱")`；`m.alias("discord:42", None)` 会把它去掉。称呼只占一行，最多 40 个字符；之后提示词会在说明对方是谁之后加上一句："（Leo叫你鲸酱。）"。
 
+**一个人，几个账号。** 同一个人可能在一个应用里是 `discord:42`，在另一个应用里是 `web:leo`。当你的代码知道这是同一个人时（对方登录过，或者这是你自己的账号），`m.link("web:leo", "discord:42")` 会把他们合为一人：此后用任一主体调用，指的都是这个人（笔记、心情、角色、称呼、印象卡），在 `web:leo` 名下记下的内容也会并入 `discord:42` 名下。合并遵守写入规则：每个键只保留一条有效笔记（最新的），同样的文字不留两份；关系保留更亲近的那一个（起始日取更早的一天），心情、印象卡和称呼保留更新的那一个，两条心情时间线合在一起。`m.person("web:leo")` 告诉你一个主体代表谁，`m.unlink("web:leo")` 让它重新独立（已经合并的内容保持合并），从任一账号调用 `erase` 都会删除这个人及其账号链接。模型绝不会链接账号。
+
 ## 配置
 
 一个伴侣之所以成为它自己，全部都在它的配置里：名字和语言、时区、记忆、心情和关系设置、角色和感受、它交给模型的每一个提示词，以及它显示的每一句话。`mneme-llm config template > companion.toml` 会按这个版本的默认值写出全部内容，作为一个起始文件；只保留你修改的部分。
@@ -245,6 +247,7 @@ mneme-llm forget discord:42 --key user.allergy
 mneme-llm mood discord:42                               # 值、情绪、最近的变化，以及是谁做的判断
 mneme-llm relate discord:42 family --closeness 90       # 对方是伴侣的什么人；`relations` 列出全部
 mneme-llm alias discord:42 鲸酱                         # 对方怎么称呼伴侣（--remove 去掉）
+mneme-llm link web:leo discord:42                       # 同一个人的另一个账号；`people` 列出所有链接
 mneme-llm export --out backup.json && mneme-llm --db other.db import backup.json --into dafeiyu
 mneme-llm tools --style anthropic                       # 打印工具定义
 mneme-llm recalls discord:42                            # 最近为对方回忆起了什么，以及为什么
@@ -273,7 +276,7 @@ mneme-llm config check                                  # 新版本改进过的�
   它仍留在文件和其键的历史中），`m.purge()` 会彻底删除
   已隐藏和被替换的笔记及其向量，`m.erase(subject)` 会删除
   关于对方的全部内容：笔记、历史、向量、其笔记教给词向量中心的内容、
-  印象卡片、回忆日志、心情和时间线，以及其角色和称呼。在此之前，
+  印象卡片、回忆日志、心情和时间线，以及其角色、称呼和其他账号的链接。在此之前，
   回忆日志会按对方保留最近 200 条查询（`mneme-llm recalls`）。
 
 ## 测试

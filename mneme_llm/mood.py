@@ -27,6 +27,7 @@ from typing import Callable, Mapping, Sequence
 from . import dates, exchange as exchanges, text as texts
 from .decide import Answer, Chain, Choice, Score
 from .i18n import LANGUAGES, Speaks, Words, code, has, say
+from .people import People, Resolves
 from .prompts import PROMPTS
 from .providers import run
 from .store import Store, dumps
@@ -107,18 +108,20 @@ class MoodEvent:
     value: float
 
 
-class Mood(Speaks):
+class Mood(Speaks, Resolves):
     def __init__(self, store: Store, space: str, *, decider: Chain | None = None,
                  settings: MoodSettings = MoodSettings(), companion_name: str = "the assistant",
                  display_language: str | Words = "en", prompts: Mapping[str, str] = PROMPTS,
-                 clock: Callable[[], float] = time.time):
+                 people: People | None = None, clock: Callable[[], float] = time.time):
         self.store, self.space, self.decider, self.settings = store, space, decider, settings
+        self.people = people
         self.words, self.prompts = Words.of(display_language), prompts
         self.companion_name, self.clock = companion_name, clock
 
     # ---- reading -------------------------------------------------------------------------------------
     def state(self, subject: str, now: float | None = None) -> MoodState:
         now = self.clock() if now is None else now
+        subject = self.who(subject)
         row = self.store.row("select * from moods where space = ? and subject = ?", (self.space, subject))
         s = self.settings
         if row is None:
@@ -146,6 +149,7 @@ class Mood(Speaks):
         s = self.settings
         if s.tell == "off":
             return None
+        subject = self.who(subject)
         with self.store.transaction():  # read and marked together, so two prompts at once don't both tell it
             row = self.store.row("select * from moods where space = ? and subject = ?", (self.space, subject))
             if row is None or row["last_event"] is None or row["last_event"] == row["told_event"]:
@@ -167,7 +171,7 @@ class Mood(Speaks):
 
     def timeline(self, subject: str, limit: int = 40) -> list[MoodEvent]:
         rows = self.store.rows("select * from mood_events where space = ? and subject = ? order by id desc limit ?",
-                               (self.space, subject, limit))
+                               (self.space, self.who(subject), limit))
         return [MoodEvent(row["id"], row["at"], row["delta"], json.loads(row["emotions"]), row["reason"],
                           row["confidence"], row["source"], row["judge"], row["value"]) for row in rows]
 
@@ -228,6 +232,7 @@ class Mood(Speaks):
         """Move the mood directly (hosts with their own judge use this); same guardrails as `judge`. The change
         is scaled by `weight` and by the source's weight."""
         texts.required(subject, "subject")
+        subject = self.who(subject)
         s = self.settings
         emotions = {key: float(value) for key, value in (emotions or {}).items() if value}
         if not all(math.isfinite(value) for value in [float(delta), float(confidence), *emotions.values()]):
@@ -267,9 +272,27 @@ class Mood(Speaks):
 
     def reset(self, subject: str) -> None:
         """Back to baseline with no feelings and an empty timeline."""
+        subject = self.who(subject)
         with self.store.transaction():
             self.store.execute("delete from moods where space = ? and subject = ?", (self.space, subject))
             self.store.execute("delete from mood_events where space = ? and subject = ?", (self.space, subject))
+
+    def join(self, old: str, new: str) -> None:
+        """`old` is the person `new` now (`People.link`): the timelines become one, and of two moods the newer is
+        kept, with what it has told."""
+        with self.store.transaction():
+            rows = {row["subject"]: row for row in self.store.rows(
+                "select * from moods where space = ? and subject in (?, ?)", (self.space, old, new))}
+            self.store.execute("update mood_events set subject = ? where space = ? and subject = ?",
+                               (new, self.space, old))
+            if old in rows and (new not in rows or rows[old]["updated_at"] > rows[new]["updated_at"]):
+                row = rows[old]
+                self.store.execute(
+                    "insert or replace into moods (space, subject, value, emotions, updated_at, last_event, "
+                    "told_event) values (?, ?, ?, ?, ?, ?, ?)", (self.space, new, row["value"], row["emotions"],
+                                                                 row["updated_at"], row["last_event"],
+                                                                 row["told_event"]))
+            self.store.execute("delete from moods where space = ? and subject = ?", (self.space, old))
 
     # ---- moving between files ------------------------------------------------------------------------
     def export_rows(self) -> dict:
