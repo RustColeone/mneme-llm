@@ -110,11 +110,10 @@ class Relations(Speaks, Resolves):
         the person's present closeness when the role stays the same (then nothing changes: a host may say it at
         every start); it must lie within the role's band."""
         texts.required(subject, "subject")
-        subject = self.who(subject)
         if role not in self.roles:
             raise ValueError(f"no role {role!r}; the roles are {', '.join(self.roles)}")
         kind = self.roles[role]
-        with self.store.transaction():
+        with self.writing(subject) as subject:
             now = self.clock()
             present = self.get(subject, now)
             if closeness is None and present is not None and present.role == role:
@@ -140,8 +139,7 @@ class Relations(Speaks, Resolves):
     def seen(self, subject: str) -> Relationship | None:
         """A contact: the first one on a day (in the companion's zone) grows closeness by `growth`. A person with no
         role is left without one. A clock that went back changes nothing (time never moves backwards here)."""
-        subject = self.who(subject)
-        with self.store.transaction():
+        with self.writing(subject) as subject:
             now = self.clock()
             present = self.get(subject, now)
             if present is None or now <= present.updated_at:
@@ -155,8 +153,9 @@ class Relations(Speaks, Resolves):
         return Relationship(subject, present.role, closeness, present.since, now)
 
     def remove(self, subject: str) -> bool:
-        return bool(self.store.execute("delete from relationships where space = ? and subject = ?",
-                                       (self.space, self.who(subject))).rowcount)
+        with self.writing(subject) as subject:
+            return bool(self.store.execute("delete from relationships where space = ? and subject = ?",
+                                           (self.space, subject)).rowcount)
 
     def join(self, old: str, new: str) -> None:
         """`old` is the person `new` now (`People.link`): of two relationships the closer is kept (the person's own

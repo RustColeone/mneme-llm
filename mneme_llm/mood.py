@@ -149,8 +149,7 @@ class Mood(Speaks, Resolves):
         s = self.settings
         if s.tell == "off":
             return None
-        subject = self.who(subject)
-        with self.store.transaction():  # read and marked together, so two prompts at once don't both tell it
+        with self.writing(subject) as subject:  # read and marked together, so two prompts at once don't both tell it
             row = self.store.row("select * from moods where space = ? and subject = ?", (self.space, subject))
             if row is None or row["last_event"] is None or row["last_event"] == row["told_event"]:
                 return None
@@ -232,7 +231,6 @@ class Mood(Speaks, Resolves):
         """Move the mood directly (hosts with their own judge use this); same guardrails as `judge`. The change
         is scaled by `weight` and by the source's weight."""
         texts.required(subject, "subject")
-        subject = self.who(subject)
         s = self.settings
         emotions = {key: float(value) for key, value in (emotions or {}).items() if value}
         if not all(math.isfinite(value) for value in [float(delta), float(confidence), *emotions.values()]):
@@ -249,7 +247,7 @@ class Mood(Speaks, Resolves):
                 delta = 0.0
         if abs(delta) < 0.5 and all(value < 1.0 for value in emotions.values()):
             return None
-        with self.store.transaction():  # read and write together, so concurrent judgements never lose one
+        with self.writing(subject) as subject:  # read and write together, so concurrent judgements never lose one
             now = self.clock()
             state = self.state(subject, now)
             value = min(s.ceiling, max(s.floor, state.value + delta))
@@ -272,8 +270,7 @@ class Mood(Speaks, Resolves):
 
     def reset(self, subject: str) -> None:
         """Back to baseline with no feelings and an empty timeline."""
-        subject = self.who(subject)
-        with self.store.transaction():
+        with self.writing(subject) as subject:
             self.store.execute("delete from moods where space = ? and subject = ?", (self.space, subject))
             self.store.execute("delete from mood_events where space = ? and subject = ?", (self.space, subject))
 

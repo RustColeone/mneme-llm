@@ -47,17 +47,18 @@ class Aliases(Speaks, Resolves):
         cut to 40 characters. Returns the alias as stored."""
         texts.required(subject, "subject")
         texts.required(alias, "alias")
-        subject = self.who(subject)
         alias = texts.clip(alias, LIMIT)
         if texts.blank(alias):
             raise ValueError("alias must not be empty")
-        self.store.execute("insert or replace into aliases (space, subject, alias, updated_at) values (?, ?, ?, ?)",
-                           (self.space, subject, alias, self.clock()))
+        with self.writing(subject) as subject:
+            self.store.execute("insert or replace into aliases (space, subject, alias, updated_at) values "
+                               "(?, ?, ?, ?)", (self.space, subject, alias, self.clock()))
         return alias
 
     def remove(self, subject: str) -> bool:
-        return bool(self.store.execute("delete from aliases where space = ? and subject = ?",
-                                       (self.space, self.who(subject))).rowcount)
+        with self.writing(subject) as subject:
+            return bool(self.store.execute("delete from aliases where space = ? and subject = ?",
+                                           (self.space, subject)).rowcount)
 
     def join(self, old: str, new: str) -> None:
         """`old` is the person `new` now (`People.link`): of two aliases the newer is kept."""

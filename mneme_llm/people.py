@@ -15,6 +15,7 @@ Links are kept one step deep: a subject always points at a person's own subject,
 
 from __future__ import annotations
 
+import contextlib
 import time
 from typing import Callable
 
@@ -93,3 +94,11 @@ class Resolves:
 
     def who(self, subject: str) -> str:
         return self.people.of(subject) if self.people is not None else subject
+
+    @contextlib.contextmanager
+    def writing(self, subject: str):
+        """`with self.writing(subject) as person:` a write under the person the subject stands for, looked up inside
+        the write's own transaction: a link made meanwhile (another thread or process) moves rows within its own
+        transaction, so a write can never land under an account that is linked to someone by then."""
+        with self.store.transaction():
+            yield self.who(subject)

@@ -167,12 +167,11 @@ class Memory(Speaks, Resolves):
         """`remember`, also saying what happened: "kept", "replaced" (a key's older note), "known" (the same
         text was already there) or "over quota". `gloss` is the note in the unifying language, if known. `kind`
         is "episode" when not given (and a note taking over a key keeps its own)."""
-        subject = self.who(subject)
         texts.required(subject, "subject")
         fields = note_fields(text, kind=kind, key=key, importance=importance, feeling=feeling,
                              happened_at=happened_at, gloss=gloss)
         now = self.clock()
-        with self.store.transaction():
+        with self.writing(subject) as subject:
             same = self._same_text(subject, fields["text"])
             if fields["key"] is not None:
                 # Under a key, only a note with that key or with none is the same note (a keyless one may take the
@@ -228,22 +227,22 @@ class Memory(Speaks, Resolves):
     def forget(self, subject: str, *, id: int | None = None, key: str | None = None) -> int:
         """Remove a note (by id) or the live note of a key; returns how many were removed. History stays on disk
         (soft delete) until `purge`."""
-        subject = self.who(subject)
         if (id is None) == (key is None):
             raise ValueError("forget takes exactly one of id or key")
         where, value = ("id = ?", id) if id is not None else ("key = ?", normal_key(key))
-        cursor = self.store.execute(f"update memories set deleted_at = ? where space = ? and subject = ? and {where}"
-                                    " and deleted_at is null and superseded_by is null",
-                                    (self.clock(), self.space, subject, value))
+        with self.writing(subject) as subject:
+            cursor = self.store.execute(f"update memories set deleted_at = ? where space = ? and subject = ? and "
+                                        f"{where} and deleted_at is null and superseded_by is null",
+                                        (self.clock(), self.space, subject, value))
         return cursor.rowcount
 
     def purge(self, subject: str | None = None) -> int:
         """Erase removed and replaced notes for good (all subjects when none is given)."""
         sql = "delete from memories where space = ? and (deleted_at is not null or superseded_by is not null)"
         parameters: tuple = (self.space,)
-        if subject is not None:
-            sql, parameters = sql + " and subject = ?", (self.space, self.who(subject))
         with self.store.transaction():
+            if subject is not None:
+                sql, parameters = sql + " and subject = ?", (self.space, self.who(subject))
             ids = [row["id"] for row in self.store.rows(sql.replace("delete from", "select id from", 1), parameters)]
             ledger.unteach(self.store, ids)
             self._unindex(ids)
@@ -254,8 +253,7 @@ class Memory(Speaks, Resolves):
         """Every note about a subject gone for good, with their history, vectors, profile card and recall log;
         what the notes taught the word centroids is taken back, so none of their words stay. (`Mneme.erase` also
         resets the mood, for "forget me".)"""
-        subject = self.who(subject)
-        with self.store.transaction():
+        with self.writing(subject) as subject:
             ledger.unteach(self.store, [row["id"] for row in self.store.rows(
                 "select id from memories where space = ? and subject = ?", (self.space, subject))])
             count = self.store.execute("delete from memories where space = ? and subject = ?",
@@ -559,11 +557,11 @@ class Memory(Speaks, Resolves):
 
     def set_profile(self, subject: str, text: str | None) -> None:
         """A short standing impression of the subject (a few sentences), shown above the notes."""
-        subject = self.who(subject)
         texts.required(subject, "subject")
         if text is not None and not isinstance(text, str):
             raise TypeError(f"a profile must be a string, not {type(text).__name__}")
-        self._put_profile(subject, text, self.clock())
+        with self.writing(subject) as subject:
+            self._put_profile(subject, text, self.clock())
 
     def _put_profile(self, subject: str, text: str | None, at: float) -> None:
         if not text or texts.blank(texts.clip(text, MAX_PROFILE)):
@@ -610,9 +608,9 @@ class Memory(Speaks, Resolves):
                 if self.store.execute("update memories set terms = ? where id = ? and terms is null and key is ? and "
                                       "gloss is ?", (" ".join(terms), note.id, note.key, note.gloss)).rowcount:
                     self.store.execute("delete from note_terms where memory_id = ?", (note.id,))
-                    for term in terms:
-                        self.store.execute("insert or ignore into note_terms (space, subject, term, memory_id) values "
-                                           "(?, ?, ?, ?)", (self.space, note.subject, term, note.id))
+                    for term in terms:  # under the note's subject as it is now (a link may have moved it since)
+                        self.store.execute("insert or ignore into note_terms (space, subject, term, memory_id) select "
+                                           "space, subject, ?, id from memories where id = ?", (term, note.id))
 
     def _unindex(self, ids) -> None:
         """Take notes out of the term index (their words changed, or they are going); they are indexed again when
@@ -765,13 +763,14 @@ class Memory(Speaks, Resolves):
 
     def _log(self, subject: str, result: Recall, now: float) -> None:
         ids = [item.note.id for item in result.chosen if item.why.startswith(("matched", "similar"))]
-        self.store.execute("insert into recalls (space, subject, at, query, chosen, skipped) values (?, ?, ?, ?, ?, ?)",
-                           (self.space, subject, now, texts.clip(result.query, 300),
-                            dumps([[item.note.id, item.why] for item in result.chosen]),
-                            dumps([[note.id, reason] for note, reason in result.skipped])))
-        if ids:
-            self.store.execute(f"update memories set recalled_at = ?, recalls = recalls + 1 where id in "
-                               f"({', '.join('?' * len(ids))})", (now, *ids))
-        self.store.execute("delete from recalls where space = ? and subject = ? and id not in (select id from recalls"
-                           " where space = ? and subject = ? order by id desc limit 200)",
-                           (self.space, subject, self.space, subject))
+        with self.writing(subject) as subject:  # (a recall takes a while: the person may have been linked since)
+            self.store.execute("insert into recalls (space, subject, at, query, chosen, skipped) values "
+                               "(?, ?, ?, ?, ?, ?)", (self.space, subject, now, texts.clip(result.query, 300),
+                                                      dumps([[item.note.id, item.why] for item in result.chosen]),
+                                                      dumps([[note.id, reason] for note, reason in result.skipped])))
+            if ids:
+                self.store.execute(f"update memories set recalled_at = ?, recalls = recalls + 1 where id in "
+                                   f"({', '.join('?' * len(ids))})", (now, *ids))
+            self.store.execute("delete from recalls where space = ? and subject = ? and id not in (select id from "
+                               "recalls where space = ? and subject = ? order by id desc limit 200)",
+                               (self.space, subject, self.space, subject))

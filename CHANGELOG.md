@@ -15,7 +15,8 @@ before 1.0, a minor version may change the Python API, and this file says how.
   closer role; the newer mood, card and alias; both mood timelines). `Mneme.unlink`, `Mneme.person`,
   `Mneme.people`, `mneme-llm link`, `unlink` and `people`; `erase` from any account takes the person and their
   links, and export and import carry them. A new table, `people`, within schema 1: files from 0.1 gain it on open;
-  0.1 opens files that have it, but does not read it.
+  0.1 opens files that have it, but does not read it. Every write looks up the person inside its own transaction, so a link made at the
+  same time (another thread or process) never leaves a row under the account.
 - **Tests** keep their temporary files in one folder that is removed when the run ends (before, about 50 folders
   were left in the system's temporary directory by each run).
 

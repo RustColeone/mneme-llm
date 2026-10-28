@@ -184,6 +184,58 @@ class ConcurrencyTests(unittest.TestCase):
         self.assertEqual(check(m.store), [])
         m.close()
 
+    def test_a_link_made_while_a_write_looks_up_its_person_never_strands_a_row(self):
+        # Found by CI (Python 3.14, the threads above): a write looked up who a subject stands for, then wrote; a link
+        # made in between, from another thread, left its row under the account. Here the link is made at that very
+        # moment, for each kind of write: the write must land under the person, or wait for the link to finish.
+        writes = {
+            "keep": lambda m: m.memory.keep("web:leo", "Likes 抹茶 tea", key="drink.tea", importance=4),
+            "profile": lambda m: m.memory.set_profile("web:leo", "A student who likes tea."),
+            "mood": lambda m: m.mood.apply("web:leo", delta=10, emotions={"happy": 30}),
+            "news": lambda m: m.mood.news("web:leo"),
+            "role": lambda m: m.relate("web:leo", "friend"),
+            "contact": lambda m: m.relations.seen("web:leo"),
+            "alias": lambda m: m.alias("web:leo", "鲸酱"),
+        }
+        for name, write in writes.items():
+            with self.subTest(write=name):
+                m = open_memory(os.path.join(tempfile.mkdtemp(), "f.db"))
+                m.memory.keep("web:leo", "Exam on Friday", kind="plan")  # something for a recall to find
+                m.relate("web:leo", "acquaintance")
+                original, linking = m.people.of, []
+
+                def of(subject, original=original, m=m, linking=linking):
+                    found = original(subject)  # the answer the write goes on with; the link comes right after it
+                    if subject == "web:leo" and not linking:
+                        thread = threading.Thread(target=m.link, args=("web:leo", "discord:42"))
+                        linking.append(thread)
+                        thread.start()
+                        thread.join(timeout=0.3)  # done at once, unless the write holds the file (then after it)
+                    return found
+                m.people.of = of
+                write(m)
+                for thread in linking:
+                    thread.join()
+                m.people.of = original
+                self.assertEqual(m.person("web:leo"), "discord:42")
+                self.assertEqual(check(m.store), [])
+                m.close()
+        # A recall's log is written after the notes are read, a moment later: a link may come in between.
+        m = open_memory(os.path.join(tempfile.mkdtemp(), "f.db"))
+        m.memory.keep("web:leo", "Exam on Friday", kind="plan")
+        log = m.memory._log
+
+        def late(subject, result, now):
+            thread = threading.Thread(target=m.link, args=("web:leo", "discord:42"))
+            thread.start()
+            thread.join()
+            log(subject, result, now)
+        m.memory._log = late
+        self.assertTrue(m.memory.recall("web:leo", "exam").chosen)
+        self.assertEqual(check(m.store), [])
+        self.assertEqual(len(m.memory.recalls("discord:42")), 1)  # the person's, as everything of theirs
+        m.close()
+
     def test_processes_writing_one_file(self):
         path = os.path.join(tempfile.mkdtemp(), "f.db")
         open_memory(path).close()
