@@ -132,7 +132,7 @@ builds other than those the runners ship. A host passing `ZoneInfo(...)` as `zon
 `pip install tzdata`. The long fuzz is not in CI; `python3 -m tests.fuzz [seeds] [operations] [first seed]`
 repeats it anywhere.
 
-## Not released yet
+## Released
 
-The package is not on PyPI yet. The upload is the owner's, with their own token, from the commit the `v0.1.0` tag
-points at.
+0.1.0 is on PyPI since 2026-10-26, uploaded by the owner, with their own token, from the commit the `v0.1.0` tag
+points at. Later releases are listed in [CHANGELOG.md](../CHANGELOG.md), each uploaded the same way from its tag.

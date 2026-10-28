@@ -113,6 +113,7 @@ CI 在 Linux 上使用 Python 3.11–3.14，在 Windows 和 macOS 上使用 Pyth
 `python3 -m tests.fuzz [seeds] [operations] [first seed]`
 可在任意地方重复运行。
 
-## 尚未发布
+## 已发布
 
-这个包还没有在 PyPI 上发布。上传由所有者负责，使用其自己的令牌，从 `v0.1.0` 标签所指向的提交进行。
+0.1.0 自 2026-10-26 起已在 PyPI 上发布，由所有者使用其自己的令牌，从 `v0.1.0` 标签所指向的提交上传。之后的版本列在
+[CHANGELOG.md](../CHANGELOG.md) 中，每个版本都以同样的方式从其标签上传。

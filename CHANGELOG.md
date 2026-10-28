@@ -3,7 +3,7 @@
 All notable changes to mneme-llm are listed here. The project follows [semantic versioning](https://semver.org);
 before 1.0, a minor version may change the Python API, and this file says how.
 
-## 0.2.0 (unreleased)
+## 0.2.0 (2026-10-27)
 
 - **Aliases:** what each person calls the companion, beside its own name: `Mneme.alias(subject, name)` (None takes
   it away), `Mneme.aliases`, `mneme-llm alias`. The prompt says it after who the person is ("(Leo calls you
