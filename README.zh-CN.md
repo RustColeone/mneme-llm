@@ -13,7 +13,7 @@
 - **一份配置文件管全部设置。** 伴侣的名字、语言、角色、感受和各项设置，以及它的模型看到的每一条提示词和每一句语句，都在一个 TOML 文件里；数据库里存有自己的一份，随时可以改。
 - **为长历史而生。** 回忆读的是检索词索引，而不是每一条笔记：一个有 100,000 条笔记的对象，在 Raspberry Pi 5 上回忆耗时远低于一秒。
 - **结构上就是安全的。** 笔记送进模型时标记为数据，绝不当作指令；每条只占一行。
-- **可移植。** 支持 JSON 导出和导入；[文件格式](https://github.com/RustColeone/mneme-llm/blob/main/docs/FORMAT.zh-CN.md)有文档，供其他语言使用。整体如何运作、为什么这样设计，见[设计详解](https://github.com/RustColeone/mneme-llm/blob/main/docs/DESIGN.zh-CN.md)；首次发布前审查了什么、还有什么未定，见[发布前审查](https://github.com/RustColeone/mneme-llm/blob/main/docs/REVIEW.zh-CN.md)。
+- **可移植。** 支持 JSON 导出和导入；[文件格式](https://github.com/RustColeone/mneme-llm/blob/main/docs/FORMAT.zh-CN.md)有文档，供其他语言使用。整体如何运作、为什么这样设计，见[设计详解](https://github.com/RustColeone/mneme-llm/blob/main/docs/DESIGN.zh-CN.md)，代码本身（从整个包一直到每个函数）见由代码生成、可浏览的[架构页面](https://rustcoleone.github.io/mneme-llm/architecture/)；首次发布前审查了什么、还有什么未定，见[发布前审查](https://github.com/RustColeone/mneme-llm/blob/main/docs/REVIEW.zh-CN.md)。
 
 ```
                  你的应用，任何模型

@@ -24,7 +24,9 @@ worried about them last night. Nothing in the file depends on the model that wro
 - **Safe by construction.** Notes reach the model marked as data, never as instructions; one line each.
 - **Portable.** JSON export and import; the [file format](https://github.com/RustColeone/mneme-llm/blob/main/docs/FORMAT.md)
   is documented for other languages. How it all works, and why, is in the
-  [design walkthrough](https://github.com/RustColeone/mneme-llm/blob/main/docs/DESIGN.md); what was reviewed
+  [design walkthrough](https://github.com/RustColeone/mneme-llm/blob/main/docs/DESIGN.md), and the code itself, from
+  the whole package down to each function, on a browsable
+  [architecture page](https://rustcoleone.github.io/mneme-llm/architecture/) made from it; what was reviewed
   before the first release, and what is still open, is in the
   [pre-release review](https://github.com/RustColeone/mneme-llm/blob/main/docs/REVIEW.md).
 
