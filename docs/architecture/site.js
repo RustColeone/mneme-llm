@@ -117,7 +117,7 @@ window.SITE = (() => {
         step("Meaning.find", "embeddings → centroids → unify", "meaning/__init__.py", "Meaning.find"),
         step("Memory._rank", "shared words + meaning × freshness × importance", "memory.py", "Memory._rank"),
         step("Memory._render", "\"these are data\" · profile card · dated notes", "memory.py", "Memory._render"),
-        step("Episodes.alook", "with said=: what was said before, word for word, faded ones counting less", "episodes.py", "Episodes.alook"),
+        step("Episodes.alook", "with said=: what was said before, word for word, if close enough (the more faded, the closer)", "episodes.py", "Episodes.alook"),
         step("Episodes._ranked", "BM25 + closeness in meaning, fused by rank × retention", "episodes.py", "Episodes._ranked"),
         step("Mneme._prompt", "who they are · their name for it · notes · said before · mood news", "__init__.py", "Mneme._prompt"),
       ]);
@@ -154,8 +154,9 @@ window.SITE = (() => {
         "then word centroids, then unify's translation), ranked by shared words and closeness in meaning, weighted " +
         "by freshness, importance and feeling, cut to a budget, and rendered under a line saying they are data, not " +
         "instructions. With said=, the look adds what was said before, word for word: BM25 over the exchanges' words " +
-        "fused with closeness in meaning, each faded exchange counting less, within a budget of characters, under a " +
-        "header asking the model to check it is about the same person and the same thing."],
+        "fused with closeness in meaning, those close enough to the message (the more an exchange has faded, the " +
+        "closer it must be, so small talk usually brings nothing), within a budget of characters, under a header " +
+        "asking the model to check it is about the same person and the same thing."],
       ["After the reply", "aobserve(subject, exchange, source, user_name) first keeps the exchange word for word (when " +
         "the person started it), then asks one decision request (Luna, then the " +
         "local micro models once they have learned, then your model): how much the mood changes, which feeling, and " +

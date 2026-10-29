@@ -8,7 +8,8 @@ conversation. Every exchange the person starts is kept, so nothing said is lost 
 They come back two ways:
 
     look     what comes to mind unprompted, for the message at hand: the best matches within a budget of
-             characters, shown in the order they were said. Here a faded exchange counts less.
+             characters, shown in the order they were said. Here an exchange must be close enough to the message,
+             and the more it has faded, the closer: fading is what leaves the context. Often nothing comes.
     search   what the model looks for itself, with a tool (`tools.py`): by relevance alone, however faded, so an
              old thing asked about is still found; what it finds is rehearsed, and fades slower from then on.
 
@@ -44,7 +45,6 @@ except ImportError:  # (the library needs nothing but Python)
     numpy = None
 
 DAY = 86400.0
-FLOOR = 0.25          # what a faded exchange still counts in a look: found later, never lost
 NEAREST = 3           # the earlier exchanges one exchange may rehearse
 SPREAD = 0.98         # ... when closer than this share of the person's pairs
 SPREAD_PAIRS = 100    # pairs seen before any exchange rehearses another
@@ -58,6 +58,7 @@ BATCH = 64            # exchanges embedded per request
 SCANNED = 200         # the best-ranked exchanges a look reads to fill its budget
 CUT = 0.95            # a look's bar: an exchange as close to the query as this share of the person's pairs ...
 CUT_FADED = 0.99      # ... and, fully faded, this share (in between by its retention); a search has no bar
+FLOOR = 0.25          # a shortened look still shows this share of a fully faded exchange's lines
 STRONGEST = 1e6       # days: stability stops growing here
 
 
@@ -368,22 +369,23 @@ class Episodes(Speaks, Resolves):
         return math.exp(-max(0.0, now - last) / (max(episode.stability, 1e-6) * DAY))
 
     def look(self, subject: str, query: str, *, budget: int = 6000, conversation: str = "", skip: int = 0,
-             fade: bool = True, cut: tuple[float, float] | None = None, shorten: bool = False,
+             cut: tuple[float, float] | None = (CUT, CUT_FADED), shorten: bool = False,
              found=None) -> list[Episode]:
-        """What comes to mind for `query` (words only; `alook` adds meaning): the best matches, a faded one counting
-        less (unless `fade` is False), within `budget` characters as `render` shows them, in the order they were
-        said. The newest `skip` exchanges of `conversation` are left out (the host still shows them). With `cut`
-        (shares of the person's pairs, fresh and fully faded) and the query's vector, an exchange less close to it
-        than its bar is left out, however much budget is left: a look may be short, or empty. With `shorten`, a
-        faded exchange is shown in part: each line within SHOWN_LINE·(FLOOR + (1 − FLOOR)·R) characters (its opening
-        and its end; `read` shows it whole)."""
+        """What comes to mind for `query` (words only; `alook` adds meaning): the best matches within `budget`
+        characters as `render` shows them, in the order they were said. The newest `skip` exchanges of
+        `conversation` are left out (the host still shows them). With the query's vector, an exchange must clear a
+        bar: as close to the query as the share `cut[0]` of the person's pairs when fresh, `cut[1]` when fully
+        faded, in between by its retention. One under its bar is left out however much budget is left, so a look
+        may be short, or empty (`cut=None`: no bar; with words alone, or fewer than SPREAD_PAIRS pairs, there is
+        none). With `shorten`, a faded exchange is shown in part: each line within SHOWN_LINE·(FLOOR + (1 − FLOOR)·R)
+        characters (its opening and its end; `read` shows it whole)."""
         subject, query = self.who(subject), self._query(query)
         left_out: set[int] = set()
         if skip > 0:
             left_out = {row["id"] for row in self.store.rows(
                 "select id from episodes where space = ? and subject = ? and conversation = ? order by at desc, id "
                 "desc limit ?", (self.space, subject, conversation, int(skip)))}
-        ranked = [id for id in self._ranked(subject, query, found, fade=fade, cut=cut) if id not in left_out][:SCANNED]
+        ranked = [id for id in self._ranked(subject, query, found, cut=cut) if id not in left_out][:SCANNED]
         chosen, used, now = [], 0, self.clock()
         for episode in self._get_many(ranked):
             if shorten:
@@ -409,7 +411,7 @@ class Episodes(Speaks, Resolves):
         remembered."""
         subject, query = self.who(subject), self._query(query)
         seen = set(seen)
-        fresh = [id for id in self._ranked(subject, query, found, fade=False) if id not in seen][:max(0, limit)]
+        fresh = [id for id in self._ranked(subject, query, found) if id not in seen][:max(0, limit)]
         if refresh and fresh:
             with self.store.transaction():
                 self._rehearse(fresh, self.clock())
@@ -439,9 +441,10 @@ class Episodes(Speaks, Resolves):
                search: bool = False) -> str:
         """A block for a prompt: a header saying these are data and asking for the person check (is it about this
         person and this thing?), then each exchange with its number and date. `search`: the model has the search
-        tool, and is told to look before it says it does not remember. "" with nothing to show."""
+        tool, and is told to look before it says it does not remember; with nothing to show, that is all it is told
+        ("" without `search`)."""
         if not episodes:
-            return ""
+            return say(self.words, "said.none_search") if search else ""
         if header is None:
             header = say(self.words, "said.header", who=user_name or episodes[0].subject) + \
                 say(self.words, "said.unsure_search" if search else "said.unsure")
@@ -459,11 +462,10 @@ class Episodes(Speaks, Resolves):
         return "\n".join(lines)
 
     # ---- ranking ---------------------------------------------------------------------------------
-    def _ranked(self, subject: str, query: str, found, *, fade: bool, cut: tuple[float, float] | None = None
-                ) -> list[int]:
+    def _ranked(self, subject: str, query: str, found, *, cut: tuple[float, float] | None = None) -> list[int]:
         """The person's exchanges for `query`, best first: BM25 over the search terms (each term once per exchange)
-        and closeness to the query's vector, fused by reciprocal rank; with `fade`, each score times
-        FLOOR + (1 − FLOOR)·R. With `cut` (see `look`), those under their bar are left out."""
+        and closeness to the query's vector, fused by reciprocal rank. With `cut` (see `look`), those under their
+        bar are left out; fading changes nothing else."""
         rows = self.store.rows("select id, at, recalled_at, stability, size from episodes where space = ? and "
                                "subject = ?", (self.space, subject))
         if not rows:
@@ -511,17 +513,15 @@ class Episodes(Speaks, Resolves):
             fresh, faded = (threshold(bins, pairs, share) for share in cut)
             if fresh is not None:
                 lines = (fresh, faded)
-        if fade or lines:
+        if lines:
             now = self.clock()
             for row in rows:
                 id = row["id"]
-                if id in fused:
+                if id in close:  # (one with no vector yet is not judged)
                     last = max(row["at"], row["recalled_at"] or 0.0)
                     kept = math.exp(-max(0.0, now - last) / (max(row["stability"], 1e-6) * DAY))
-                    if lines and id in close and close[id] < lines[0] + (1 - kept) * (lines[1] - lines[0]):
-                        del fused[id]  # (one with no vector yet is not judged)
-                    elif fade:
-                        fused[id] *= FLOOR + (1 - FLOOR) * kept
+                    if close[id] < lines[0] + (1 - kept) * (lines[1] - lines[0]):
+                        del fused[id]
         return sorted(fused, key=lambda id: (-fused[id], -id))
 
     async def _found(self, query: str, *, wait: float | None = None):

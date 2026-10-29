@@ -141,14 +141,14 @@ class LookTests(unittest.TestCase):
 
 
 class FadingTests(unittest.TestCase):
-    def test_a_faded_exchange_comes_to_mind_less_but_a_search_still_finds_it_first(self):
+    def test_fading_changes_no_order_and_with_words_alone_nothing_leaves(self):
         m, clock = companion()
         old = m.episodes.keep("u", [("Leo", "my violin teacher Anna moved to Berlin")])
         clock.now += 200 * DAY
-        new = m.episodes.keep("u", [("Leo", "Anna says hi")])
+        m.episodes.keep("u", [("Leo", "Anna says hi")])
         self.assertLess(m.episodes.retention(m.episodes.get(old.id)), 0.01)
         budget = len(m.episodes.shown(old)) + 2
-        self.assertEqual([e.id for e in m.episodes.look("u", "Anna violin Berlin", budget=budget)], [new.id])
+        self.assertEqual([e.id for e in m.episodes.look("u", "Anna violin Berlin", budget=budget)], [old.id])
         self.assertEqual([e.id for e in m.episodes.search("u", "Anna violin Berlin", limit=1)], [old.id])
 
     def test_what_a_search_finds_is_rehearsed_and_fades_slower(self):
@@ -182,18 +182,33 @@ class CutTests(unittest.TestCase):
         bins[100], bins[150], bins[190] = 95, 4, 1
         self.m.episodes._put_spread("u", "test:meanings", bins, 100)
 
-    def look(self, query, cut):
-        return [e.id for e in asyncio.run(self.m.episodes.alook("u", query, fade=False, cut=cut))]
+    def look(self, query, *cut):
+        return [e.id for e in asyncio.run(self.m.episodes.alook("u", query, **({"cut": cut[0]} if cut else {})))]
 
     def test_an_exchange_under_the_bar_is_left_out_with_budget_to_spare(self):
         self.assertEqual(self.look("hello", None), [self.cat.id])  # meaning ranks everything
         self.assertEqual(self.look("hello", (0.95, 0.95)), [])
+        self.assertEqual(self.look("hello"), [])
         self.assertEqual(self.look("a kitten", (0.95, 0.95)), [self.cat.id])
 
+    def test_with_nothing_to_show_a_model_that_can_search_is_told_it_can(self):
+        self.assertEqual(self.m.episodes.render([]), "")
+        self.assertIn("search for it", self.m.episodes.render([], search=True))
+        prompt = asyncio.run(self.m.aprompt("u", "hello", said=6000, search=True))
+        self.assertIn("Nothing said before came to mind", prompt)
+        self.assertNotIn("Nothing said before", asyncio.run(self.m.aprompt("u", "hello", said=6000)))
+
+    def test_the_bar_is_a_setting_and_0_is_none(self):
+        m, _ = companion(embed=embedder())
+        self.assertEqual(m.said_cut, (0.95, 0.99))
+        none = Mneme(":memory:", "t", config={"memory": {"said_cut": 0}}, luna=False, micro=False, embed=False,
+                     meaning_micro=False, memory_language=None)
+        self.assertIsNone(none.said_cut)
+
     def test_the_bar_rises_as_the_exchange_fades_and_a_search_still_finds_it(self):
-        self.assertEqual(self.look("a kitten", (0.95, 0.99)), [self.cat.id])
+        self.assertEqual(self.look("a kitten"), [self.cat.id])  # (the bar by default)
         self.clock.now += 200 * DAY
-        self.assertEqual(self.look("a kitten", (0.95, 0.99)), [])
+        self.assertEqual(self.look("a kitten"), [])
         self.assertEqual(self.look("a kitten", (0.95, 0.95)), [self.cat.id])
         found = asyncio.run(self.m.episodes.asearch("u", "a kitten"))
         self.assertEqual([e.id for e in found], [self.cat.id])
@@ -208,10 +223,10 @@ class ShortenTests(unittest.TestCase):
         m, clock = companion()
         long = "Anna " + "x" * 3000 + " Berlin"
         kept = m.episodes.keep("u", [("Leo", long)])
-        fresh = m.episodes.look("u", "Anna Berlin", fade=False, shorten=True)
+        fresh = m.episodes.look("u", "Anna Berlin", shorten=True)
         self.assertEqual(len(fresh[0].lines[0][1]), episodes_module.SHOWN_LINE)
         clock.now += 400 * DAY
-        faded = m.episodes.look("u", "Anna Berlin", fade=False, shorten=True)[0].lines[0][1]
+        faded = m.episodes.look("u", "Anna Berlin", shorten=True)[0].lines[0][1]
         self.assertEqual(len(faded), int(episodes_module.SHOWN_LINE * episodes_module.FLOOR))
         self.assertTrue(faded.startswith("Anna") and faded.endswith("Berlin"))
         self.assertEqual(m.episodes.get(kept.id).lines[0][1], long)  # (only the look's copy is shorter)
@@ -259,10 +274,10 @@ class MeaningTests(unittest.TestCase):
         asyncio.run(m.episodes.prepare("u"))
         query = "the cat and the exam"
         found = asyncio.run(m.episodes._found(query))
-        with_numpy = m.episodes._ranked("u", query, found, fade=True)
+        with_numpy = m.episodes._ranked("u", query, found)
         with mock.patch.object(episodes_module, "numpy", None):
             m.episodes._matrices.clear()
-            self.assertEqual(m.episodes._ranked("u", query, found, fade=True), with_numpy)
+            self.assertEqual(m.episodes._ranked("u", query, found), with_numpy)
 
     def test_a_slow_embedder_leaves_the_look_to_words(self):
         async def slow(texts):

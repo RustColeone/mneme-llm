@@ -14,7 +14,8 @@ worried about them last night. Nothing in the file depends on the model that wro
   Claude and Gemini; an MCP server; or a text block for your system prompt.
 - **Remembers what was said, word for word.** Every exchange is kept with when and where it was said. Before a
   reply, a first look brings back what bears on the message; the model can search the rest itself. Old exchanges
-  fade from what comes to mind (a forgetting curve), never from what is looked for. On the LoCoMo benchmark this
+  fade out of what comes to mind (a forgetting curve: the more faded, the closer the message must be to bring one
+  back), never out of what can be looked for. On the LoCoMo benchmark this
   answers as well as the whole conversation in the prompt, with a sixth of the text, and keeps working long after
   the history outgrows any context window.
 - **Finds what you mean, in any language,** even mixed in one sentence. Word matching, plus embeddings, plus your
@@ -153,11 +154,16 @@ model cannot know which detail will be asked about later; the words themselves c
 
 Ranking is BM25 over the words fused with embedding similarity (with an embedder; words alone otherwise). Each
 exchange also fades on a forgetting curve, R = e^(−t/S), with a stability S of 30 days to start that grows each
-time it is rehearsed: when a search finds it, or when a later exchange is about the same thing. Fading only
-weighs the look, so what is recent or talked about again comes to mind first, while a search finds an old thing
-however faded it is. Measured on LoCoMo (704 questions): the look of 6,000 characters with the tools and the
-person check answered 80.8%; the whole conversation in the prompt, 79.1%; fading the look changed nothing, and
-fading the search as well lost 18 points. Exchanges are never pruned (about 6 KB each with their index and vector);
+time it is rehearsed: when a search finds it, or when a later exchange is about the same thing. Fading decides
+what leaves the look, never the order: with an embedder, an exchange comes to mind only when the message is as
+close to it as 95% of the person's own pairs of exchanges are to each other while it is fresh, 99% once it has
+fully faded (`memory.said_cut`, `memory.said_cut_faded`). So small talk usually brings nothing (and costs nothing),
+what is recent or talked about again comes easily, and an old thing comes back on a strong cue, while a search
+finds it however faded it is. When nothing comes and the model can search, the look says only that it can.
+Measured on LoCoMo (704 questions): the look of 6,000 characters with the tools and the person check answered
+80.8%; the whole conversation in the prompt, 79.1%; fading the search as well lost 18 points. On LongMemEval-M
+(60 questions) the bar kept the answers (52 against 51 without it; 50 with the memory aged half a year) and left
+two looks in three at chit-chat empty. Exchanges are never pruned (about 6 KB each with their index and vector);
 `erase` removes them with everything else.
 
 **Dates** are written the way people say them (*today*, *3 days ago*, *in 2 days*, *去年 09-17*, *明天*), so the

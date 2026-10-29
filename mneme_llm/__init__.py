@@ -130,6 +130,8 @@ class Mneme:
         self.episodes = Episodes(self.store, space, days=own.get("memory.said_days"), zone=zone,
                                  display_language=words, meaning=self.meaning, people=self.people, clock=clock)
         self.said_budget = own.get("memory.said_budget")
+        fresh = own.get("memory.said_cut")  # (0: no bar; a faded exchange's bar never under a fresh one's)
+        self.said_cut = (fresh, max(fresh, own.get("memory.said_cut_faded"))) if fresh else None
 
     @property
     def display_language(self) -> str:
@@ -283,18 +285,21 @@ class Mneme:
     def look(self, subject: str, query: str = "", *, user_name: str | None = None, budget: int | None = None,
              conversation: str = "", skip: int = 0, search: bool = False) -> str:
         """What was said before that bears on `query` (word matching only), ready for a prompt: the best matches
-        word for word within `budget` characters (`memory.said_budget`, 6,000, when not given), a faded one counting
-        less, under a header that asks for the person check. The newest `skip` exchanges of `conversation` are left
-        out (you still show them). `search`: your model has the search tool (`tools.py`), and is told to search
-        before it says it does not remember. "" when nothing bears on it."""
-        found = self.episodes.look(subject, query, budget=self._said(budget), conversation=conversation, skip=skip)
+        word for word within `budget` characters (`memory.said_budget`, 6,000, when not given), under a header that
+        asks for the person check. With meaning (`alook`), only what is close enough comes, and the more an exchange
+        has faded, the closer it must be (`memory.said_cut`, `memory.said_cut_faded`): often nothing. The newest
+        `skip` exchanges of `conversation` are left out (you still show them). `search`: your model has the search
+        tool (`tools.py`), and is told to search before it says it does not remember, even when nothing came to
+        mind. "" when nothing bears on it and there is no search."""
+        found = self.episodes.look(subject, query, budget=self._said(budget), conversation=conversation, skip=skip,
+                                   cut=self.said_cut)
         return self.episodes.render(found, user_name=user_name, search=search)
 
     async def alook(self, subject: str, query: str = "", *, user_name: str | None = None, budget: int | None = None,
                     conversation: str = "", skip: int = 0, search: bool = False) -> str:
         """`look` with meaning (the query's embedding, when it comes within a few seconds)."""
         found = await self.episodes.alook(subject, query, budget=self._said(budget), conversation=conversation,
-                                          skip=skip)
+                                          skip=skip, cut=self.said_cut)
         return self.episodes.render(found, user_name=user_name, search=search)
 
     def _said(self, budget: int | None) -> int:

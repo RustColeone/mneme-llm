@@ -13,10 +13,14 @@ before 1.0, a minor version may change the Python API, and this file says how.
   `memory.said_days`) along which each exchange is rehearsed when a search finds it or a later exchange is about the
   same thing.
 - **The look:** `aprompt(..., said=6000)` (and `prompt`) adds what was said before that bears on the message, after
-  the notes: the best exchanges within that many characters (`memory.said_budget` for `Mneme.look`/`alook`), a
-  faded one counting less, dated and in the order they were said, under a header that asks the model to check that
+  the notes: the best exchanges within that many characters (`memory.said_budget` for `Mneme.look`/`alook`) that
+  are close enough to the message, the more faded the closer (as close as 95% of the person's pairs of exchanges
+  when fresh, 99% fully faded: `memory.said_cut`, `memory.said_cut_faded`; so small talk usually brings nothing),
+  dated and in the order they were said, under a header that asks the model to check that
   it is about the same person and the same thing and to say it doesn't remember otherwise. `skip=` leaves out the
-  newest exchanges of `conversation=` that the host still shows; `search=True` tells the model to search first.
+  newest exchanges of `conversation=` that the host still shows; `search=True` tells the model to search first,
+  and when nothing comes to mind, that is all the look says. `Episodes.look(shorten=True)` shows a faded exchange
+  in part instead.
 - **Two tools:** `search` (the best exchanges the model has not seen yet this turn, by relevance alone, however
   faded; each is rehearsed; long messages shortened) and `read` (an exchange in full, with the ones before and after
   it). `specs()` now lists six
@@ -27,7 +31,9 @@ before 1.0, a minor version may change the Python API, and this file says how.
   changed nothing (79.8%, 80.5% with searches rehearsing what they find), fading the searches too lost 18 points.
   On LongMemEval-M (60 questions, each with its own history of about 480 sessions and 1.2 million tokens, put
   through the library itself; `bench/longmemeval.py`): the look of 6,000 characters alone answered 60%, the look
-  with the tools 80–85%, and the model given only the sessions that hold the answer 93%.
+  with the tools 80–85%, and the model given only the sessions that hold the answer 93%. The look's bar kept the
+  answers (52 of 60 against 51 without it, 50 with the memory aged half a year) while a look weighted by fading
+  lost 3, and it left two looks in three at chit-chat empty.
 - `erase` removes a person's exchanges, a link joins them, export and import carry them (`"episodes"`). New
   tables within schema 1: `episodes`, `episode_terms`, `episode_vectors`, `episode_spread`. Files from 0.1 and 0.2
   gain them on open; 0.2 still opens files that have them (and leaves them alone).
