@@ -17,7 +17,9 @@ Arms:
   full        the whole conversation in the prompt (the reference)
 
 `--unit exchange` stores the conversation as exchanges (each run of one side's messages with the other's reply, the
-unit `aobserve` is given) in place of pieces; `--neighbors N` brings the N items on each side of every one chosen.
+unit `aobserve` is given) in place of pieces; `--neighbors N` brings the N items on each side of every one chosen;
+`--search bm25|vector` uses one ranking of the two; `--prompt cite` has the answer copy its evidence first;
+`--window N` shows the newest N characters of the conversation word for word, looking up only what came before.
 
 The common retriever ranks by BM25 over mneme-llm's own search terms and by embedding similarity (OpenAI
 text-embedding-3-small), fused by reciprocal rank, and takes items in that order up to `--budget` characters; what it
@@ -387,6 +389,30 @@ def notes_of(out: Path, conversation: Conversation) -> list[Item]:
     return found
 
 
+def latest(conversation: Conversation, limit: int) -> tuple[str, float]:
+    """The newest turns of the conversation, word for word, up to `limit` characters (whole turns, by session), and
+    when the first of them was said."""
+    taken, size = [], 0
+    for session in reversed(conversation.sessions):
+        for turn in reversed(session.turns):
+            line = f"{turn.speaker}: {turn.text}"
+            if size + len(line) + 1 > limit:
+                break
+            taken.append((session.label, turn, line))
+            size += len(line) + 1
+        else:
+            continue
+        break
+    taken.reverse()
+    blocks, label = [], None
+    for session_label, turn, line in taken:
+        if session_label != label:
+            blocks.append(f"[{session_label}]")
+            label = session_label
+        blocks.append(line)
+    return "\n".join(blocks), (taken[0][1].at if taken else float("inf"))
+
+
 def whole(conversation: Conversation) -> str:
     return "\n\n".join(f"[{session.label}]\n" + "\n".join(f"{turn.speaker}: {turn.text}" for turn in session.turns)
                        for session in conversation.sessions)
@@ -404,24 +430,26 @@ class Index:
         frequency = Counter(term for doc in self.docs for term in doc)
         self.idf = {term: math.log(1 + (len(items) - count + 0.5) / (count + 0.5)) for term, count in frequency.items()}
 
-    def rank(self, query: str, vector: array) -> list[int]:
+    def rank(self, query: str, vector: array, search: str = "hybrid") -> list[int]:
         wanted = set(terms(query))
         bm25 = [sum(self.idf[term] * doc[term] * 2.2 / (doc[term] + 1.2 * (0.25 + 0.75 * length / self.average))
                     for term in wanted if term in doc) for doc, length in zip(self.docs, self.lengths)]
         cosine = self.vectors @ numpy.asarray(vector, dtype=numpy.float32) if len(self.items) else []
         fused = defaultdict(float)
-        for place, index in enumerate(sorted(range(len(self.items)), key=lambda index: -bm25[index])):
-            if bm25[index] > 0:
+        if search != "vector":
+            for place, index in enumerate(sorted(range(len(self.items)), key=lambda index: -bm25[index])):
+                if bm25[index] > 0:
+                    fused[index] += 1 / (61 + place)
+        if search != "bm25":
+            for place, index in enumerate(sorted(range(len(self.items)), key=lambda index: -cosine[index])):
                 fused[index] += 1 / (61 + place)
-        for place, index in enumerate(sorted(range(len(self.items)), key=lambda index: -cosine[index])):
-            fused[index] += 1 / (61 + place)
         return sorted(fused, key=lambda index: -fused[index])
 
-    def take(self, query: str, vector: array, budget: int, neighbors: int = 0) -> list[Item]:
+    def take(self, query: str, vector: array, budget: int, neighbors: int = 0, search: str = "hybrid") -> list[Item]:
         """Items in rank order up to `budget` characters; with `neighbors`, each chosen item brings the items next
         to it (in the order they were made: the conversation's) while they fit."""
         chosen, used = {}, 0
-        for index in self.rank(query, vector):
+        for index in self.rank(query, vector, search):
             for near in [index] + [index + step for distance in range(1, neighbors + 1) for step in (-distance, distance)]:
                 if near in chosen or not 0 <= near < len(self.items):
                     continue
@@ -440,6 +468,9 @@ ANSWER = ("You remember the conversations between {a} and {b}, which went on ove
           "for notes, when they happened): work out relative dates such as 'last week' or 'yesterday' from them. "
           "Answer with a short phrase (a name, a date, a few words). If what is below does not answer the question, "
           "say: Not mentioned.")
+CITE = ANSWER.rsplit(" If what is below", 1)[0] + (
+    " First copy the line or lines below that answer the question; if none does, the evidence is 'none' and the "
+    "answer is: Not mentioned. Reply in exactly this form:\nEvidence: ...\nAnswer: ...")
 JUDGE = ("You grade an answer to a question about a conversation. The gold answer is: {gold}\n"
          "Label the answer CORRECT if it means the same as the gold answer (a date or period said another way "
          "counts, and so does an answer that contains the gold answer and adds a little), WRONG otherwise. "
@@ -465,9 +496,12 @@ def f1(answer: str, gold: str) -> float:
 
 
 async def answer(conversations: list[Conversation], out: Path, arm: str, budget: int, models: Models,
-                 unit: str = "piece", neighbors: int = 0) -> Path:
+                 unit: str = "piece", neighbors: int = 0, search: str = "hybrid", prompt: str = "plain",
+                 window: int = 0) -> Path:
     name = arm if arm in ("production", "full") else \
         f"{arm}{'-' + unit if unit != 'piece' and arm != 'notes' else ''}-{budget}" + (f"-n{neighbors}" if neighbors else "")
+    name += (f"-w{window}" if window else "") + (f"-{search}" if search != "hybrid" else "") + \
+        (f"-{prompt}" if prompt != "plain" else "")
     path = out / "answers" / f"{name}.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
     done = set()
@@ -484,16 +518,19 @@ async def answer(conversations: list[Conversation], out: Path, arm: str, budget:
         await models.check()
         index_of = memories = None
         if vectors is not None:
+            recent, since = latest(conversation, window) if window else ("", float("inf"))
             items = ((notes_of(out, conversation) if arm in ("notes", "both") else []) +
                      ((pieces(conversation) if unit == "piece" else turns_of(conversation))
                       if arm in ("verbatim", "both") else []))
+            items = [item for item in items if item.at < since]  # what the window shows is not looked up again
             index_of = Index(items, await vectors.of([item.text for item in items]))
             asked = await vectors.of([qa["question"] for _, qa in todo])
         elif arm == "production":
             memories = [(person, open_memory(production_copy(out, conversation, person), conversation, companion,
                                              lambda: conversation.end))
                         for person, companion in ((conversation.a, conversation.b), (conversation.b, conversation.a))]
-        system = ANSWER.format(a=conversation.a, b=conversation.b, today=day(conversation.end))
+        system = (CITE if prompt == "cite" else ANSWER).format(a=conversation.a, b=conversation.b,
+                                                               today=day(conversation.end))
 
         async def one(place: int, index: int, qa: dict) -> None:
             question = qa["question"]
@@ -504,13 +541,19 @@ async def answer(conversations: list[Conversation], out: Path, arm: str, budget:
                                      if (block := mind.memory.context(person, question, user_name=person,
                                                                       limit=6, budget=800)))
             else:
-                memory = "\n\n".join(item.text for item in index_of.take(question, asked[place], budget, neighbors))
+                memory = "\n\n".join(item.text for item in index_of.take(question, asked[place], budget, neighbors,
+                                                                            search))
+                if window:
+                    memory = (memory + "\n\n" if memory else "") + "The latest messages, word for word:\n" + recent
             # The whole conversation first, so every question about it reuses DeepSeek's cache of that prefix.
             if arm == "full":
                 reply = await models.ask(system + "\n\n" + memory, f"Question: {question}", step=f"answer:{name}")
             else:
                 reply = await models.ask(system, f"{memory or '(nothing)'}\n\nQuestion: {question}",
                                          step=f"answer:{name}")
+            if prompt == "cite":
+                found = re.findall(r"Answer:\s*(.+)", reply)
+                reply = found[-1] if found else reply
             reply = " ".join(reply.split())
             category = int(qa["category"])
             gold = "" if category == 5 else str(qa.get("answer", ""))
@@ -584,7 +627,7 @@ async def main(arguments) -> int:
                 await asyncio.gather(*(ingest(conversation, out, models) for conversation in conversations))
             else:
                 await answer(conversations, out, arguments.arm, arguments.budget, models, arguments.unit,
-                             arguments.neighbors)
+                             arguments.neighbors, arguments.search, arguments.prompt, arguments.window)
         except OutOfBalance as stop:
             print(f"STOPPED: {stop}", flush=True)
         finally:
@@ -610,6 +653,11 @@ def parse(argv=None):
     parser.add_argument("--unit", choices=("piece", "exchange"), default="piece",
                         help="what the conversation is stored as: 512-character pieces, or exchanges")
     parser.add_argument("--neighbors", type=int, default=0, help="items next to each one chosen that come with it")
+    parser.add_argument("--search", choices=("hybrid", "bm25", "vector"), default="hybrid")
+    parser.add_argument("--prompt", choices=("plain", "cite"), default="plain",
+                        help="cite: the answer first copies the lines it rests on, or says none")
+    parser.add_argument("--window", type=int, default=0,
+                        help="characters of the newest turns shown word for word besides what is looked up")
     parser.add_argument("--env", default="../.env", help="the .env holding DEEPSEEK_API_KEY and OPENAI_API_KEY")
     parser.add_argument("--floor", type=float, default=12.0, help="stop when the DeepSeek balance (CNY) is under this")
     parser.add_argument("--concurrency", type=int, default=16)
