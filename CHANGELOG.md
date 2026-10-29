@@ -3,6 +3,34 @@
 All notable changes to mneme-llm are listed here. The project follows [semantic versioning](https://semver.org);
 before 1.0, a minor version may change the Python API, and this file says how.
 
+## 0.3.0 (unreleased)
+
+- **Episodes: what was said, word for word.** `aobserve` now keeps every exchange the person starts, as it was
+  said (`(who, said)` lines), with when (`at=`, now by default) and where (`conversation=`), before anything else
+  and with no model call, then embeds it; `keep=False` leaves it out, and `Observation.episode` is what was kept.
+  `Mneme.episodes` (`Episodes`, in `episodes.py`) keeps, ranks, fades and shows them: BM25 over their words fused by
+  reciprocal rank with embedding similarity, and a forgetting curve (R = e^(−t/S), S 30 days to start,
+  `memory.said_days`) along which each exchange is rehearsed when a search finds it or a later exchange is about the
+  same thing.
+- **The look:** `aprompt(..., said=6000)` (and `prompt`) adds what was said before that bears on the message, after
+  the notes: the best exchanges within that many characters (`memory.said_budget` for `Mneme.look`/`alook`), a
+  faded one counting less, dated and in the order they were said, under a header that asks the model to check that
+  it is about the same person and the same thing and to say it doesn't remember otherwise. `skip=` leaves out the
+  newest exchanges of `conversation=` that the host still shows; `search=True` tells the model to search first.
+- **Two tools:** `search` (the best exchanges the model has not seen yet this turn, by relevance alone, however
+  faded; each is rehearsed) and `read` (an exchange with the ones before and after it). `specs()` now lists six
+  tools; a `Toolbox` remembers what its searches showed (`new_turn()` forgets it).
+- **Measured** on LoCoMo (four conversations, 704 questions, DeepSeek V4.1 Flash answering and judging;
+  `bench/locomo.py`): a first look of 6,000 characters with the two tools and the person check answered 80.8%, the
+  whole conversation in the prompt 79.1%, the students' notes alone 57.2% of the answerable ones; fading the look
+  changed nothing (79.8%, 80.5% with searches rehearsing what they find), fading the searches too lost 18 points.
+- `erase` removes a person's exchanges, a link joins them, export and import carry them (`"episodes"`). New
+  tables within schema 1: `episodes`, `episode_terms`, `episode_vectors`, `episode_spread`. Files from 0.1 and 0.2
+  gain them on open; 0.2 still opens files that have them (and leaves them alone).
+- `exchange.as_lines` gives an exchange as `(who, said)` pairs; a line whose text is None is now empty, not "None".
+  `Meaning.embed(texts)` gives tier 1's vectors for any texts. With numpy installed, a person's exchanges are
+  compared in one step (it stays optional).
+
 ## 0.2.0 (2026-10-27)
 
 - **Aliases:** what each person calls the companion, beside its own name: `Mneme.alias(subject, name)` (None takes

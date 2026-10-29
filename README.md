@@ -12,6 +12,11 @@ worried about them last night. Nothing in the file depends on the model that wro
   splits Chinese into words as well.
 - **Any LLM.** Tool definitions for OpenAI-style APIs (DeepSeek, Qwen, vLLM, Ollama…), the OpenAI responses API,
   Claude and Gemini; an MCP server; or a text block for your system prompt.
+- **Remembers what was said, word for word.** Every exchange is kept with when and where it was said. Before a
+  reply, a first look brings back what bears on the message; the model can search the rest itself. Old exchanges
+  fade from what comes to mind (a forgetting curve), never from what is looked for. On the LoCoMo benchmark this
+  answers as well as the whole conversation in the prompt, with a sixth of the text, and keeps working long after
+  the history outgrows any context window.
 - **Finds what you mean, in any language,** even mixed in one sentence. Word matching, plus embeddings, plus your
   own model unifying the language, each tier falling back to the next.
 - **Knows who is who.** Each person can have a role (creator, family, friend, or one of your own) and a closeness
@@ -41,6 +46,8 @@ worried about them last night. Nothing in the file depends on the model that wro
   notes, keys      value + 7 feelings      1. GPT-6 Luna Decisions      1. embeddings (OpenAI or yours)
   human dates      decay, guardrails       2. micro model (optional)    2. word centroids (optional)
   evidence recall  told once               3. your own chat model       3. your model unifies the language
+  the words kept:
+  look, search, fading
 ```
 
 ## Install
@@ -71,11 +78,13 @@ m.relate("discord:42", "creator")
 # notes can be written by hand, by your model through the tools, or after each exchange by `observe`
 m.remember("discord:42", "养了一只叫年糕的猫", kind="fact", key="pet.name", importance=4)
 
-# before each reply: what it remembers (and how it feels, once per change), for the system prompt
-system = PERSONA + "\n\n" + await m.aprompt("discord:42", query=user_message, user_name="Leo")
+# before each reply: what it remembers, what was said before that bears on the message (up to 6,000 characters,
+# word for word), and how it feels (once per change), for the system prompt
+system = PERSONA + "\n\n" + await m.aprompt("discord:42", query=user_message, user_name="Leo", said=6000)
 
-# after each reply: one cheap decision judges the mood and whether anything is worth keeping
-await m.aobserve("discord:42", [("Leo", user_message), ("大肥鱼", reply)], user_name="Leo")
+# after each reply: the exchange is kept word for word, and one cheap decision judges the mood and whether anything
+# is worth keeping as a note
+await m.aobserve("discord:42", [("Leo", user_message), ("大肥鱼", reply)], user_name="Leo", conversation="dm")
 ```
 
 `aprompt` gives something like:
@@ -130,6 +139,26 @@ meaning. Words are found through a term index, so a long history costs little: e
 words, and meaning is looked for among the 5,000 most valuable (the lasting ones and the freshest). A person keeps
 up to 50,000 live notes before the least valuable fading ones are let go. `recall(...).explain()` says what was
 chosen and what was skipped, and why; every recall that chooses something is logged.
+
+**Episodes** are what was said, word for word: every exchange the person starts (`aobserve` keeps it, with no
+model call), with when it was said and in which conversation. Notes are what a model made of an exchange, and a
+model cannot know which detail will be asked about later; the words themselves can. Two ways bring them back:
+
+- **the look**, before a reply (`aprompt(..., said=6000)` or `alook`): the exchanges that best match the message,
+  within a budget of characters, dated and in the order they were said, under a header that asks the model to
+  check that what it found is about this same person and this same thing, and to say it doesn't remember
+  otherwise. The newest exchanges you still show (`skip=`, in this `conversation=`) are left out;
+- **the search tools** (`search`, `read`), which the model calls itself: the best matches it has not seen yet, and an
+  exchange with its neighbours.
+
+Ranking is BM25 over the words fused with embedding similarity (with an embedder; words alone otherwise). Each
+exchange also fades on a forgetting curve, R = e^(−t/S), with a stability S of 30 days to start that grows each
+time it is rehearsed: when a search finds it, or when a later exchange is about the same thing. Fading only
+weighs the look, so what is recent or talked about again comes to mind first, while a search finds an old thing
+however faded it is. Measured on LoCoMo (704 questions): the look of 6,000 characters with the tools and the
+person check answered 80.8%; the whole conversation in the prompt, 79.1%; fading the look changed nothing, and
+fading the search as well lost 18 points. Exchanges are never pruned (about 6 KB each with their index and vector);
+`erase` removes them with everything else.
 
 **Dates** are written the way people say them (*today*, *3 days ago*, *in 2 days*, *去年 09-17*, *明天*), so the
 model never has to do date arithmetic.
@@ -279,8 +308,8 @@ answers["urgent"].probability, answers["urgent"].by          # 0.93, "luna"
 
 ## Using it from any model
 
-**Tools.** Give the model `remember`, `recall`, `forget` and `mood` in its API's format, and run its calls
-through one dispatcher:
+**Tools.** Give the model `remember`, `recall`, `forget`, `mood`, `search` and `read` in its API's format, and run
+its calls through one dispatcher:
 
 ```python
 from mneme_llm.tools import Toolbox, specs
@@ -290,7 +319,10 @@ box = Toolbox(m, subject="discord:42")
 reply_text = await box.acall(call.name, call.arguments)    # arguments as a dict or a JSON string
 ```
 
-The host decides whose memory is read and written; a `subject` in the model's arguments is ignored. Mistakes come back as text the
+The host decides whose memory is read and written; a `subject` in the model's arguments is ignored. A `Toolbox`
+remembers which exchanges its searches showed, so another search brings new ones: make one per turn (or call
+`box.new_turn()`), and pass `search=True` to `aprompt` so the look tells the model to search before it says it
+doesn't remember. Mistakes come back as text the
 model can read, never as exceptions, and replies follow the display language (`display_language="zh"` answers in
 Chinese).
 

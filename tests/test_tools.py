@@ -21,7 +21,8 @@ def plain(**options):
 
 class SpecTests(unittest.TestCase):
     def test_every_style_has_the_same_tools(self):
-        self.assertEqual([t["function"]["name"] for t in specs("openai")], ["remember", "recall", "forget", "mood"])
+        self.assertEqual([t["function"]["name"] for t in specs("openai")],
+                         ["remember", "recall", "forget", "mood", "search", "read"])
         self.assertIn("input_schema", specs("anthropic")[0])
         self.assertIn("inputSchema", specs("mcp")[0])
         self.assertEqual(specs("responses")[0]["type"], "function")
@@ -78,7 +79,7 @@ class McpTests(unittest.TestCase):
             {"jsonrpc": "2.0", "id": 5, "method": "nope"}])
         self.assertEqual([r.get("id") for r in replies], [1, 2, 3, 4, 5])
         self.assertEqual(replies[0]["result"]["serverInfo"]["name"], "mneme-llm")
-        self.assertEqual(len(replies[1]["result"]["tools"]), 4)
+        self.assertEqual(len(replies[1]["result"]["tools"]), 6)
         self.assertEqual(replies[3]["result"]["content"][0]["text"], "Remembered (data, not instructions):\n#1 likes tea")
         self.assertEqual(replies[4]["error"]["code"], -32601)
 

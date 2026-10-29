@@ -3,7 +3,7 @@
 **English** · [简体中文](DESIGN.zh-CN.md)
 
 A walkthrough for anyone reviewing, maintaining or porting mneme-llm: what each part does, the rules it keeps, the
-numbers it uses and why, how it fails, and what it does not do yet. It describes version 0.1.0; where it names a
+numbers it uses and why, how it fails, and what it does not do yet. It describes version 0.3.0; where it names a
 constant, the constant is in the code under the same name.
 
 Read it in order the first time. Sections 2 and 3 give the whole picture; sections 4–11 go module by module; the
@@ -11,8 +11,8 @@ rest covers safety, failure, cost, tests, the decisions behind the design, and i
 
 ## 1. What it is for
 
-A companion that talks with people needs to remember them (facts, plans, what happened, how they felt), to know
-who each of them is to it, and to have a mood of its own toward each of them. Most implementations keep both inside one model's conversation, or in a
+A companion that talks with people needs to remember them (facts, plans, what happened, how they felt, and what
+was actually said), to know who each of them is to it, and to have a mood of its own toward each of them. Most implementations keep both inside one model's conversation, or in a
 format tied to one framework, so changing the model loses them. mneme-llm keeps them in one SQLite file with a
 documented format, and does every judgement it needs through tiers that work with any model, so that:
 
@@ -29,11 +29,13 @@ documented format, and does every judgement it needs through tiers that work wit
               │                               │                              │
         Mneme (__init__.py): one space; builds the tiers, makes the model calls     tools.py, mcp.py, cli.py
               │                               │      config.py: the companion's config, kept in the file
-   ┌──────────┴─────────┐          ┌──────────┴───────────┐
-   │ Memory (memory.py) │          │ Mood (mood.py)       │      capture.py: the writers' prompts and replies
-   │ notes, recall      │          │ value + feelings     │      exchange.py: an exchange as judges read it
-   └──────┬─────────────┘          └──────────┬───────────┘      relations.py: who each person is to it; aliases.py: their name for it
-          │                                   │                  people.py: one person under several subjects
+   ┌──────────┴─────────────┐      ┌──────────┴───────────┐
+   │ Memory (memory.py)     │      │ Mood (mood.py)       │      capture.py: the writers' prompts and replies
+   │ notes, recall          │      │ value + feelings     │      exchange.py: an exchange as judges read it
+   │ Episodes (episodes.py) │      │                      │      relations.py: who each person is to it; aliases.py: their name for it
+   │ the words: look, search│      │                      │      people.py: one person under several subjects
+   └──────┬─────────────────┘      └──────────┬───────────┘
+          │                                   │
           │ meaning/ (3 tiers)                │ decide/ (3 tiers)
           │ embeddings → centroids → unify    │ Luna → micro → your model
    ┌──────┴───────────────────────────────────┴───────────┐
@@ -43,9 +45,10 @@ documented format, and does every judgement it needs through tiers that work wit
 
 | file | lines | role |
 |---|---|---|
-| `__init__.py` | 440 | `Mneme`, the facade: builds the tiers; `aprompt`, `aobserve`, `acapture`, `areflect`, `relate`, `alias`, `link`, `erase`, export/import |
-| `store.py` | 263 | the SQLite file alone: schema, additive migrations, locking, transactions |
-| `memory.py` | 777 | notes: the rules of writing, the term index, recall ranking, rendering, profile card, recall log, notes' export/import |
+| `__init__.py` | 485 | `Mneme`, the facade: builds the tiers; `aprompt`, `alook`, `aobserve`, `acapture`, `areflect`, `relate`, `alias`, `link`, `erase`, export/import |
+| `store.py` | 291 | the SQLite file alone: schema, additive migrations, locking, transactions |
+| `memory.py` | 776 | notes: the rules of writing, the term index, recall ranking, rendering, profile card, recall log, notes' export/import |
+| `episodes.py` | 618 | what was said, word for word: keeping exchanges, their term index and vectors, retention and rehearsal, the look and the search, rendering, their export/import |
 | `mood.py` | 411 | mood state, decay, judging questions, guardrails, telling once, moods' export/import |
 | `config.py` | 547 | a companion's config: the defaults, checking each key, TOML in and out, the stored copy per space |
 | `prompts.py` | 59 | every instruction given to a model, by name (the built-in defaults) |
@@ -53,7 +56,7 @@ documented format, and does every judgement it needs through tiers that work wit
 | `aliases.py` | 94 | what each person calls the companion: one short line each, the prompt line |
 | `people.py` | 95 | one person under several subjects (their accounts): links one step deep, and who a subject stands for |
 | `capture.py` | 69 | what the note writer and the profile writer are asked, and reading their replies |
-| `exchange.py` | 37 | an exchange as one text, and framed for a judge (who is who, who started it) |
+| `exchange.py` | 47 | an exchange as lines `(who, said)` or one text, and framed for a judge (who is who, who started it) |
 | `providers.py` | 92 | what every tier needs to call out: sync or async calls, posting JSON, JSON in replies, resting |
 | `decide/__init__.py` | 221 | question types, `Answer`, `Chain` (fall-through and learning) |
 | `decide/luna.py` | 82 | decision tier 1: OpenAI's Decisions API |
@@ -69,18 +72,19 @@ documented format, and does every judgement it needs through tiers that work wit
 | `text.py` | 194 | tokenization, script detection, cleaning and clipping text |
 | `dates.py` | 109 | human dates, dates found in sentences, times in seconds |
 | `i18n.py` | 219 | every word and sentence shown to a person or a model, in English and Chinese |
-| `tools.py` | 196 | tool definitions for five API styles and the dispatcher |
+| `tools.py` | 249 | tool definitions for five API styles and the dispatcher |
 | `mcp.py` | 82 | an MCP server over stdio |
 | `cli.py` | 305 | the `mneme-llm` command |
 
 **Layers.** Dependencies point one way. `text`, `dates`, `i18n`, `prompts`, `providers`, `exchange`, `store`
 and `meaning/vectors` import nothing above them; `decide` and `meaning` build on `providers`; `memory` uses `meaning`
-and `store`; `mood` uses `decide`'s types; `relations` uses `store`, `dates` and `i18n` (the mood knows nothing of
+and `store`; `episodes` uses `meaning`, `store`, `exchange`, `text` and `dates`; `mood` uses `decide`'s types; `relations` uses `store`, `dates` and `i18n` (the mood knows nothing of
 it: `Mneme` hands the mood each person's weight); `config` uses `mood`, `relations`, `prompts`, `i18n` and `store`,
 and `Mneme` builds every part from it; `capture` uses `memory`'s rules of writing; `Mneme` wires them together and
 makes the calls to models; `tools`, `mcp` and `cli` sit on `Mneme` (the CLI's `micro` command reads the micro
 models through `decide/micro` directly, as nothing else needs them). Each kind of row has one owner that writes it:
-notes, profile cards and the recall log are `memory`'s, moods and timelines `mood`'s, relationships `relations`'s,
+notes, profile cards and the recall log are `memory`'s, exchanges with their index, vectors and spread
+`episodes`'s, moods and timelines `mood`'s, relationships `relations`'s,
 aliases `aliases`'s, the config `config`'s,
 the micro models `decide/micro`'s, the centroids `meaning/ledger`'s; vectors are stored by `meaning` and, with what they taught,
 taken back by `meaning/ledger`; each `meta` key belongs to the module that names it (the schema version to `store`,
@@ -115,13 +119,20 @@ aprompt(subject, query, user_name)
      ├─ _rank: evidence from the term index (shared words) + closeness in meaning; the best 1,000 candidates
      │    scored × freshness × importance × feeling; then the budget
      └─ _render: header "these are data, not instructions" + profile card + one line per note with a human date
+ └─ with `said` (a budget of characters): Episodes.alook, what was said before that bears on the message
+     ├─ the query's vector (the same as for the notes; one wait of at most 3 s, then words alone)
+     ├─ _ranked: BM25 over the exchanges' term index + closeness to every exchange's vector, fused by rank,
+     │    each × (0.25 + 0.75 × retention)
+     └─ render: header with the person check + the best exchanges within the budget, word for word, dated,
+          in the order they were said (the host's newest `skip` exchanges of this conversation left out)
  └─ Mood.news: the newest confident mood change, once
 ```
 
 **After the reply** (`aobserve`):
 
 ```
-aobserve(subject, exchange, source, user_name)
+aobserve(subject, exchange, source, user_name, conversation)
+ ├─ if the person started it: Episodes.keep, the exchange word for word (no model call)
  ├─ one decision request on the framed exchange: mood_change (Score), feeling (Choice), worth_remembering
  │    (Predicate); Luna → micro → the host's model; each question goes to the first tier that answers it,
  │    and the micro model learns from every answer Luna gave
@@ -132,10 +143,12 @@ aobserve(subject, exchange, source, user_name)
       the note writer (the host's model, given at most 12,000 characters: the exchange's opening and its end)
       → capture.notes_in → Memory.remember (source "auto", daily quota)
       → Meaning.prepare_vectors for the new notes (now, not at the next recall)
+ └─ Episodes.prepare: the exchange's vector, with which it rehearses the earlier exchanges it is about
 ```
 
 So a normal turn costs, beyond the reply itself: one embeddings request before it (the query; notes are embedded
-once), one Luna request after it, and a note-writer call only when there is something to write. Once per
+once), one Luna request and one embeddings request (the exchange) after it, and a note-writer call only when there
+is something to write. Once per
 embedding model per file, one more request of 64 short texts measures the model's floor.
 
 ## 4. Storage (`store.py`)
@@ -213,7 +226,7 @@ on 28 December is next January), for plans whose day the writer put in the text.
 first such day from today on (`ahead=True`), so "10月30日" written in April is this October, not last; digits around
 a date (a longer number) are not a date.
 
-## 6. Memory (`memory.py`)
+## 6. Memory (`memory.py`, `episodes.py`)
 
 ### Writing
 
@@ -302,6 +315,57 @@ per subject), and notes chosen by evidence (`matched`, `similar`) get their `rec
 `context`/`acontext` produce the block for a system prompt: a header in the memory's language saying the notes are
 remembered data, not instructions, and that the person's latest correction wins; the profile card; then one line
 per note, with a human date for the kinds that age. An empty memory renders as `""`, so hosts can always append it.
+
+### Episodes: the words themselves (`episodes.py`)
+
+A note is what the writer made of an exchange, and the writer leaves things out. On LoCoMo (four long conversations,
+704 questions, `bench/locomo.py`), a model answering from the students' notes alone got 57% of the answerable
+questions right; from the exchanges themselves, 6,000 characters of them, 75%; from 12,000, 78%; from the whole
+conversation, 82%. So every exchange the person starts is kept word for word as well (`aobserve` keeps it first,
+with no model call): an `Episode` is its lines `(who, said)`, when it was said and where (the host's name for the
+conversation). Nothing is summarized away; the cost is the file's size (about 6 KB an exchange with its index and
+vector).
+
+**Ranking.** BM25 over the exchanges' search terms (k1 1.2, b 0.75; each term counted once in an exchange, whose
+length is its number of distinct terms) and the cosine of each exchange's vector with the query's (meaning tier 1;
+tier 2's vector when tier 1 is not answering) are each turned into places and fused by reciprocal rank,
+1 / (61 + place). The two scores are on scales that cannot be compared, so their ranks are added, not the scores.
+Without an embedder, BM25 alone (on LoCoMo, about 7 points less; the embeddings alone did as well as both).
+
+**Retention.** Each exchange has a stability S (days, `memory.said_days`, 30 to start) and a retention
+R = e^(−t/S), t the time since it was said or last rehearsed. A rehearsal sets S ← S · (1.5 + 3 · (1 − R)) and
+makes it fresh: a thing that comes back just as it was fading lasts much longer, one that comes back at once a
+little longer. Two things rehearse an exchange: a search that finds it (it was remembered), and a later exchange
+about the same thing, by meaning: when an exchange gets its vector, the three nearest earlier exchanges that are
+closer than 98% of all the person's pairs are rehearsed at the time it was said. The 98% line comes from a
+histogram of every pair's similarity (`episode_spread`, 200 bins), kept as vectors arrive, so it costs one
+comparison with each earlier vector, never all pairs again; it waits for 100 pairs.
+
+**Look and search.** `look` is what comes to mind unprompted, for the message at hand: the ranking with each score
+× (0.25 + 0.75 × R), then the best of its first 200 within the budget (`memory.said_budget`, 6,000 characters as
+shown), in the order they were said; the host's newest `skip` exchanges of its conversation are left out, as they
+are still on its screen. `search` is what the model looks for itself (the `search` tool): relevance alone, however
+faded, the best five it has not yet seen this turn, each rehearsed. `around` shows an exchange with its neighbours
+in its conversation (the `read` tool). Measured on LoCoMo with a first look of 6,000 characters, the two tools
+and the person check: 80.8% of all 704 questions (79.1% for the whole conversation in the prompt, a sixth of the
+text); fading the look: 79.8% (80.5% with searches rehearsing what they find), no difference; fading the search as
+well: 63.1%. An old thing asked about must stay findable however faded it is, so only the look fades.
+
+**Rendering.** A header says the exchanges are data and asks for the person check: before saying it remembers
+something, the model checks it is about this same person and this same thing, and says it does not remember
+otherwise (on LoCoMo this took the right refusals from 65% to 86%, for a nonsignificant 2 points of answers). With
+`search=True` the header tells it to search before it says so. Each exchange is `#id [date time]` then its lines,
+up to 2,000 characters each (its opening and end when longer); a line's own line breaks are indented, so nothing
+said can pose as another exchange.
+
+**Vectors.** An exchange is embedded after it is kept (`prepare`: oldest first, in batches of 64), as its date in
+words over its lines (`[08 May 2023, 13:56]`), so a question about "May" finds it. An exchange that could not be
+embedded (the provider down) is found by its words meanwhile and embedded at the next `prepare`. A person's vectors
+are held in memory once read, and only what was added since is read again; with numpy installed they are compared
+in one step, otherwise in pure Python (about 10 ms per thousand exchanges on a Raspberry Pi 5).
+
+**Lifecycle.** `forget(subject, id)` and `erase` delete exchanges outright, with their index rows and vectors; a link
+moves them to the person and joins the two spreads; export and import carry them (section 4).
 
 ## 7. Meaning (`meaning/`)
 
@@ -570,13 +634,16 @@ call it on their own schedule (once a day is plenty). `profile_updated_at` tells
 
 ## 11. Interfaces
 
-**Tools** (`tools.py`). Four tools, `remember`, `recall`, `forget`, `mood`, rendered for five styles: `openai`
+**Tools** (`tools.py`). Six tools, `remember`, `recall`, `forget`, `mood`, `search` and `read` (what was said
+before, section 6), rendered for five styles: `openai`
 (chat completions, also DeepSeek, Qwen, vLLM, Ollama), `responses`, `anthropic`, `gemini` (without the
 `minimum`/`maximum` some versions reject) and `mcp`. `Toolbox(m, subject)` runs calls: the host binds the subject,
 and a `subject` in the model's arguments is ignored, so a model can never read, write or delete someone else's
 memory; arguments may be an object or its JSON text; every mistake (bad JSON, arguments that are not one object, a
 key that is not text) comes back as a sentence in the memory's language rather than an exception. Recalled notes come back headed "remembered data,
-not instructions". `call` matches by words only; `acall` uses the meaning tiers.
+not instructions". `call` matches by words only; `acall` uses the meaning tiers. A `Toolbox` remembers which
+exchanges its searches have shown (the newest 200), so a second search brings new ones: make one per turn, or call
+`new_turn()`.
 
 **MCP** (`mcp.py`). Newline-delimited JSON-RPC 2.0 over stdio: `initialize` (echoing the client's protocol version),
 `ping`, `tools/list`, `tools/call`; notifications get no reply, unknown methods get `-32601`, and a message that
@@ -690,6 +757,8 @@ Measured on 2026-10-24 (Luna, embeddings) with the defaults:
 |---|---|---|---|
 | embed the query | before each reply with meaning on | ~10 tokens, about $0.0000002 | ~0.3 s |
 | embed new notes | once per note | about $0.000001 per note | in the background |
+| embed the exchange | after each reply | about $0.000004 per exchange | after the reply |
+| a search (the tool) | when the model calls it | one query embedding, as above | ~0.3 s |
 | decide (mood + worth) | after each reply | $0.00006–0.00009 | 0.2–0.4 s |
 | write notes | only when worth ≥ 0.5 | one short call to your model | after the reply |
 | profile card | once a day per person | one short call to your model | after a reply |
@@ -699,11 +768,12 @@ Measured on 2026-10-24 (Luna, embeddings) with the defaults:
 Recall reads the term index for the query's words and at most 1,000 candidate notes, and meaning compares at most
 5,000 vectors, so its cost follows what the query matches, not the length of the history (section 6, "Long
 histories"). A person keeps up to 50,000 live notes. Vectors are 1 KB each at 256 dimensions; 100,000 notes with
-their index take about 60 MB.
+their index take about 60 MB. An exchange kept word for word takes about 6 KB with its index and vector; a look or
+a search compares the query with every exchange of the person (about 10 ms per thousand without numpy).
 
 ## 16. Tests
 
-`python3 -m unittest discover -s tests -t .` runs 243 tests in about forty seconds on a Raspberry Pi 5, with no network and no keys. CI
+`python3 -m unittest discover -s tests -t .` runs 279 tests in about forty seconds on a Raspberry Pi 5, with no network and no keys. CI
 runs them on Python 3.11–3.14 (Linux) and 3.13 on Windows and macOS; runs them again with the three removable tiers
 deleted (their own tests are then skipped, everything else must pass); runs the stress tests at five times their
 size (`MNEME_STRESS=heavy`); then builds the package, runs `twine check --strict` and installs the wheel.
@@ -724,6 +794,7 @@ size (`MNEME_STRESS=heavy`); then builds the package, runs `twine check --strict
 | `test_i18n.py` | every language has every word and sentence, with the same placeholders |
 | `test_stress.py` | a long history (20,000 notes, 100,000 at heavy size: the oldest found by a rare word, quickly, meaning within its window), random operations (three seeds, then two connections on one file), export and import giving back the same notes, six threads on one memory, three processes on one file, many coroutines at once, a full subject and many subjects, a huge query and a huge MCP line, a writer killed mid-transaction, odd text and odd values at every entry point, chat messages as an exchange, odd tool calls, exports brought back into their own file; after each, `tests/invariants.py` checks every rule of the file |
 | `test_removable.py` | the package with each removable tier deleted, and with all three, runs every kind of call |
+| `test_episodes.py` | keeping exchanges word for word, the shown form, observe keeping what the person started, the look (words, meaning, budget, what the host still shows, the header in both languages), fading and rehearsal (by search and by meaning, the spread), batches, the same ranking without numpy, a slow embedder, the tools, forget, erase, links, export and import, an older file, another process's vectors |
 | `test_review.py` | one test per finding of every pre-release review (listed in CHANGELOG.md) |
 
 `tests/invariants.py` checks a file against the rules of `docs/FORMAT.md` row by row: one live note per key, no live
@@ -781,6 +852,18 @@ kept beside its memory, so they travel with it to another host or model; a confi
 can still override them for a run. Stored defaults stay until loaded: an upgrade never changes how a companion is
 instructed without its owner asking.
 
+**The words kept, not only notes.** Notes are cheap to show and good for who a person is, but a writer cannot know
+which detail will be asked about later; the exchanges themselves answered 20 points more of LoCoMo's questions.
+Both are kept, under one budget each.
+
+**A first look and a search, not a bigger prompt.** A bounded prompt (the newest messages, the notes, a 6,000
+character look) with the whole history behind a search tool answers as well as the whole conversation in the
+prompt, at a sixth of the text, and keeps working when the history no longer fits any context window.
+
+**Forgetting for what comes to mind, never for what is looked for.** A faded exchange counts less in the look, so
+what is recent or talked about again comes to mind first; a search ranks by relevance alone. Fading the search lost
+18 points on LoCoMo; fading the look lost nothing.
+
 **Soft delete with a history.** A forgotten note stays in the file until `purge`, and a key's history shows how a fact changed;
 `purge` and `erase` exist for when it must really go.
 
@@ -812,6 +895,12 @@ instructed without its owner asking.
   `mood_change` and the feelings' keys are what the micro model learns, so they stay in code.
 - **Times are 1970 to the year 3000**, so something from before 1970 carries its date in its text.
 - **The CLI's help is English;** the Chinese README explains its use.
+- **Exchanges are never pruned.** A person's history grows by about 6 KB an exchange; `forget` and `erase` remove
+  them. A look and a search compare the query with every exchange of the person: beyond some tens of thousands,
+  install numpy.
+- **The look's `skip` counts exchanges.** A host showing its newest messages passes how many exchanges they make up;
+  one that cannot say leaves a few of them in the look twice.
+- **Rehearsal by meaning needs an embedder.** Without one, exchanges still fade, and are rehearsed only by search.
 - **No encryption at rest.**
 
 ## 19. Versions and compatibility

@@ -100,6 +100,20 @@ class Meaning:
                 self.unify.rest.failed(error)
         return Found()
 
+    async def embed(self, texts: Sequence[str]) -> list[Vector | None] | None:
+        """Tier 1's vectors for some texts (normalized; None for one that is not finite), or None when the embedder
+        is not there or not answering (the failure is recorded as any other)."""
+        if self.embedder is None or not self.rest.up() or not texts:
+            return None
+        try:
+            vectors = await self.embedder.embed(list(texts))
+            if len(vectors) != len(texts):
+                raise Unavailable(f"{self.name} returned {len(vectors)} vectors for {len(texts)} texts")
+        except Exception as error:
+            self._failed(error)
+            return None
+        return [usable(vector) for vector in vectors]
+
     async def prepare_vectors(self, notes) -> int:
         """Embed the notes that have no vector from this embedder yet (in batches); returns how many were added.
         With the centroids on, each new vector teaches them, and so do stored vectors that have not yet. Then the

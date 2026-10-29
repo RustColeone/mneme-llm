@@ -132,6 +132,40 @@ new gloss, a new key, another tokenizer) deletes the note's rows, a writer that 
 and one that inserts a note under a reused id first deletes any rows left under it. Readers that do not use the
 index can ignore it, but writers must keep it.
 
+### `episodes`: what was said, word for word
+
+| column | type | meaning |
+|---|---|---|
+| `id` | integer | primary key |
+| `space` | text | whose memory |
+| `subject` | text | who the exchange was with (the person, as for notes) |
+| `at` | real | when it was said |
+| `conversation` | text | where: the host's name for the chat (`""` for none), at most 200 characters |
+| `lines` | text | JSON `[[who, said], …]`: the exchange in order, at most 40 lines; `who` one line of at most 80 characters (`""` for nobody in particular), `said` at most 8,000 characters (the opening and the end of a longer one) |
+| `size` | integer | how many distinct search terms it has (BM25's length) |
+| `stability` | real | S, in days: how slowly it fades (30 to start, at most 1,000,000) |
+| `recalled_at` | real, null | when it was last rehearsed |
+| `recalls` | integer | how many times |
+| `terms` | text, null | a cache: its search terms, space-separated |
+
+An exchange's retention at a time `t` is `R = exp(−(t − max(at, recalled_at)) / (stability · 86400))`. A rehearsal
+at `t` sets `stability` to `stability · (1.5 + 3 · (1 − R))` and `recalled_at` to `t` (the later of the two).
+An exchange is rehearsed when a search finds it, and when a later exchange of the same subject is among the three
+nearest to it in meaning and closer than the subject's spread (`episode_spread`) puts 98% of pairs. Its search terms
+are those of each line's `who` and `said` together. Exchanges are deleted outright (`forget`, `erase`), with their
+`episode_terms` and `episode_vectors` rows.
+
+### `episode_terms`, `episode_vectors`, `episode_spread`
+
+`episode_terms` is the exchanges' term index, kept like `note_terms`: `(space, subject, term, episode_id)` primary
+key, one row per distinct term of the exchange, and an index on `episode_id`. `episode_vectors` holds meaning tier
+1's vectors of exchanges: `(episode_id, embedder)` primary key, `vector` (blob). What is embedded is the exchange
+under its date in words, `[08 May 2023, 13:56]`, then its lines as `who: said`. `episode_spread` is, per
+`(space, subject, embedder)`, a histogram of the similarities of every pair of the subject's exchanges with a
+vector: `bins` (JSON list of 200 counts; bin `i` holds similarities from `−1 + i/100`) and `pairs` (their sum). A
+pair is counted when the second of the two gets its vector; a subject rehearses by meaning only once it has 100
+pairs.
+
 ### `recalls`: the recall log
 
 `id`, `space`, `subject`, `at`, `query`, `chosen` (JSON `[[id, why], …]`), `skipped` (JSON `[[id, reason], …]`).
@@ -179,11 +213,13 @@ were compared (`notes`) and, when there were enough, their median similarity (`b
 {"mneme_llm": 1, "space": "dafeiyu", "exported_at": 1792885075.5,
  "memories": [{"id": 1, "subject": "discord:42", "key": "pet.name", "kind": "fact", "text": "…", "gloss": null, …}],
  "profiles": [...], "moods": [...], "mood_events": [...], "relationships": [...], "aliases": [...],
- "people": [...], "config": [{"key": "companion.name", "value": "大肥鱼", "origin": "file"}, …]}
+ "people": [...], "episodes": [{"id": 1, "subject": "discord:42", "at": 1792885000.0, "conversation": "dm",
+ "lines": [["Leo", "…"], ["大肥鱼", "…"]], "stability": 30.0, "recalled_at": null, "recalls": 0}],
+ "config": [{"key": "companion.name", "value": "大肥鱼", "origin": "file"}, …]}
 ```
 
-Rows are the table rows as objects, without `terms` and `folded`. Vectors, word centroids, floors and micro models
-are not exported: they belong to an embedder and a tokenizer, and are rebuilt or measured again on use. On import, memory ids are
+Rows are the table rows as objects, without `terms` and `folded` (an exchange's `lines` as a list, without `size`
+and `terms`). Vectors, word centroids, floors, spreads and micro models are not exported: they belong to an embedder and a tokenizer, and are rebuilt or measured again on use. On import, memory ids are
 renumbered and `superseded_by` links follow the new numbers; each note is held to the rules of writing (one line
 of at most 500 characters, whitespace collapsed; a key lowercased, or dropped when it isn't `part(.part){0,3}` of
 at most 48 characters; an unknown kind read as `episode`; importance clamped to 1–5, feeling to −1…1 and `recalls` to 0 or more; times
@@ -195,6 +231,8 @@ a key, or else the first copy (the others are marked deleted). Moods are importe
 without their event links (the timeline is imported separately); an event identical to one already in the timeline
 is not added again. A relationship replaces the person's present one, its closeness kept within the role's band
 (0–100 for a role the host does not have); a second holder of a one-person role (a second creator) is skipped.
+An exchange is held to the rules of keeping (its lines as above, `at` a time in seconds, `stability` a positive
+number, else 30; one without a subject, a time or words is skipped) and gets a new id.
 Links are added as by linking (a subject the file already links to another person keeps its link), and then what
 the import put under any linked subject joins its person. The config is applied only when the importer asks for it (its prompts are instructions to the importer's models),
 row by row, a row with an unknown key or a value that does not pass skipped.
@@ -240,4 +278,8 @@ Files written before these were added open as before; a writer adds the missing 
   leaves the table alone;
 - `people` (table) with the index `people_person` (mneme-llm 0.2). A file without it links no one. mneme-llm 0.1
   opens a file that has it but does not read it: a linked subject is then its own person again, without its
-  notes.
+  notes;
+- `episodes`, `episode_terms`, `episode_vectors` and `episode_spread` (tables), with the indexes
+  `episodes_subject`, `episodes_conversation` and `episode_terms_episode` (mneme-llm 0.3). A file without them has
+  no exchanges kept; mneme-llm 0.1 and 0.2 open a file that has them and leave them alone (their `erase` then
+  leaves a person's exchanges in the file).

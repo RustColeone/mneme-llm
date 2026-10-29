@@ -6,7 +6,7 @@
     m.alias("discord:42", "鲸酱")
     m.link("web:leo", "discord:42")   # the same person on another account
     m.remember("discord:42", "养了一只叫年糕的猫", kind="fact", key="pet.name", importance=4)
-    system_prompt += await m.aprompt("discord:42", query=user_message, user_name="Leo")
+    system_prompt += await m.aprompt("discord:42", query=user_message, user_name="Leo", said=6000)
     await m.aobserve("discord:42", [("Leo", user_message), ("大肥鱼", reply)], user_name="Leo")
 
 Swap the model behind your app and point it at the same file: the facts, the history and the mood carry over.
@@ -25,6 +25,7 @@ from .aliases import Aliases
 from .capture import WORTH_NAME, notes_in, reflect_prompt, worth, writer_prompt
 from .config import STORED, Config
 from .decide import Answer, Chain, Choice, Luna, Predicate, Prompt, Score, fit
+from .episodes import Episode, Episodes
 from .i18n import Words, say
 from .meaning import Embeddings, Meaning, OpenAIEmbeddings, ledger
 from .memory import KINDS, Memory, Note, Recall
@@ -34,7 +35,7 @@ from .providers import Unavailable, run
 from .relations import Relations, Relationship, Role
 from .store import SCHEMA_VERSION, Store
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 
 def _optional(module: str, name: str):
@@ -47,11 +48,13 @@ def _optional(module: str, name: str):
 
 @dataclass(frozen=True)
 class Observation:
-    """What `observe` made of one exchange: the mood change (None when nothing moved) and the notes kept."""
+    """What `observe` made of one exchange: the mood change (None when nothing moved), the notes kept and the
+    exchange itself, kept word for word."""
     mood: MoodEvent | None = None
     notes: list = field(default_factory=list)
     worth: float | None = None  # how likely the exchange held something worth remembering, when it was asked
     error: str = ""             # why notes could not be written (the note writer failed), if they could not
+    episode: Episode | None = None
 
 
 class Mneme:
@@ -124,6 +127,9 @@ class Mneme:
                                    fade_days=own.get("relations.fade_days"), zone=zone, display_language=words,
                                    people=self.people, clock=clock)
         self.aliases = Aliases(self.store, space, display_language=words, people=self.people, clock=clock)
+        self.episodes = Episodes(self.store, space, days=own.get("memory.said_days"), zone=zone,
+                                 display_language=words, meaning=self.meaning, people=self.people, clock=clock)
+        self.said_budget = own.get("memory.said_budget")
 
     @property
     def display_language(self) -> str:
@@ -131,7 +137,7 @@ class Mneme:
 
     @display_language.setter
     def display_language(self, language: str) -> None:
-        for part in (self.memory, self.mood, self.relations, self.aliases):
+        for part in (self.memory, self.mood, self.relations, self.aliases, self.episodes):
             part.display_language = language
 
     def _chain(self, complete) -> Chain:
@@ -220,7 +226,7 @@ class Mneme:
         return self.people.of(subject)
 
     def _join(self, old: str, new: str) -> None:
-        for part in (self.memory, self.mood, self.relations, self.aliases):
+        for part in (self.memory, self.mood, self.relations, self.aliases, self.episodes):
             part.join(old, new)
 
     def forget(self, subject: str, *, id: int | None = None, key: str | None = None) -> int:
@@ -233,11 +239,12 @@ class Mneme:
 
     def erase(self, subject: str) -> int:
         """Everything about a person, gone for good ("forget me"): notes, history, vectors, what they taught the
-        word centroids, profile card, recall log, mood and its timeline, their role, their alias and the links of
-        their other accounts. Returns how many notes there were."""
+        word centroids, profile card, recall log, every exchange kept word for word, mood and its timeline, their
+        role, their alias and the links of their other accounts. Returns how many notes there were."""
         with self.store.transaction():
             subject = self.people.of(subject)
             count = self.memory.erase(subject)
+            self.episodes.erase(subject)
             self.mood.reset(subject)
             self.relations.remove(subject)
             self.aliases.remove(subject)
@@ -245,38 +252,72 @@ class Mneme:
         return count
 
     def prompt(self, subject: str, query: str = "", *, user_name: str | None = None, mark: bool = True, limit: int = 6,
-               budget: int = 800, important: int = 2, recent: int = 1, header: str | None = None) -> str:
+               budget: int = 800, important: int = 2, recent: int = 1, header: str | None = None, said: int = 0,
+               conversation: str = "", skip: int = 0, search: bool = False) -> str:
         """What to add to the system prompt this turn (word matching only): who the person is to the companion and
-        what they call it, notes for `query`, and the mood's news, told once. `user_name` is how they are named; the rest is as in
-        `Memory.context`."""
+        what they call it, notes for `query`, with `said` (a budget of characters) what was said before that
+        bears on it (`look`), and the mood's news, told once. `user_name` is how they are named; the notes' options
+        are as in `Memory.context`, the rest as in `look`."""
         notes = self.memory.context(subject, query, user_name=user_name, limit=limit, budget=budget,
                                     important=important, recent=recent, header=header)
-        return self._prompt(subject, user_name, notes, mark)
+        words = self.look(subject, query, user_name=user_name, budget=said, conversation=conversation, skip=skip,
+                          search=search) if said else ""
+        return self._prompt(subject, user_name, notes, words, mark)
 
     async def aprompt(self, subject: str, query: str = "", *, user_name: str | None = None, mark: bool = True,
                       limit: int = 6, budget: int = 800, important: int = 2, recent: int = 1,
-                      header: str | None = None, complete=None) -> str:
+                      header: str | None = None, complete=None, said: int = 0, conversation: str = "", skip: int = 0,
+                      search: bool = False) -> str:
         """`prompt` with the meaning tiers."""
         notes = await self.memory.acontext(subject, query, user_name=user_name, limit=limit, budget=budget,
                                            important=important, recent=recent, header=header, complete=complete)
-        return self._prompt(subject, user_name, notes, mark)
+        words = await self.alook(subject, query, user_name=user_name, budget=said, conversation=conversation,
+                                 skip=skip, search=search) if said else ""
+        return self._prompt(subject, user_name, notes, words, mark)
 
-    def _prompt(self, subject: str, user_name: str | None, notes: str, mark: bool) -> str:
-        parts = (self.relations.line(subject, user_name), self.aliases.line(subject, user_name), notes,
+    def _prompt(self, subject: str, user_name: str | None, notes: str, said: str, mark: bool) -> str:
+        parts = (self.relations.line(subject, user_name), self.aliases.line(subject, user_name), notes, said,
                  self.mood.news(subject, mark=mark) or "")
         return "\n\n".join(part for part in parts if part)
 
-    async def aobserve(self, subject: str, exchange, *, source: str = "user", user_name: str = "the user",
-                       complete=None, mood: bool = True, capture: bool = True, gate: float = 0.5) -> Observation:
-        """Call after each exchange, once the reply is out: judges the mood and keeps what is worth remembering.
+    def look(self, subject: str, query: str = "", *, user_name: str | None = None, budget: int | None = None,
+             conversation: str = "", skip: int = 0, search: bool = False) -> str:
+        """What was said before that bears on `query` (word matching only), ready for a prompt: the best matches
+        word for word within `budget` characters (`memory.said_budget`, 6,000, when not given), a faded one counting
+        less, under a header that asks for the person check. The newest `skip` exchanges of `conversation` are left
+        out (you still show them). `search`: your model has the search tool (`tools.py`), and is told to search
+        before it says it does not remember. "" when nothing bears on it."""
+        found = self.episodes.look(subject, query, budget=self._said(budget), conversation=conversation, skip=skip)
+        return self.episodes.render(found, user_name=user_name, search=search)
 
-        One decision request answers both the mood questions and "worth remembering?", so the note writer is
-        only called when there is something to write. Notes are only taken from exchanges the person started
-        (`source="user"`), and such an exchange is a day of contact for their closeness. The mood moves by how
-        close the person is (`relate`). `complete` gives this call a chat model in place of the one given at
-        start. If the note writer fails, the mood is still applied and the failure is in `Observation.error`.
+    async def alook(self, subject: str, query: str = "", *, user_name: str | None = None, budget: int | None = None,
+                    conversation: str = "", skip: int = 0, search: bool = False) -> str:
+        """`look` with meaning (the query's embedding, when it comes within a few seconds)."""
+        found = await self.episodes.alook(subject, query, budget=self._said(budget), conversation=conversation,
+                                          skip=skip)
+        return self.episodes.render(found, user_name=user_name, search=search)
+
+    def _said(self, budget: int | None) -> int:
+        return self.said_budget if budget is None else max(0, int(budget))
+
+    async def aobserve(self, subject: str, exchange, *, source: str = "user", user_name: str = "the user",
+                       complete=None, mood: bool = True, capture: bool = True, gate: float = 0.5, keep: bool = True,
+                       conversation: str = "", at: float | None = None) -> Observation:
+        """Call after each exchange, once the reply is out: keeps it word for word, judges the mood and keeps what
+        is worth remembering.
+
+        An exchange the person started (`source="user"`) is kept word for word first (`keep`; no model call), with
+        when (`at`, now when not given) and where (`conversation`) it was said, and then embedded. One decision
+        request answers both the mood questions and "worth remembering?", so the note writer is only called when
+        there is something to write. Notes, too, are only taken from exchanges the person started, and such an
+        exchange is a day of contact for their closeness. The mood moves by how close the person is (`relate`).
+        `complete` gives this call a chat model in place of the one given at start. If the note writer fails, the
+        mood is still applied and the failure is in `Observation.error`.
         """
-        exchange = exchanges.as_text(exchange)  # once (it may be a generator); a wrong one is the caller's mistake
+        lines = exchanges.as_lines(exchange)  # once (it may be a generator); a wrong one is the caller's mistake
+        exchange = exchanges.text_of(lines)
+        episode = self.episodes.keep(subject, lines, at=at, conversation=conversation) \
+            if keep and source == "user" else None
         writer = complete or self.complete
         decider = self._decider(complete)
         judge_mood = mood and source not in self.mood.settings.skip
@@ -297,7 +338,9 @@ class Mneme:
                 notes = await self._capture(subject, exchange, user_name, worth, gate, writer)
             except Exception as failure:  # the note writer is the host's model: report it, keep the mood
                 error = f"{type(failure).__name__}: {failure}"[:300]
-        return Observation(event, notes, worth.probability if worth is not None else None, error)
+        if episode is not None:
+            await self.episodes.prepare(episode.subject)  # its vector, with which it rehearses what it is about
+        return Observation(event, notes, worth.probability if worth is not None else None, error, episode)
 
     def observe(self, subject: str, exchange, **options) -> Observation:
         """`aobserve` for code without an event loop."""
@@ -393,7 +436,8 @@ class Mneme:
         """This space as plain JSON (see docs/FORMAT.md), its config included."""
         return {"mneme_llm": SCHEMA_VERSION, "space": self.space, "exported_at": time.time(),
                 **self.memory.export_rows(), **self.mood.export_rows(), **self.relations.export_rows(),
-                **self.aliases.export_rows(), **self.people.export_rows(), **self.config.export_rows()}
+                **self.aliases.export_rows(), **self.people.export_rows(), **self.episodes.export_rows(),
+                **self.config.export_rows()}
 
     def import_data(self, data: dict, *, config: bool = False) -> int:
         """Add an export to this space, held to the rules of writing; returns how many notes were added. Its links
@@ -404,12 +448,13 @@ class Mneme:
             raise TypeError("an export is a JSON object")
         rows = {name: data.get(name) if isinstance(data.get(name), list) else []
                 for name in ("memories", "profiles", "moods", "mood_events", "relationships", "aliases", "people",
-                             "config")}
+                             "episodes", "config")}
         with self.store.transaction():
             added = self.memory.import_rows(rows["memories"], rows["profiles"])
             self.mood.import_rows(rows["moods"], rows["mood_events"])
             self.relations.import_rows(rows["relationships"])
             self.aliases.import_rows(rows["aliases"])
+            self.episodes.import_rows(rows["episodes"])
             for subject, person in self.people.rows_of(rows["people"]):
                 try:
                     self.link(subject, person)
@@ -434,7 +479,7 @@ class Mneme:
         self.close()
 
 
-__all__ = ["Aliases", "Answer", "Chain", "Choice", "Config", "Embeddings", "Emotion", "KINDS", "Luna", "Meaning", "Memory",
-           "Mneme", "Mood", "MoodEvent", "MoodSettings", "Note", "Observation", "OpenAIEmbeddings", "People", "Predicate",
-           "Prompt", "Recall", "Relations", "Relationship", "Role", "STORED", "Score", "Store", "Unavailable",
-           "__version__"]
+__all__ = ["Aliases", "Answer", "Chain", "Choice", "Config", "Embeddings", "Emotion", "Episode", "Episodes", "KINDS",
+           "Luna", "Meaning", "Memory", "Mneme", "Mood", "MoodEvent", "MoodSettings", "Note", "Observation",
+           "OpenAIEmbeddings", "People", "Predicate", "Prompt", "Recall", "Relations", "Relationship", "Role", "STORED",
+           "Score", "Store", "Unavailable", "__version__"]

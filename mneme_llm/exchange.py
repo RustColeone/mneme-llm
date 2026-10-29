@@ -8,11 +8,11 @@ from .i18n import fill
 from .prompts import PROMPTS
 
 
-def as_text(exchange) -> str:
-    """An exchange as one text: a string as it is, or a list of `(who, said)` pairs or of chat messages
-    (`{"role" or "name": ..., "content": ...}`), one line each."""
+def as_lines(exchange) -> list[tuple[str, str]]:
+    """An exchange as `(who, said)` pairs: a string is one line by nobody in particular; a list of pairs or of chat
+    messages (`{"role" or "name": ..., "content": ...}`) is one line each."""
     if isinstance(exchange, str):
-        return exchange
+        return [("", exchange)]
     if exchange is None or isinstance(exchange, (bytes, dict)) or not hasattr(exchange, "__iter__"):
         raise TypeError("an exchange is a string, or a list of (who, said) pairs or of chat messages")
     lines = []
@@ -23,8 +23,18 @@ def as_text(exchange) -> str:
                 said = " ".join(part.get("text", "") for part in said if isinstance(part, dict))
         else:
             who, said = item
-        lines.append(f"{who}: {said}" if who else str(said))
-    return "\n".join(lines)
+        lines.append((str(who or ""), "" if said is None else str(said)))
+    return lines
+
+
+def text_of(lines) -> str:
+    return "\n".join(f"{who}: {said}" if who else said for who, said in lines)
+
+
+def as_text(exchange) -> str:
+    """An exchange as one text: a string as it is, or a list of `(who, said)` pairs or of chat messages
+    (`{"role" or "name": ..., "content": ...}`), one line each."""
+    return exchange if isinstance(exchange, str) else text_of(as_lines(exchange))
 
 
 def frame(exchange, *, source: str = "user", user_name: str = "the user", companion_name: str = "the assistant",

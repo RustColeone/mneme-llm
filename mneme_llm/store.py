@@ -2,8 +2,8 @@
 
 Every row belongs to a `space` (whose memory it is: an app or a character, "whale_chan") and most to a `subject`
 (who it is about: "discord:1234"). This module is the file alone: its tables, migrations, locking and
-transactions. The rules of what goes in them belong to the modules that own each table (memory, mood, meaning,
-relations, aliases, people, config).
+transactions. The rules of what goes in them belong to the modules that own each table (memory, episodes, mood,
+meaning, relations, aliases, people, config).
 """
 
 from __future__ import annotations
@@ -95,6 +95,34 @@ create table if not exists people (
     primary key (space, subject)
 );
 create index if not exists people_person on people(space, person);
+create table if not exists episodes (
+    id integer primary key,
+    space text not null,
+    subject text not null,
+    at real not null,
+    conversation text not null default '',
+    lines text not null,
+    size integer not null,
+    stability real not null,
+    recalled_at real,
+    recalls integer not null default 0,
+    terms text
+);
+create index if not exists episodes_subject on episodes(space, subject, at);
+create index if not exists episodes_conversation on episodes(space, subject, conversation, at);
+create table if not exists episode_terms (
+    space text not null, subject text not null, term text not null, episode_id integer not null,
+    primary key (space, subject, term, episode_id)
+) without rowid;
+create index if not exists episode_terms_episode on episode_terms(episode_id);
+create table if not exists episode_vectors (
+    episode_id integer not null, embedder text not null, vector blob not null,
+    primary key (episode_id, embedder)
+);
+create table if not exists episode_spread (
+    space text not null, subject text not null, embedder text not null, bins text not null, pairs integer not null,
+    primary key (space, subject, embedder)
+);
 """
 # Columns added after a table first shipped, so files made by earlier builds gain them on open.
 ADDED_COLUMNS = {"memories": {"gloss": "text", "terms": "text", "folded": "text"}, "vectors": {"taught": "text"}}
