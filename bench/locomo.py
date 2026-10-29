@@ -21,7 +21,9 @@ Arms:
 `--unit exchange` stores the conversation as exchanges (each run of one side's messages with the other's reply, the
 unit `aobserve` is given) in place of pieces; `--neighbors N` brings the N items on each side of every one chosen;
 `--search bm25|vector` uses one ranking of the two; `--prompt cite` has the answer copy its evidence first;
-`--window N` shows the newest N characters of the conversation word for word, looking up only what came before.
+`--window N` shows the newest N characters of the conversation word for word, looking up only what came before;
+`--forget first|all` ranks with each exchange's retention (a forgetting curve, refreshed when the talk comes back to
+it), in the first look only or in the model's searches too.
 
 The common retriever ranks by BM25 over mneme-llm's own search terms and by embedding similarity (OpenAI
 text-embedding-3-small), fused by reciprocal rank, and takes items in that order up to `--budget` characters; what it
@@ -426,19 +428,61 @@ def whole(conversation: Conversation) -> str:
                        for session in conversation.sessions)
 
 
+# ---- forgetting: each exchange's retention (Ebbinghaus), refreshed whenever the talk comes back to it -----------------
+FLOOR = 0.25  # how much a faded exchange still counts in a ranking: found later, never lost
+
+
+class Retention:
+    """Each exchange's place on its forgetting curve: when it was last recalled and how long it lasts (S). Its retention
+    at a time is R = e^(−time since then / S). Talk that comes back to it, or a search that finds it (`refresh`), is a
+    recall: S grows, the more when it had nearly faded (spaced repetition: S ← S · (1.5 + 3 · (1 − R))), and it is
+    fresh again."""
+
+    def __init__(self, items: list[Item], vectors, days: float = 30.0):
+        self.items = items
+        count = len(items)
+        self.last = numpy.array([item.at for item in items], dtype=float)
+        self.strength = numpy.full(count, days * 86400.0)
+        if count < 2:
+            return
+        matrix = numpy.asarray(vectors, dtype=numpy.float32).reshape(count, -1)
+        similarity = matrix @ matrix.T
+        # An exchange recalls the earlier ones it is about: its three nearest in meaning, if closer than 98% of pairs.
+        threshold = float(numpy.percentile(similarity[numpy.triu_indices(count, 1)], 98))
+        order = sorted(range(count), key=lambda index: items[index].at)
+        for position in range(1, count):
+            current, earlier = order[position], order[:position]
+            scores = similarity[current, earlier]
+            for nearest in numpy.argsort(-scores)[:3]:
+                if scores[nearest] < threshold:
+                    break
+                self.recall(earlier[nearest], items[current].at)
+
+    def recall(self, index: int, now: float) -> None:
+        kept = math.exp(-max(0.0, now - self.last[index]) / self.strength[index])
+        self.strength[index] *= 1.5 + 3 * (1 - kept)
+        self.last[index] = max(self.last[index], now)
+
+    def at(self, now: float) -> numpy.ndarray:
+        return numpy.exp(-numpy.maximum(0.0, now - self.last) / self.strength)
+
+
 class Index:
-    """BM25 over mneme-llm's search terms and embedding similarity, fused by reciprocal rank."""
+    """BM25 over mneme-llm's search terms and embedding similarity, fused by reciprocal rank; with a `memory` (each
+    item's Retention) and `now`, a ranking asked to forget counts a faded item less: its score times 0.25 + 0.75·R."""
 
     def __init__(self, items: list[Item], vectors: list[array]):
         self.items = items
         self.vectors = numpy.array(vectors, dtype=numpy.float32).reshape(len(items), -1)
+        self.memory: Retention | None = None
+        self.now = 0.0
         self.docs = [Counter(terms(item.text)) for item in items]
         self.lengths = [sum(doc.values()) for doc in self.docs]
         self.average = (sum(self.lengths) / len(self.lengths)) if self.lengths else 1.0
         frequency = Counter(term for doc in self.docs for term in doc)
         self.idf = {term: math.log(1 + (len(items) - count + 0.5) / (count + 0.5)) for term, count in frequency.items()}
 
-    def rank(self, query: str, vector: array, search: str = "hybrid") -> list[int]:
+    def rank(self, query: str, vector: array, search: str = "hybrid", forget: bool = False) -> list[int]:
         wanted = set(terms(query))
         bm25 = [sum(self.idf[term] * doc[term] * 2.2 / (doc[term] + 1.2 * (0.25 + 0.75 * length / self.average))
                     for term in wanted if term in doc) for doc, length in zip(self.docs, self.lengths)]
@@ -451,13 +495,18 @@ class Index:
         if search != "bm25":
             for place, index in enumerate(sorted(range(len(self.items)), key=lambda index: -cosine[index])):
                 fused[index] += 1 / (61 + place)
+        if forget and self.memory is not None:
+            kept = self.memory.at(self.now)
+            for index in fused:
+                fused[index] *= FLOOR + (1 - FLOOR) * float(kept[index])
         return sorted(fused, key=lambda index: -fused[index])
 
-    def take(self, query: str, vector: array, budget: int, neighbors: int = 0, search: str = "hybrid") -> list[Item]:
+    def take(self, query: str, vector: array, budget: int, neighbors: int = 0, search: str = "hybrid",
+             forget: bool = False) -> list[Item]:
         """Items in rank order up to `budget` characters; with `neighbors`, each chosen item brings the items next
         to it (in the order they were made: the conversation's) while they fit."""
         chosen, used = {}, 0
-        for index in self.rank(query, vector, search):
+        for index in self.rank(query, vector, search, forget):
             for near in [index] + [index + step for distance in range(1, neighbors + 1) for step in (-distance, distance)]:
                 if near in chosen or not 0 <= near < len(self.items):
                     continue
@@ -513,7 +562,8 @@ TOOLS = [
 
 
 async def agent_answer(models: Models, vectors: "Vectors", index: "Index", system: str, opening: str, question: str,
-                       step: str, steps: int = 6, per_search: int = 5) -> tuple[str, dict]:
+                       step: str, steps: int = 6, per_search: int = 5, forget: bool = False,
+                       refresh: bool = False) -> tuple[str, dict]:
     """The question answered by a model that searches the conversation itself: up to `steps` calls, the last one
     without tools; what it did, for the report."""
     messages = [{"role": "system", "content": system},
@@ -540,8 +590,11 @@ async def agent_answer(models: Models, vectors: "Vectors", index: "Index", syste
                 did["searches"] += 1
                 query = str(arguments.get("query") or question)
                 vector = (await vectors.of([query]))[0]
-                fresh = [place for place in index.rank(query, vector) if place not in seen][:per_search]
+                fresh = [place for place in index.rank(query, vector, forget=forget) if place not in seen][:per_search]
                 seen.update(fresh)
+                if refresh and index.memory is not None:  # what a search brings back is recalled: it fades slower
+                    for place in fresh:
+                        index.memory.recall(place, index.now)
                 found = "\n\n".join(f"#{place} {index.items[place].text}" for place in sorted(fresh)) or "Nothing new."
             elif call["function"]["name"] == "read":
                 did["reads"] += 1
@@ -572,11 +625,13 @@ def f1(answer: str, gold: str) -> float:
 
 async def answer(conversations: list[Conversation], out: Path, arm: str, budget: int, models: Models,
                  unit: str = "piece", neighbors: int = 0, search: str = "hybrid", prompt: str = "plain",
-                 window: int = 0) -> Path:
+                 window: int = 0, decay: str = "none", days: float = 30.0, refresh: bool = False) -> Path:
     name = arm if arm in ("production", "full") else \
         f"{arm}{'-' + unit if unit != 'piece' and arm != 'notes' else ''}-{budget}" + (f"-n{neighbors}" if neighbors else "")
     name += (f"-w{window}" if window else "") + (f"-{search}" if search != "hybrid" else "") + \
-        (f"-{prompt}" if prompt != "plain" else "")
+        (f"-{prompt}" if prompt != "plain" else "") + \
+        (f"-forget{decay}" + (f"{days:g}d" if days != 30 else "") if decay != "none" else "") + \
+        ("-refresh" if refresh else "")
     path = out / "answers" / f"{name}.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
     done = set()
@@ -599,6 +654,11 @@ async def answer(conversations: list[Conversation], out: Path, arm: str, budget:
                       if arm in ("verbatim", "both", "agent") else []))
             items = [item for item in items if item.at < since]  # what the window shows is not looked up again
             index_of = Index(items, await vectors.of([item.text for item in items]))
+            if decay != "none":
+                index_of.memory, index_of.now = Retention(items, index_of.vectors, days), conversation.end
+                kept = index_of.memory.at(index_of.now)
+                print(f"  {conversation.id}: {len(items)} exchanges, {float((kept < 0.1).mean()):.0%} faded under 0.1, "
+                      f"median retention {float(numpy.median(kept)):.2f}", flush=True)
             asked = await vectors.of([qa["question"] for _, qa in todo])
         elif arm == "production":
             memories = [(person, open_memory(production_copy(out, conversation, person), conversation, companion,
@@ -611,10 +671,12 @@ async def answer(conversations: list[Conversation], out: Path, arm: str, budget:
             question = qa["question"]
             did = None
             if arm == "agent":  # a first look of `budget` characters (0: none), then its own searches
-                opening = "\n\n".join(item.text for item in index_of.take(question, asked[place], budget)) if budget else ""
+                opening = "\n\n".join(item.text for item in index_of.take(
+                    question, asked[place], budget, forget=decay != "none")) if budget else ""
                 reply, did = await agent_answer(models, vectors, index_of, system,
                                                 f"What your memory brings up first:\n{opening}" if opening else "",
-                                                question, f"answer:{name}")
+                                                question, f"answer:{name}", forget=decay == "all",
+                                                refresh=refresh)
                 memory = opening
             elif arm == "full":
                 memory = whole(conversation)
@@ -624,7 +686,7 @@ async def answer(conversations: list[Conversation], out: Path, arm: str, budget:
                                                                       limit=6, budget=800)))
             else:
                 memory = "\n\n".join(item.text for item in index_of.take(question, asked[place], budget, neighbors,
-                                                                            search))
+                                                                            search, forget=decay != "none"))
                 if window:
                     memory = (memory + "\n\n" if memory else "") + "The latest messages, word for word:\n" + recent
             # The whole conversation first, so every question about it reuses DeepSeek's cache of that prefix.
@@ -652,7 +714,11 @@ async def answer(conversations: list[Conversation], out: Path, arm: str, budget:
                 with path.open("a", encoding="utf-8") as file:
                     file.write(json.dumps(row, ensure_ascii=False) + "\n")
         try:
-            await asyncio.gather(*(one(place, index, qa) for place, (index, qa) in enumerate(todo)))
+            if refresh:
+                for place, (index, qa) in enumerate(todo):
+                    await one(place, index, qa)
+            else:
+                await asyncio.gather(*(one(place, index, qa) for place, (index, qa) in enumerate(todo)))
         finally:
             for _, mind in memories or ():
                 mind.close()
@@ -712,7 +778,8 @@ async def main(arguments) -> int:
                 await asyncio.gather(*(ingest(conversation, out, models) for conversation in conversations))
             else:
                 await answer(conversations, out, arguments.arm, arguments.budget, models, arguments.unit,
-                             arguments.neighbors, arguments.search, arguments.prompt, arguments.window)
+                             arguments.neighbors, arguments.search, arguments.prompt, arguments.window,
+                             arguments.forget, arguments.stability, arguments.refresh)
         except OutOfBalance as stop:
             print(f"STOPPED: {stop}", flush=True)
         finally:
@@ -744,6 +811,13 @@ def parse(argv=None):
                              "person and the thing asked before answering")
     parser.add_argument("--window", type=int, default=0,
                         help="characters of the newest turns shown word for word besides what is looked up")
+    parser.add_argument("--forget", choices=("none", "first", "all"), default="none",
+                        help="the forgetting curve in the rankings: none, the first look only (a search the model makes "
+                             "still reaches everything, as trying hard to remember), or all")
+    parser.add_argument("--stability", type=float, default=30.0, help="days an exchange told once takes to fade to 1/e")
+    parser.add_argument("--refresh", action="store_true",
+                        help="what the model's searches bring back is recalled (fades slower); a conversation's "
+                             "questions are then asked one after another, as in a chat")
     parser.add_argument("--env", default="../.env", help="the .env holding DEEPSEEK_API_KEY and OPENAI_API_KEY")
     parser.add_argument("--floor", type=float, default=12.0, help="stop when the DeepSeek balance (CNY) is under this")
     parser.add_argument("--concurrency", type=int, default=16)
