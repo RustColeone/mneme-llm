@@ -32,7 +32,7 @@ before 1.0, a minor version may change the Python API, and this file says how.
   On LongMemEval-M (60 questions, each with its own history of about 480 sessions and 1.2 million tokens, put
   through the library itself; `bench/longmemeval.py`): the look of 6,000 characters alone answered 60%, the look
   with the tools 80–85%, and the model given only the sessions that hold the answer 93%. The look's bar kept the
-  answers (52 of 60 against 51 without it, 50 with the memory aged half a year) while a look weighted by fading
+  answers (52 and 48 of 60 in two runs against 51 without it, within the noise; 50 with the memory aged half a year) while a look weighted by fading
   lost 3, and it left two looks in three at chit-chat empty.
 - `erase` removes a person's exchanges, a link joins them, export and import carry them (`"episodes"`). New
   tables within schema 1: `episodes`, `episode_terms`, `episode_vectors`, `episode_spread`. Files from 0.1 and 0.2

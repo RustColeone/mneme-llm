@@ -362,8 +362,9 @@ earlier build weighed each score × (0.25 + 0.75 × R) instead: that changed onl
 never what it cost, and it never helped (LoCoMo −1 point, LongMemEval-M −3 of 60). No absolute line would do: the
 cosine of a question with the exchange that answers it ran 0.30–0.78, of chit-chat with its best match 0.33–0.50,
 of a new task with an old one like it 0.35–0.85. Measured on LongMemEval-M with the tools (60 questions, DeepSeek
-Flash): 52 right with the bar, 51 without; with the memory aged as if half a year had passed (`--later 180`), 50,
-with 18 looks empty and the searches bringing the rest back. Chit-chat's look fell from 6,359 characters to 843 (two
+Flash): 52 and 48 right with the bar in two runs, 51 without (of the 8 questions the two runs disagreed on, 7 had
+the same prompt both times: about 4 of 60 is the noise); with the memory aged as if half a year had passed
+(`--later 180`), 50, with 18 looks empty and the searches bringing the rest back. Chit-chat's look fell from 6,359 characters to 843 (two
 in three empty), and to 175 half a year on. A memory question costs more with the bar, since the model searches more
 (about 23,000 input tokens against 21,000; 34,000 half a year on); an ordinary turn costs about 1,400 fewer.
 

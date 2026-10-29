@@ -162,7 +162,8 @@ what is recent or talked about again comes easily, and an old thing comes back o
 finds it however faded it is. When nothing comes and the model can search, the look says only that it can.
 Measured on LoCoMo (704 questions): the look of 6,000 characters with the tools and the person check answered
 80.8%; the whole conversation in the prompt, 79.1%; fading the search as well lost 18 points. On LongMemEval-M
-(60 questions) the bar kept the answers (52 against 51 without it; 50 with the memory aged half a year) and left
+(60 questions) the bar kept the answers (52 and 48 in two runs against 51 without it, within the noise; 50 with the memory aged
+half a year) and left
 two looks in three at chit-chat empty. Exchanges are never pruned (about 6 KB each with their index and vector);
 `erase` removes them with everything else.
 
