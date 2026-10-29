@@ -15,6 +15,7 @@ each turn (or call `new_turn`) and a search again with other words brings new ex
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 from .dates import noon, when
@@ -108,14 +109,17 @@ class Toolbox:
     """Runs the tools against one Mneme; `subject` is who the conversation is with. Replies follow the memory's
     display language, and recalled notes come marked as data, not instructions."""
 
+    QUIET = 300.0  # seconds without a tool call that end a turn, for a host that never calls `new_turn` (MCP)
+
     def __init__(self, mneme, subject: str | None = None, *, prefix: str = "", source: str = "auto",
                  per_search: int = 5):
         self.mneme, self.subject, self.prefix, self.source = mneme, subject, prefix, source
         self.per_search = per_search  # exchanges a search shows
         self.seen: dict[int, None] = {}  # exchanges this turn's searches have shown, in order
+        self._last = time.monotonic()
 
     def new_turn(self) -> None:
-        """Searches from now on may show again what earlier ones did."""
+        """Searches from now on may show again what earlier ones did (so does a quiet spell of QUIET seconds)."""
         self.seen.clear()
 
     @property
@@ -181,6 +185,10 @@ class Toolbox:
         tool = name[len(self.prefix):] if name.startswith(self.prefix) else name
         if tool not in {spec["name"] for spec in SPECS}:
             return say(self.words, "error.tool", name=name)
+        now = time.monotonic()
+        if now - self._last > self.QUIET:
+            self.new_turn()
+        self._last = now
         return tool, str(who), arguments
 
     def _remember(self, subject: str, arguments: dict[str, Any]) -> str:

@@ -56,8 +56,10 @@ SHOWN_LINE = 2000     # characters of one line a look or a search shows (`read` 
 RRF = 61              # reciprocal rank fusion: a ranking's place p counts 1 / (RRF + p)
 BATCH = 64            # exchanges embedded per request
 SCANNED = 200         # the best-ranked exchanges a look reads to fill its budget
-CUT = 0.95            # a look's bar: an exchange as close to the query as this share of the person's pairs ...
-CUT_FADED = 0.99      # ... and, fully faded, this share (in between by its retention); a search has no bar
+MATRICES = 16         # people whose vectors stay in memory (the most recently looked at)
+PREPARED = 256        # exchanges a prepare embeds at most (the rest the next time)
+CUT = 0.08            # a look's bar: an exchange this much closer to the query than the embedder's floor ...
+CUT_FADED = 0.16      # ... and, fully faded, this much (in between by its retention); a search has no bar
 FLOOR = 0.25          # a shortened look still shows this share of a fully faded exchange's lines
 STRONGEST = 1e6       # days: stability stops growing here
 
@@ -202,7 +204,7 @@ class Episodes(Speaks, Resolves):
         self.store, self.space, self.days, self.people = store, space, days, people
         self.words = Words.of(display_language)
         self.zone, self.meaning, self.clock = zone, meaning, clock
-        self._matrices: dict[tuple[str, str], _Matrix] = {}
+        self._matrices: OrderedDict[tuple[str, str], _Matrix] = OrderedDict()
         self._queries: OrderedDict[str, object] = OrderedDict()  # recent queries' vectors (a turn asks again)
 
     # ---- writing ---------------------------------------------------------------------------------
@@ -232,7 +234,7 @@ class Episodes(Speaks, Resolves):
         return episode
 
     def _insert(self, subject: str, row: dict) -> int:
-        terms = texts.terms(" ".join(f"{who} {said}" for who, said in row["lines"]))
+        terms = texts.terms(" ".join(said for _, said in row["lines"]))  # (not who: they are in every one)
         id = self.store.execute("insert into episodes (space, subject, at, conversation, lines, size, stability, "
                                 "recalled_at, recalls, terms) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                                 (self.space, subject, row["at"], row["conversation"], dumps(row["lines"]),
@@ -245,8 +247,9 @@ class Episodes(Speaks, Resolves):
                                "(?, ?, ?, ?)", (self.space, subject, term, id))
         return id
 
-    async def prepare(self, subject: str, *, limit: int = 20_000) -> int:
-        """Vectors for the person's exchanges that have none from this embedder yet, in the order they were said;
+    async def prepare(self, subject: str, *, limit: int = PREPARED) -> int:
+        """Vectors for the person's exchanges that have none from this embedder yet, in the order they were said, at
+        most `limit` of them (a long backlog, an embedder turned on late, is caught up a little at each exchange);
         each one, as it gets its vector, rehearses the earlier exchanges it is about. Returns how many were added
         (0 with no embedder, or while it is not answering: those exchanges are found by their words meanwhile)."""
         meaning = self.meaning
@@ -296,6 +299,8 @@ class Episodes(Speaks, Resolves):
             return
         for row in self.store.rows(f"select id, at, recalled_at, stability from episodes where id in "
                                    f"({', '.join('?' * len(ids))})", ids):
+            if row["recalled_at"] is not None and row["recalled_at"] >= now:
+                continue  # (a late vector's rehearsal, from before the one already counted)
             last = max(row["at"], row["recalled_at"] or 0.0)
             kept = math.exp(-max(0.0, now - last) / (max(row["stability"], 1e-6) * DAY))
             self.store.execute("update episodes set stability = ?, recalled_at = ?, recalls = recalls + 1 where id = ?",
@@ -373,13 +378,14 @@ class Episodes(Speaks, Resolves):
              found=None) -> list[Episode]:
         """What comes to mind for `query` (words only; `alook` adds meaning): the best matches within `budget`
         characters as `render` shows them, in the order they were said. The newest `skip` exchanges of
-        `conversation` are left out (the host still shows them). With the query's vector, an exchange must clear a
-        bar: as close to the query as the share `cut[0]` of the person's pairs when fresh, `cut[1]` when fully
-        faded, in between by its retention. One under its bar is left out however much budget is left, so a look
-        may be short, or empty (`cut=None`: no bar; with words alone, or fewer than SPREAD_PAIRS pairs, there is
-        none). With `shorten`, a faded exchange is shown in part: each line within SHOWN_LINE·(FLOOR + (1 − FLOOR)·R)
+        `conversation` are left out (the host still shows them). With the query's vector from the embedder, an
+        exchange must clear a bar: its cosine with the query at least the embedder's floor as the bundled set placed
+        it (the similarity under which a text says nothing about a query, `Meaning.set_floor`) plus `cut[0]` when
+        fresh, plus `cut[1]` when fully faded, in between by its retention. One under its bar is left out however much budget is left, so a look
+        may be short, or empty (`cut=None`: no bar; with words alone there is none). With `shorten`, a faded exchange is shown in part: each line within SHOWN_LINE·(FLOOR + (1 − FLOOR)·R)
         characters (its opening and its end; `read` shows it whole)."""
         subject, query = self.who(subject), self._query(query)
+        conversation = texts.clip(conversation, 200) if isinstance(conversation, str) else ""  # (as `keep` has it)
         left_out: set[int] = set()
         if skip > 0:
             left_out = {row["id"] for row in self.store.rows(
@@ -508,11 +514,9 @@ class Episodes(Speaks, Resolves):
                     close[id] = float(similarities[index])
                     place += 1
         lines = None
-        if cut is not None and close:
-            bins, pairs = self._spread(subject, self.meaning.name)
-            fresh, faded = (threshold(bins, pairs, share) for share in cut)
-            if fresh is not None:
-                lines = (fresh, faded)
+        if cut is not None and close and getattr(found, "tier", "") == "embeddings":  # (the floor is the embedder's)
+            floor = self.meaning.set_floor
+            lines = (floor + cut[0], floor + cut[1])
         if lines:
             now = self.clock()
             for row in rows:
@@ -529,9 +533,10 @@ class Episodes(Speaks, Resolves):
         is not asked twice."""
         if self.meaning is None or not query.strip():
             return None
-        if query in self._queries:
+        known = self._queries.get(query)
+        if known is not None and (known.tier == "embeddings" or not self.meaning.rest.up()):
             self._queries.move_to_end(query)
-            return self._queries[query]
+            return known
         try:
             found = await (asyncio.wait_for(self.meaning.query(query), wait) if wait else self.meaning.query(query))
         except asyncio.TimeoutError:
@@ -561,6 +566,9 @@ class Episodes(Speaks, Resolves):
             for row in self.store.rows(select + " order by v.episode_id", (self.space, subject, name)):
                 matrix.add(row["episode_id"], row["at"], unpack(row["vector"]))
             self._matrices[key] = matrix
+        self._matrices.move_to_end(key)
+        while len(self._matrices) > MATRICES:
+            self._matrices.popitem(last=False)
         return matrix
 
     def _spread(self, subject: str, name: str) -> tuple[list[int], int]:
@@ -601,14 +609,20 @@ class Episodes(Speaks, Resolves):
         return {"episodes": rows}
 
     def import_rows(self, rows) -> int:
-        """Add exported exchanges to this space, held to the rules of keeping (`clean`); returns how many."""
+        """Add exported exchanges to this space, held to the rules of keeping (`clean`), each one once: an exchange
+        already here (same person, time, conversation and words) is not added again. Returns how many were."""
         added = 0
         with self.store.transaction():
             for original in rows:
                 row = self.clean(original, self.days) if isinstance(original, dict) else None
                 if row is None:
                     continue
-                self._insert(self.who(row.pop("subject")), row)
+                subject = self.who(row.pop("subject"))
+                if self.store.row("select 1 from episodes where space = ? and subject = ? and at = ? and "
+                                  "conversation = ? and lines = ?", (self.space, subject, row["at"],
+                                                                     row["conversation"], dumps(row["lines"]))):
+                    continue
+                self._insert(subject, row)
                 added += 1
         self._matrices.clear()
         return added

@@ -61,6 +61,18 @@ class Meaning:
         return record["floor"] if record else FLOOR
 
     @property
+    def set_floor(self) -> float:
+        """The floor as the bundled set placed it, a message against a note, before the file's own notes moved it:
+        notes about the same people resemble each other, and a message does not resemble them more for that. What
+        a look's bar stands on (`episodes.py`)."""
+        fixed = getattr(self.embedder, "floor", None)
+        if fixed is not None:
+            return fixed
+        record = calibrate.read(self.store, self.name) if self.name else None
+        measured = record.get("set") if record else None
+        return measured["floor"] if isinstance(measured, dict) and "floor" in measured else self.floor
+
+    @property
     def name(self) -> str:
         return self.embedder.name if self.embedder is not None else ""
 

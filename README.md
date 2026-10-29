@@ -155,17 +155,17 @@ model cannot know which detail will be asked about later; the words themselves c
 Ranking is BM25 over the words fused with embedding similarity (with an embedder; words alone otherwise). Each
 exchange also fades on a forgetting curve, R = e^(−t/S), with a stability S of 30 days to start that grows each
 time it is rehearsed: when a search finds it, or when a later exchange is about the same thing. Fading decides
-what leaves the look, never the order: with an embedder, an exchange comes to mind only when the message is as
-close to it as 95% of the person's own pairs of exchanges are to each other while it is fresh, 99% once it has
-fully faded (`memory.said_cut`, `memory.said_cut_faded`). So small talk usually brings nothing (and costs nothing),
-what is recent or talked about again comes easily, and an old thing comes back on a strong cue, while a search
-finds it however faded it is. When nothing comes and the model can search, the look says only that it can.
-Measured on LoCoMo (704 questions): the look of 6,000 characters with the tools and the person check answered
-80.8%; the whole conversation in the prompt, 79.1%; fading the search as well lost 18 points. On LongMemEval-M
-(60 questions) the bar kept the answers (52 and 48 in two runs against 51 without it, within the noise; 50 with the memory aged
-half a year) and left
-two looks in three at chit-chat empty. Exchanges are never pruned (about 6 KB each with their index and vector);
-`erase` removes them with everything else.
+what leaves the look, never the order: with an embedder, an exchange comes to mind only when the message is
+close enough to it, its similarity at least the embedding model's measured floor plus 0.08 while it is fresh and
+plus 0.16 once it has fully faded (`memory.said_cut`, `memory.said_cut_faded`). So small talk usually brings nothing
+(and costs nothing), what is recent or talked about again comes easily, and an old thing comes back on a strong cue,
+while a search finds it however faded it is. When nothing comes and the model can search, the look says only that
+it can. Measured on LoCoMo (704 questions) through the library itself: the look of 6,000 characters with the tools
+and the person check answered 82.7% with no bar and 82.4% with it, the same, and the bar left about three looks in
+four at chit-chat empty (an earlier prototype: 80.8%, against 79.1% for the whole conversation in the prompt; fading
+the search as well lost 18 points). On LongMemEval-M (60 questions, histories of 1.2 million tokens) the look with
+the tools answered 51 with no bar and 49 with it, within the noise. Exchanges are never pruned (about 6 KB each with their index and
+vector); `erase` removes them with everything else.
 
 **Dates** are written the way people say them (*today*, *3 days ago*, *in 2 days*, *去年 09-17*, *明天*), so the
 model never has to do date arithmetic.

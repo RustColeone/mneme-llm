@@ -7,6 +7,7 @@ and is embedded and rehearsed as a student's would be (`Episodes.prepare`); then
 date, and DeepSeek Flash answers from what the library gives it.
 
     python -m bench.longmemeval extract --m longmemeval_m_cleaned.json --subset subset.json --out RUN
+    python -m bench.longmemeval extract --locomo locomo10.json --only conv-26,conv-30 --out RUN   (LoCoMo, the same way)
     python -m bench.longmemeval ingest --out RUN
     python -m bench.longmemeval answer --out RUN --arm agent [--budget 6000]
     python -m bench.longmemeval report --out RUN
@@ -90,19 +91,69 @@ def extract(source: Path, wanted: list[str], target: Path) -> int:
     return len(found)
 
 
+# LoCoMo's categories as LongMemEval's question types (the judge's prompt for each); 5, adversarial, is unanswerable
+CATEGORIES = {1: "multi-session", 2: "temporal-reasoning", 3: "multi-session", 4: "single-session-user"}
+NOT_SAID = "The conversations never say this: the question asks about something not said, or about the other person."
+
+
+def extract_locomo(source: Path, only: list[str], target: Path) -> int:
+    """LoCoMo's conversations as LongMemEval's questions: each conversation one history (`history`, kept once), the
+    first speaker as the user, each session on its own date; every question asked the day after the last session."""
+    count = 0
+    with target.open("w", encoding="utf-8") as out:
+        for raw in json.loads(source.read_text(encoding="utf-8")):
+            if only and raw["sample_id"] not in only:
+                continue
+            talk = raw["conversation"]
+            a, b = talk["speaker_a"], talk["speaker_b"]
+            numbers = sorted(int(key.split("_")[1]) for key in talk if key.count("_") == 1 and
+                             key.startswith("session_") and key.split("_")[1].isdigit())
+            dates, ids, sessions = [], [], []
+            for number in numbers:
+                when = datetime.strptime(talk[f"session_{number}_date_time"].strip(), "%I:%M %p on %d %B, %Y")
+                dates.append(when.strftime("%Y/%m/%d (%a) %H:%M"))
+                ids.append(f"s{number}")
+                sessions.append([{"role": "user" if turn["speaker"] == a else "assistant", "speaker": turn["speaker"],
+                                  "content": " ".join(str(turn.get("text") or "").split()) +
+                                  (f" [shares a photo: {turn['blip_caption']}]" if turn.get("blip_caption") else "")}
+                                 for turn in talk[f"session_{number}"]])
+            last = max(datetime.strptime(date, "%Y/%m/%d (%a) %H:%M") for date in dates)
+            asked = datetime.fromtimestamp(last.replace(tzinfo=UTC).timestamp() + 86400, UTC)
+            for index, qa in enumerate(raw["qa"]):
+                category = qa.get("category")
+                unanswerable = category == 5
+                evidence = {f"s{str(item).split(':')[0].lstrip('D')}" for item in qa.get("evidence", [])}
+                out.write(json.dumps({
+                    "question_id": f"{raw['sample_id']}-{index}" + ("_abs" if unanswerable else ""),
+                    "history": raw["sample_id"], "speakers": [a, b], "category": category,
+                    "question_type": CATEGORIES.get(category, "multi-session"), "question": qa["question"],
+                    "answer": NOT_SAID if unanswerable else str(qa.get("answer")),
+                    "question_date": asked.strftime("%Y/%m/%d (%a) %H:%M"),
+                    "answer_session_ids": sorted(evidence & set(ids)), "haystack_dates": dates,
+                    "haystack_session_ids": ids, "haystack_sessions": sessions}, ensure_ascii=False) + "\n")
+                count += 1
+    return count
+
+
+def history(item: dict) -> str:
+    """The name of the history a question is asked of (LoCoMo's questions share one per conversation)."""
+    return item.get("history") or item["question_id"]
+
+
 def questions(run: Path) -> list[dict]:
     return [json.loads(line) for line in (run / "questions.jsonl").read_text(encoding="utf-8").split("\n") if line]
 
 
 def exchanges(session: list[dict]) -> list[list[tuple[str, str]]]:
     """A session as exchanges: each run of the user's messages with the assistant's reply after it."""
-    found, current = [], []
+    found, current, roles = [], [], []  # (roles: whether each line of the current exchange is the user's)
     for turn in session:
-        who = "User" if turn.get("role") == "user" else "Assistant"
-        if who == "User" and current and current[-1][0] == "Assistant":
+        user = turn.get("role") == "user"
+        if user and current and not roles[-1]:
             found.append(current)
-            current = []
-        current.append((who, str(turn.get("content") or "")))
+            current, roles = [], []
+        current.append((turn.get("speaker") or ("User" if user else "Assistant"), str(turn.get("content") or "")))
+        roles.append(user)
     if current:
         found.append(current)
     return found
@@ -186,8 +237,8 @@ def companion(path: Path, question_id: str, cache: Cache, clock) -> Mneme:
 
 # ---- ingesting: every session, exchange by exchange, on its own date -----------------------------------------------
 async def ingest_one(run: Path, item: dict, cache: Cache) -> dict:
-    path = run / "memory" / f"{item['question_id']}.db"
-    done = run / "memory" / f"{item['question_id']}.done"
+    path = run / "memory" / f"{history(item)}.db"
+    done = run / "memory" / f"{history(item)}.done"
     if done.exists():
         return json.loads(done.read_text())
     path.unlink(missing_ok=True)
@@ -195,7 +246,7 @@ async def ingest_one(run: Path, item: dict, cache: Cache) -> dict:
     started = time.monotonic()
     sessions = sorted(zip(item["haystack_dates"], item["haystack_session_ids"], item["haystack_sessions"]),
                       key=lambda row: moment(row[0]))
-    memory = companion(path, item["question_id"], cache, lambda: now[0])
+    memory = companion(path, history(item), cache, lambda: now[0])
 
     def keep_all() -> int:
         count = 0
@@ -233,9 +284,10 @@ async def ingest(run: Path, models: Models, concurrency: int) -> None:
     async def one(item):
         async with limit:
             record = await ingest_one(run, item, cache)
-            print(f"  {item['question_id']}: {record}", flush=True)
+            print(f"  {history(item)}: {record}", flush=True)
             return record
-    records = await asyncio.gather(*(one(item) for item in questions(run)))
+    histories = {history(item): item for item in questions(run)}  # (each history once)
+    records = await asyncio.gather(*(one(item) for item in histories.values()))
     total = Counter()
     for record in records:
         total.update(record)
@@ -253,6 +305,11 @@ AGENT = SYSTEM + (" Everything said before is kept word for word, and you can lo
                   "things, and for each date you need.")
 ORACLE = ("You are a chat assistant, and it is now {today}. Below are earlier chats between you and the user, with "
           "their dates. Answer the user's question from them as you would in the chat; be brief.")
+LOCOMO = ("You remember the conversations between {a} and {b}, which went on over many sessions; it is now {today}. "
+          "Dates in brackets are when things were said: work out relative dates such as 'last week' from them. Answer "
+          "the question with a short phrase (a name, a date, a few words); if what you remember does not answer it, "
+          "say it was not mentioned.")
+LOCOMO_AGENT = LOCOMO + AGENT[len(SYSTEM):]
 TOOLS = [tool for tool in specs("openai") if tool["function"]["name"] in ("search", "read")]
 
 
@@ -298,8 +355,8 @@ def oracle_text(item: dict) -> str:
     for label, session_id, session in sorted(zip(item["haystack_dates"], item["haystack_session_ids"],
                                                  item["haystack_sessions"]), key=lambda row: moment(row[0])):
         if session_id in wanted:
-            lines = "\n".join(f"{'User' if turn.get('role') == 'user' else 'Assistant'}: {turn.get('content')}"
-                              for turn in session)
+            lines = "\n".join(f"{turn.get('speaker') or ('User' if turn.get('role') == 'user' else 'Assistant')}: "
+                              f"{turn.get('content')}" for turn in session)
             blocks.append(f"[{label}]\n{lines}")
     return "\n\n".join(blocks)
 
@@ -351,22 +408,24 @@ async def answer_one(run: Path, item: dict, arm: str, budget: int, models: Model
         # A search rehearses what it finds, in the file: each arm works on its own copy of the history as ingested.
         path = run / "work" / name / f"{item['question_id']}.db"
         path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(run / "memory" / f"{item['question_id']}.db", path)
+        shutil.copyfile(run / "memory" / f"{history(item)}.db", path)
         # `later`: the memory as faded as `later` days after the question (the model is told the question's date)
-        memory = companion(path, item["question_id"], cache, lambda: moment(date) + later * 86400)
+        memory = companion(path, history(item), cache, lambda: moment(date) + later * 86400)
+        a, b = item.get("speakers") or ("the user", "")
+        system, agentic = (LOCOMO, LOCOMO_AGENT) if item.get("speakers") else (SYSTEM, AGENT)
         try:
             found = await memory.episodes.alook(SUBJECT, item["question"], budget=budget, cut=cut,
                                                 shorten=shorten) \
                 if budget else []
-            opening = memory.episodes.render(found, user_name="the user", search=arm == "agent")
+            opening = memory.episodes.render(found, user_name=a, search=arm == "agent")
             record["opening_chars"] = len(opening)
             if arm == "look":
-                reply = await models.ask(SYSTEM.format(today=today(date)),
+                reply = await models.ask(system.format(today=today(date), a=a, b=b),
                                          (f"{opening}\n\n" if opening else "") + item["question"], step="answer")
                 did = Counter(calls=1)
             else:
-                reply, did = await agent(models, Toolbox(memory, SUBJECT), AGENT.format(today=today(date)), opening,
-                                         item["question"], steps=steps, final=final)
+                reply, did = await agent(models, Toolbox(memory, SUBJECT), agentic.format(today=today(date), a=a, b=b),
+                                         opening, item["question"], steps=steps, final=final)
         finally:
             memory.close()
             path.unlink(missing_ok=True)
@@ -425,6 +484,11 @@ async def main(arguments) -> int:
     run = Path(arguments.out)
     run.mkdir(parents=True, exist_ok=True)
     if arguments.command == "extract":
+        if arguments.locomo:
+            count = extract_locomo(Path(arguments.locomo), (arguments.only or "").split(",") if arguments.only else [],
+                                   run / "questions.jsonl")
+            print(f"{count} LoCoMo questions extracted")
+            return 0
         wanted = json.loads(Path(arguments.subset).read_text())
         count = extract(Path(arguments.m), wanted, run / "questions.jsonl")
         print(f"{count} of {len(wanted)} questions extracted")
@@ -471,6 +535,8 @@ def parse(argv=None):
     parser.add_argument("command", choices=("extract", "ingest", "answer", "report"))
     parser.add_argument("--out", required=True, help="the run's folder")
     parser.add_argument("--m", help="longmemeval_m_cleaned.json (extract)")
+    parser.add_argument("--locomo", help="locomo10.json (extract LoCoMo instead)")
+    parser.add_argument("--only", help="LoCoMo's conversations to extract, by sample id (conv-26,conv-30)")
     parser.add_argument("--subset", help="a JSON list of question ids (extract)")
     parser.add_argument("--arm", choices=ARMS, default="agent")
     parser.add_argument("--budget", type=int, default=6000, help="characters of the first look")
@@ -478,8 +544,8 @@ def parse(argv=None):
     parser.add_argument("--steps", type=int, default=6, help="the agent's calls, the last without tools")
     parser.add_argument("--final", action="store_true", help="tell the last call to answer now")
     parser.add_argument("--cut", default=f"{CUT},{CUT_FADED}",
-                        help="a first look's bar: a share of the person's pairs (0.95), or fresh and fully faded "
-                             "(the default, 0.95,0.99), or none")
+                        help="a first look's bar, above the embedder's floor: one margin (0.08), or fresh and fully "
+                             "faded (the default, 0.08,0.16), or none")
     parser.add_argument("--shorten", action="store_true", help="a first look shows a faded exchange in part")
     parser.add_argument("--later", type=float, default=0.0, help="days: memory fades as if asked this much later")
     parser.add_argument("--env", default=str(Path(__file__).resolve().parents[2] / ".env"))

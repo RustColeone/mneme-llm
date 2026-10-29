@@ -8,6 +8,7 @@ from unittest import mock
 
 from mneme_llm import Embeddings, Mneme, episodes as episodes_module
 from mneme_llm.episodes import Episodes, lines_of, threshold
+from mneme_llm.meaning import Found
 from mneme_llm.store import Store
 from mneme_llm.tools import Toolbox
 
@@ -174,22 +175,29 @@ class FadingTests(unittest.TestCase):
 
 
 class CutTests(unittest.TestCase):
-    def setUp(self):
+    def setUp(self):  # the test embedder's floor is 0.3; "a kitten" is 0.71 close to this, "hello" 0.04
         self.m, self.clock = companion(embed=embedder())
-        self.cat = self.m.episodes.keep("u", [("Leo", "my cat and the exam")])  # half about the cat: 0.71 close
+        self.cat = self.m.episodes.keep("u", [("Leo", "my cat and the exam")])
         asyncio.run(self.m.episodes.prepare("u"))
-        bins = [0] * episodes_module.BINS  # the person's pairs: 95 % under 0.5, 99 % under 0.9
-        bins[100], bins[150], bins[190] = 95, 4, 1
-        self.m.episodes._put_spread("u", "test:meanings", bins, 100)
 
     def look(self, query, *cut):
         return [e.id for e in asyncio.run(self.m.episodes.alook("u", query, **({"cut": cut[0]} if cut else {})))]
 
     def test_an_exchange_under_the_bar_is_left_out_with_budget_to_spare(self):
         self.assertEqual(self.look("hello", None), [self.cat.id])  # meaning ranks everything
-        self.assertEqual(self.look("hello", (0.95, 0.95)), [])
-        self.assertEqual(self.look("hello"), [])
-        self.assertEqual(self.look("a kitten", (0.95, 0.95)), [self.cat.id])
+        self.assertEqual(self.look("hello"), [])  # (the bar by default)
+        self.assertEqual(self.look("a kitten"), [self.cat.id])
+
+    def test_the_bar_rises_as_the_exchange_fades_and_a_search_still_finds_it(self):
+        self.assertEqual(self.look("a kitten", (0.1, 0.5)), [self.cat.id])  # bars 0.4 fresh, 0.8 faded
+        self.clock.now += 200 * DAY
+        self.assertEqual(self.look("a kitten", (0.1, 0.5)), [])
+        self.assertEqual(self.look("a kitten", (0.1, 0.1)), [self.cat.id])
+        found = asyncio.run(self.m.episodes.asearch("u", "a kitten"))
+        self.assertEqual([e.id for e in found], [self.cat.id])
+
+    def test_with_words_alone_there_is_no_bar(self):
+        self.assertEqual([e.id for e in self.m.episodes.look("u", "my exam")], [self.cat.id])
 
     def test_with_nothing_to_show_a_model_that_can_search_is_told_it_can(self):
         self.assertEqual(self.m.episodes.render([]), "")
@@ -198,24 +206,12 @@ class CutTests(unittest.TestCase):
         self.assertIn("Nothing said before came to mind", prompt)
         self.assertNotIn("Nothing said before", asyncio.run(self.m.aprompt("u", "hello", said=6000)))
 
-    def test_the_bar_is_a_setting_and_0_is_none(self):
-        m, _ = companion(embed=embedder())
-        self.assertEqual(m.said_cut, (0.95, 0.99))
-        none = Mneme(":memory:", "t", config={"memory": {"said_cut": 0}}, luna=False, micro=False, embed=False,
-                     meaning_micro=False, memory_language=None)
-        self.assertIsNone(none.said_cut)
-
-    def test_the_bar_rises_as_the_exchange_fades_and_a_search_still_finds_it(self):
-        self.assertEqual(self.look("a kitten"), [self.cat.id])  # (the bar by default)
-        self.clock.now += 200 * DAY
-        self.assertEqual(self.look("a kitten"), [])
-        self.assertEqual(self.look("a kitten", (0.95, 0.95)), [self.cat.id])
-        found = asyncio.run(self.m.episodes.asearch("u", "a kitten"))
-        self.assertEqual([e.id for e in found], [self.cat.id])
-
-    def test_with_too_few_pairs_there_is_no_bar(self):
-        self.m.episodes._put_spread("u", "test:meanings", [0] * episodes_module.BINS, 10)
-        self.assertEqual(self.look("hello", (0.95, 0.95)), [self.cat.id])
+    def test_the_bar_is_a_setting(self):
+        self.assertEqual(self.m.said_cut, (0.08, 0.16))
+        low = Mneme(":memory:", "t", config={"memory": {"said_cut": -1, "said_cut_faded": -1}}, luna=False,
+                    micro=False, embed=embedder(), meaning_micro=False, memory_language=None)
+        asyncio.run(low.episodes.akeep("u", [("Leo", "my cat and the exam")]))
+        self.assertEqual(len(asyncio.run(low.episodes.alook("u", "hello", cut=low.said_cut))), 1)
 
 
 class ShortenTests(unittest.TestCase):
@@ -359,6 +355,8 @@ class LifecycleTests(unittest.TestCase):
         copy = other.episodes.newest("u")[0]
         self.assertEqual((copy.conversation, copy.recalls, copy.stability), ("dm", 1, 45.0))
         self.assertEqual(len(other.episodes.search("u", "Mochi")), 1)
+        other.import_data(data)  # the same export again: nothing twice
+        self.assertEqual(other.episodes.count("u"), 1)
 
     def test_a_file_from_an_earlier_build_gains_the_tables(self):
         path = tempfile.mkdtemp() + "/old.db"
@@ -382,6 +380,71 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual({episode.lines[0][1] for episode in found}, {"my cat", "a kitten"})
         one.close()
         two.close()
+
+
+class EdgeTests(unittest.TestCase):
+    def test_a_quiet_spell_ends_a_turn_for_a_host_that_never_says(self):
+        m, _ = companion()
+        m.episodes.keep("u", [("Leo", "my cat Mochi")])
+        box = Toolbox(m, "u")
+        self.assertIn("Mochi", box.call("search", {"query": "Mochi"}))
+        self.assertNotIn("Mochi", box.call("search", {"query": "Mochi"}))  # (shown this turn)
+        with mock.patch("mneme_llm.tools.time.monotonic", return_value=box._last + Toolbox.QUIET + 1):
+            self.assertIn("Mochi", box.call("search", {"query": "Mochi"}))
+
+    def test_skip_finds_a_conversation_by_the_name_it_was_kept_under(self):
+        m, clock = companion()
+        for said in ("my cat Mochi", "Mochi sleeps", "Mochi again"):
+            clock.now += 60
+            m.episodes.keep("u", [("Leo", said)], conversation="general  chat " + "x" * 300)
+        found = m.episodes.look("u", "Mochi", skip=3, conversation="general  chat " + "x" * 300)
+        self.assertEqual(found, [])
+
+    def test_names_are_not_search_words(self):
+        m, _ = companion()
+        m.episodes.keep("u", [("Leo", "my cat Mochi"), ("Assistant", "what a cat")])
+        self.assertEqual(m.episodes.search("u", "Leo Assistant"), [])
+        self.assertEqual(len(m.episodes.search("u", "Mochi")), 1)
+
+    def test_a_rehearsal_from_before_the_last_one_counts_nothing(self):
+        m, clock = companion()
+        kept = m.episodes.keep("u", [("Leo", "my cat Mochi")])
+        clock.now += 60 * DAY
+        m.episodes.search("u", "Mochi")
+        after = m.episodes.get(kept.id)
+        m.episodes._rehearse([kept.id], clock.now - DAY)
+        self.assertEqual(m.episodes.get(kept.id), after)
+
+    def test_the_bar_is_for_the_embedders_own_vector(self):
+        m, _ = companion(embed=embedder())
+        cat = m.episodes.keep("u", [("Leo", "my cat and the exam")])
+        asyncio.run(m.episodes.prepare("u"))
+        hello = meaning_of("hello")
+        self.assertEqual(m.episodes.look("u", "hello", found=Found("embeddings", vector=hello, floor=0.3)), [])
+        self.assertEqual([e.id for e in m.episodes.look("u", "hello", found=Found("micro", vector=hello))],
+                         [cat.id])
+        m.episodes._queries["hello"] = Found("micro", vector=hello)  # (asked while the embedder was down)
+        self.assertEqual(asyncio.run(m.episodes._found("hello")).tier, "embeddings")
+
+    def test_the_bar_stands_on_the_sets_floor_not_the_one_the_files_notes_moved(self):
+        m, _ = companion(embed=Embeddings(lambda texts: [meaning_of(text) for text in texts], name="free"))
+        cat = asyncio.run(m.episodes.akeep("u", [("Leo", "my cat and the exam")]))
+        m.store.set_meta("floor:free", '{"version": 1, "floor": 0.75, "set": {"floor": 0.55}, "file": {}}')
+        self.assertEqual((m.meaning.floor, m.meaning.set_floor), (0.75, 0.55))
+        self.assertEqual([e.id for e in asyncio.run(m.episodes.alook("u", "a kitten", cut=(0.1, 0.1)))], [cat.id])
+        self.assertEqual(asyncio.run(m.episodes.alook("u", "a kitten", cut=(0.2, 0.2))), [])  # (0.71 under 0.75)
+
+    def test_few_people_vectors_stay_in_memory_and_a_backlog_is_caught_up_in_steps(self):
+        calls = []
+        m, _ = companion(embed=embedder(calls))
+        for index in range(300):
+            m.episodes.keep("u", [("Leo", f"topic{index}")])
+        self.assertEqual(asyncio.run(m.episodes.prepare("u")), episodes_module.PREPARED)
+        self.assertEqual(asyncio.run(m.episodes.prepare("u")), 300 - episodes_module.PREPARED)
+        with mock.patch.object(episodes_module, "MATRICES", 2):
+            for person in ("a", "b", "c"):
+                m.episodes._matrix(person, "test:meanings")
+            self.assertEqual(list(m.episodes._matrices), [("b", "test:meanings"), ("c", "test:meanings")])
 
 
 if __name__ == "__main__":

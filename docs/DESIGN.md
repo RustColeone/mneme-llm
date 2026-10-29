@@ -347,26 +347,35 @@ those that clear their bar (below), the best within the budget (`memory.said_bud
 the order they were said; the host's newest `skip` exchanges of its conversation are left out, as they
 are still on its screen. `search` is what the model looks for itself (the `search` tool): relevance alone, however
 faded, the best five it has not yet seen this turn, each rehearsed. `around` shows an exchange with its neighbours
-in its conversation (the `read` tool). Measured on LoCoMo with a first look of 6,000 characters, the two tools
-and the person check: 80.8% of all 704 questions (79.1% for the whole conversation in the prompt, a sixth of the
-text); fading the look: 79.8% (80.5% with searches rehearsing what they find), no difference; fading the search as
-well: 63.1%. An old thing asked about must stay findable however faded it is, so only the look fades.
+in its conversation (the `read` tool). Measured on LoCoMo (four conversations, 704 questions; DeepSeek Flash
+answering, LongMemEval's judge prompts) through the library itself (`bench/longmemeval.py --locomo`): a first look of
+6,000 characters and the two tools answered 82.7% (81.2% of the answerable ones). A prototype of this ranking in
+`bench/locomo.py` (each term counted as often as it occurs, fading as a weight, its own judge) gave 80.8%, against
+79.1% for the whole conversation in the prompt with six times the text, and lost 18 points when the search faded too.
+An old thing asked about must stay findable however faded it is, so only the look fades.
 
-**Fading is what leaves the look.** With the query's vector, an exchange comes to mind only when its cosine with the
-query reaches the similarity that 95% of the person's pairs of exchanges are under (`memory.said_cut`) when it is
-fresh, 99% (`memory.said_cut_faded`) when it has fully faded, and in between by R. The lines come from the same
-`episode_spread` histogram, so they suit any embedder and any person (on LongMemEval-M, cosine 0.45 sat at the 95th
-percentile in each of 60 histories: 94.1–95.9%). One under its bar is left out however much budget is left, so a look
-is often short and, on small talk, usually empty; with words alone, or fewer than 100 pairs, there is no bar. An
-earlier build weighed each score × (0.25 + 0.75 × R) instead: that changed only which exchanges filled the budget,
-never what it cost, and it never helped (LoCoMo −1 point, LongMemEval-M −3 of 60). No absolute line would do: the
-cosine of a question with the exchange that answers it ran 0.30–0.78, of chit-chat with its best match 0.33–0.50,
-of a new task with an old one like it 0.35–0.85. Measured on LongMemEval-M with the tools (60 questions, DeepSeek
-Flash): 52 and 48 right with the bar in two runs, 51 without (of the 8 questions the two runs disagreed on, 7 had
-the same prompt both times: about 4 of 60 is the noise); with the memory aged as if half a year had passed
-(`--later 180`), 50, with 18 looks empty and the searches bringing the rest back. Chit-chat's look fell from 6,359 characters to 843 (two
-in three empty), and to 175 half a year on. A memory question costs more with the bar, since the model searches more
-(about 23,000 input tokens against 21,000; 34,000 half a year on); an ordinary turn costs about 1,400 fewer.
+**Fading is what leaves the look.** With the query's vector from the embedder, an exchange comes to mind only when
+its cosine with the query reaches the embedder's floor (the similarity under which a text says nothing about a
+query, measured per model by `calibrate.py`: 0.33 for text-embedding-3-small at 256 dimensions) plus a margin: 0.08
+while it is fresh (`memory.said_cut`), 0.16 once it has fully faded (`memory.said_cut_faded`), in between by R. One
+under its bar is left out however much budget is left, so a look is often short and, on small talk, usually empty;
+with words alone there is no bar. A first build set the bar at a percentile of the person's own pairs of exchanges
+(95% fresh, 99% faded). On LongMemEval-M's long answers that sat near the same cosine, but on short chat two exchanges
+between the same friends resemble each other far more than a question resembles either (on LoCoMo the pairs' 95th
+percentile was 0.68–0.79, a question and the exchange that answers it typically 0.57), and it left 98% of looks
+empty. A build before that weighed each score × (0.25 + 0.75 × R): that changed only which exchanges filled the
+budget, never what it cost, and it never helped (LoCoMo −1 point, LongMemEval-M −3 of 60).
+
+| look | LoCoMo, 1,451 answerable: the answer in the look | LoCoMo, chit-chat: looks empty | LongMemEval-M, 56: the answer in the look | answered, with the tools |
+|---|---|---|---|---|
+| no bar | 86% | 0% | 39 | LoCoMo 82.7%; LongMemEval-M 51 of 60 |
+| the bar (+0.08, faded +0.16) | 81% (77% half a year on) | 72% (78%) | 36 (32) | LoCoMo 82.4%; LongMemEval-M 49 of 60 |
+| +0.12, faded +0.20 | 73% (66%) | 85% (94%) | 35 (27) | |
+
+The first three columns are every look, with no chat model; "half a year on" moves the clock 180 days past the
+question (`--later 180`). Paired, the bar and no bar answer alike (LoCoMo 25 against 27, p = 0.89; two runs of the
+same prompts on LongMemEval-M disagree on about 4 of 60). With the bar the model searches a little more on a memory
+question (LoCoMo 4.3 searches against 3.9, about 3% more input); an ordinary turn costs about 1,400 tokens less.
 
 `shorten=True` (off by default) shows a faded exchange in part instead: each line within 2,000 · (0.25 + 0.75 · R)
 characters. On the aged memory it answered as many (50); what it gains is room for more exchanges, and shorter lines
@@ -796,7 +805,7 @@ a search compares the query with every exchange of the person (about 10 ms per t
 
 ## 16. Tests
 
-`python3 -m unittest discover -s tests -t .` runs 286 tests in about forty seconds on a Raspberry Pi 5, with no network and no keys. CI
+`python3 -m unittest discover -s tests -t .` runs 293 tests in about forty seconds on a Raspberry Pi 5, with no network and no keys. CI
 runs them on Python 3.11–3.14 (Linux) and 3.13 on Windows and macOS; runs them again with the three removable tiers
 deleted (their own tests are then skipped, everything else must pass); runs the stress tests at five times their
 size (`MNEME_STRESS=heavy`); then builds the package, runs `twine check --strict` and installs the wheel.
@@ -925,9 +934,10 @@ look by fading never helped; the bar kept the answers wherever it was measured a
 - **The look's `skip` counts exchanges.** A host showing its newest messages passes how many exchanges they make up;
   one that cannot say leaves a few of them in the look twice.
 - **Rehearsal by meaning needs an embedder.** Without one, exchanges still fade, and are rehearsed only by search.
-- **The bar is measured on one embedder and one kind of history.** text-embedding-3-small at 256 dimensions, on
-  LongMemEval-M's histories of about a month (aged to half a year by moving the clock); a companion's own chats may
-  want another share (`memory.said_cut`). Without an embedder there is no bar, and the look fills its budget.
+- **The bar is measured on one embedder.** text-embedding-3-small at 256 dimensions (floor 0.33), on LoCoMo's chats
+  of a few months and LongMemEval-M's histories of a month (both aged to half a year by moving the clock); another
+  model may spread its similarities differently above its floor (`memory.said_cut`). Without an embedder there is no
+  bar, and the look fills its budget.
 - **No encryption at rest.**
 
 ## 19. Versions and compatibility

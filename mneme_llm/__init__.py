@@ -130,8 +130,8 @@ class Mneme:
         self.episodes = Episodes(self.store, space, days=own.get("memory.said_days"), zone=zone,
                                  display_language=words, meaning=self.meaning, people=self.people, clock=clock)
         self.said_budget = own.get("memory.said_budget")
-        fresh = own.get("memory.said_cut")  # (0: no bar; a faded exchange's bar never under a fresh one's)
-        self.said_cut = (fresh, max(fresh, own.get("memory.said_cut_faded"))) if fresh else None
+        fresh = own.get("memory.said_cut")  # (a faded exchange's bar is never under a fresh one's; −1: none)
+        self.said_cut = (fresh, max(fresh, own.get("memory.said_cut_faded")))
 
     @property
     def display_language(self) -> str:
