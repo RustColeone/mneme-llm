@@ -335,7 +335,8 @@ def judge_prompt(item: dict, response: str) -> str:
 
 
 async def answer_one(run: Path, item: dict, arm: str, budget: int, models: Models, cache: Cache, name: str, *,
-                     steps: int = 6, final: bool = False, fade: bool = True) -> dict:
+                     steps: int = 6, final: bool = False, fade: bool = True, cut=None, shorten: bool = False,
+                     later: float = 0.0) -> dict:
     date = item["question_date"]
     record = {"question_id": item["question_id"], "type": item["question_type"],
               "abstain": item["question_id"].endswith("_abs"), "question": item["question"],
@@ -349,9 +350,12 @@ async def answer_one(run: Path, item: dict, arm: str, budget: int, models: Model
         path = run / "work" / name / f"{item['question_id']}.db"
         path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(run / "memory" / f"{item['question_id']}.db", path)
-        memory = companion(path, item["question_id"], cache, lambda: moment(date))
+        # `later`: the memory as faded as `later` days after the question (the model is told the question's date)
+        memory = companion(path, item["question_id"], cache, lambda: moment(date) + later * 86400)
         try:
-            found = await memory.episodes.alook(SUBJECT, item["question"], budget=budget, fade=fade) if budget else []
+            found = await memory.episodes.alook(SUBJECT, item["question"], budget=budget, fade=fade, cut=cut,
+                                                shorten=shorten) \
+                if budget else []
             opening = memory.episodes.render(found, user_name="the user", search=arm == "agent")
             record["opening_chars"] = len(opening)
             if arm == "look":
@@ -370,9 +374,11 @@ async def answer_one(run: Path, item: dict, arm: str, budget: int, models: Model
 
 
 async def answer(run: Path, arm: str, budget: int, models: Models, concurrency: int, *, steps: int = 6,
-                 final: bool = False, fade: bool = True) -> Path:
+                 final: bool = False, fade: bool = True, cut=None, shorten: bool = False, later: float = 0.0) -> Path:
     name = arm if arm == "oracle" else f"{arm}-{budget}" + (f"-s{steps}" if steps != 6 else "") + \
-        ("-final" if final else "") + ("-nofade" if not fade else "")
+        ("-final" if final else "") + ("-nofade" if not fade else "") + \
+        (f"-cut{round(cut[0] * 100)}" + (f"-{round(cut[1] * 100)}" if cut[1] != cut[0] else "") if cut else "") + \
+        ("-shorten" if shorten else "") + (f"-later{later:g}" if later else "")
     path = run / "answers" / f"{name}.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
     done = {json.loads(line)["question_id"] for line in path.read_text(encoding="utf-8").split("\n") if line} \
@@ -384,7 +390,7 @@ async def answer(run: Path, arm: str, budget: int, models: Models, concurrency: 
     async def one(item):
         async with limit:
             record = await answer_one(run, item, arm, budget, models, cache, name, steps=steps, final=final,
-                                      fade=fade)
+                                      fade=fade, cut=cut, shorten=shorten, later=later)
             async with lock:
                 with path.open("a", encoding="utf-8") as out:
                     out.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -433,7 +439,8 @@ async def main(arguments) -> int:
                 await ingest(run, models, arguments.concurrency)
             else:
                 await answer(run, arguments.arm, arguments.budget, models, arguments.concurrency,
-                             steps=arguments.steps, final=arguments.final, fade=not arguments.no_fade)
+                             steps=arguments.steps, final=arguments.final, fade=not arguments.no_fade,
+                             cut=cut_of(arguments.cut), shorten=arguments.shorten, later=arguments.later)
         except OutOfBalance as error:
             print(f"stopped: {error}", flush=True)
         after = await models.balance()
@@ -449,6 +456,13 @@ async def main(arguments) -> int:
     return 0
 
 
+def cut_of(text: str | None):
+    if not text:
+        return None
+    shares = [float(part) for part in text.split(",")]
+    return (shares[0], shares[-1])
+
+
 def parse(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("command", choices=("extract", "ingest", "answer", "report"))
@@ -461,6 +475,10 @@ def parse(argv=None):
     parser.add_argument("--steps", type=int, default=6, help="the agent's calls, the last without tools")
     parser.add_argument("--final", action="store_true", help="tell the last call to answer now")
     parser.add_argument("--no-fade", action="store_true", help="a first look that does not fade")
+    parser.add_argument("--cut", help="a first look's bar: a share of the person's pairs (0.95), or fresh and fully "
+                                      "faded (0.95,0.99)")
+    parser.add_argument("--shorten", action="store_true", help="a first look shows a faded exchange in part")
+    parser.add_argument("--later", type=float, default=0.0, help="days: memory fades as if asked this much later")
     parser.add_argument("--env", default=str(Path(__file__).resolve().parents[2] / ".env"))
     parser.add_argument("--floor", type=float, default=25.0, help="stop under this DeepSeek balance (CNY)")
     return parser.parse_args(argv)

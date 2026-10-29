@@ -27,7 +27,7 @@ import json
 import math
 import time
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import tzinfo
 from typing import Callable, Iterable
 
@@ -56,6 +56,8 @@ SHOWN_LINE = 2000     # characters of one line a look or a search shows (`read` 
 RRF = 61              # reciprocal rank fusion: a ranking's place p counts 1 / (RRF + p)
 BATCH = 64            # exchanges embedded per request
 SCANNED = 200         # the best-ranked exchanges a look reads to fill its budget
+CUT = 0.95            # a look's bar: an exchange as close to the query as this share of the person's pairs ...
+CUT_FADED = 0.99      # ... and, fully faded, this share (in between by its retention); a search has no bar
 STRONGEST = 1e6       # days: stability stops growing here
 
 
@@ -366,19 +368,27 @@ class Episodes(Speaks, Resolves):
         return math.exp(-max(0.0, now - last) / (max(episode.stability, 1e-6) * DAY))
 
     def look(self, subject: str, query: str, *, budget: int = 6000, conversation: str = "", skip: int = 0,
-             fade: bool = True, found=None) -> list[Episode]:
+             fade: bool = True, cut: tuple[float, float] | None = None, shorten: bool = False,
+             found=None) -> list[Episode]:
         """What comes to mind for `query` (words only; `alook` adds meaning): the best matches, a faded one counting
         less (unless `fade` is False), within `budget` characters as `render` shows them, in the order they were
-        said. The newest `skip` exchanges of `conversation` are left out (the host still shows them)."""
+        said. The newest `skip` exchanges of `conversation` are left out (the host still shows them). With `cut`
+        (shares of the person's pairs, fresh and fully faded) and the query's vector, an exchange less close to it
+        than its bar is left out, however much budget is left: a look may be short, or empty. With `shorten`, a
+        faded exchange is shown in part: each line within SHOWN_LINE·(FLOOR + (1 − FLOOR)·R) characters (its opening
+        and its end; `read` shows it whole)."""
         subject, query = self.who(subject), self._query(query)
         left_out: set[int] = set()
         if skip > 0:
             left_out = {row["id"] for row in self.store.rows(
                 "select id from episodes where space = ? and subject = ? and conversation = ? order by at desc, id "
                 "desc limit ?", (self.space, subject, conversation, int(skip)))}
-        ranked = [id for id in self._ranked(subject, query, found, fade=fade) if id not in left_out][:SCANNED]
-        chosen, used = [], 0
+        ranked = [id for id in self._ranked(subject, query, found, fade=fade, cut=cut) if id not in left_out][:SCANNED]
+        chosen, used, now = [], 0, self.clock()
         for episode in self._get_many(ranked):
+            if shorten:
+                limit = int(SHOWN_LINE * (FLOOR + (1 - FLOOR) * self.retention(episode, now)))
+                episode = replace(episode, lines=tuple((who, fit(said, limit)) for who, said in episode.lines))
             size = len(self.shown(episode)) + 2
             if used + size <= budget:
                 chosen.append(episode)
@@ -449,10 +459,11 @@ class Episodes(Speaks, Resolves):
         return "\n".join(lines)
 
     # ---- ranking ---------------------------------------------------------------------------------
-    def _ranked(self, subject: str, query: str, found, *, fade: bool) -> list[int]:
+    def _ranked(self, subject: str, query: str, found, *, fade: bool, cut: tuple[float, float] | None = None
+                ) -> list[int]:
         """The person's exchanges for `query`, best first: BM25 over the search terms (each term once per exchange)
         and closeness to the query's vector, fused by reciprocal rank; with `fade`, each score times
-        FLOOR + (1 − FLOOR)·R."""
+        FLOOR + (1 − FLOOR)·R. With `cut` (see `look`), those under their bar are left out."""
         rows = self.store.rows("select id, at, recalled_at, stability, size from episodes where space = ? and "
                                "subject = ?", (self.space, subject))
         if not rows:
@@ -483,21 +494,34 @@ class Episodes(Speaks, Resolves):
         for place, id in enumerate(sorted(bm25, key=lambda id: (-bm25[id], -id))):
             fused[id] = 1 / (RRF + place)
         vector = getattr(found, "vector", None)
+        close: dict[int, float] = {}
         if vector is not None and self.meaning is not None and self.meaning.name:
             matrix = self._matrix(subject, self.meaning.name)
+            similarities = matrix.similarities(vector)
             place = 0
-            for index in matrix.order(matrix.similarities(vector)):
+            for index in matrix.order(similarities):
                 id = matrix.ids[index]
                 if id in sizes:  # (still this person's)
                     fused[id] = fused.get(id, 0.0) + 1 / (RRF + place)
+                    close[id] = float(similarities[index])
                     place += 1
-        if fade:
+        lines = None
+        if cut is not None and close:
+            bins, pairs = self._spread(subject, self.meaning.name)
+            fresh, faded = (threshold(bins, pairs, share) for share in cut)
+            if fresh is not None:
+                lines = (fresh, faded)
+        if fade or lines:
             now = self.clock()
             for row in rows:
-                if row["id"] in fused:
+                id = row["id"]
+                if id in fused:
                     last = max(row["at"], row["recalled_at"] or 0.0)
                     kept = math.exp(-max(0.0, now - last) / (max(row["stability"], 1e-6) * DAY))
-                    fused[row["id"]] *= FLOOR + (1 - FLOOR) * kept
+                    if lines and id in close and close[id] < lines[0] + (1 - kept) * (lines[1] - lines[0]):
+                        del fused[id]  # (one with no vector yet is not judged)
+                    elif fade:
+                        fused[id] *= FLOOR + (1 - FLOOR) * kept
         return sorted(fused, key=lambda id: (-fused[id], -id))
 
     async def _found(self, query: str, *, wait: float | None = None):

@@ -173,6 +173,50 @@ class FadingTests(unittest.TestCase):
         self.assertAlmostEqual(threshold(bins, 100), -1 + 2 * 190 / episodes_module.BINS)
 
 
+class CutTests(unittest.TestCase):
+    def setUp(self):
+        self.m, self.clock = companion(embed=embedder())
+        self.cat = self.m.episodes.keep("u", [("Leo", "my cat and the exam")])  # half about the cat: 0.71 close
+        asyncio.run(self.m.episodes.prepare("u"))
+        bins = [0] * episodes_module.BINS  # the person's pairs: 95 % under 0.5, 99 % under 0.9
+        bins[100], bins[150], bins[190] = 95, 4, 1
+        self.m.episodes._put_spread("u", "test:meanings", bins, 100)
+
+    def look(self, query, cut):
+        return [e.id for e in asyncio.run(self.m.episodes.alook("u", query, fade=False, cut=cut))]
+
+    def test_an_exchange_under_the_bar_is_left_out_with_budget_to_spare(self):
+        self.assertEqual(self.look("hello", None), [self.cat.id])  # meaning ranks everything
+        self.assertEqual(self.look("hello", (0.95, 0.95)), [])
+        self.assertEqual(self.look("a kitten", (0.95, 0.95)), [self.cat.id])
+
+    def test_the_bar_rises_as_the_exchange_fades_and_a_search_still_finds_it(self):
+        self.assertEqual(self.look("a kitten", (0.95, 0.99)), [self.cat.id])
+        self.clock.now += 200 * DAY
+        self.assertEqual(self.look("a kitten", (0.95, 0.99)), [])
+        self.assertEqual(self.look("a kitten", (0.95, 0.95)), [self.cat.id])
+        found = asyncio.run(self.m.episodes.asearch("u", "a kitten"))
+        self.assertEqual([e.id for e in found], [self.cat.id])
+
+    def test_with_too_few_pairs_there_is_no_bar(self):
+        self.m.episodes._put_spread("u", "test:meanings", [0] * episodes_module.BINS, 10)
+        self.assertEqual(self.look("hello", (0.95, 0.95)), [self.cat.id])
+
+
+class ShortenTests(unittest.TestCase):
+    def test_a_faded_exchange_is_shown_in_part_and_read_whole(self):
+        m, clock = companion()
+        long = "Anna " + "x" * 3000 + " Berlin"
+        kept = m.episodes.keep("u", [("Leo", long)])
+        fresh = m.episodes.look("u", "Anna Berlin", fade=False, shorten=True)
+        self.assertEqual(len(fresh[0].lines[0][1]), episodes_module.SHOWN_LINE)
+        clock.now += 400 * DAY
+        faded = m.episodes.look("u", "Anna Berlin", fade=False, shorten=True)[0].lines[0][1]
+        self.assertEqual(len(faded), int(episodes_module.SHOWN_LINE * episodes_module.FLOOR))
+        self.assertTrue(faded.startswith("Anna") and faded.endswith("Berlin"))
+        self.assertEqual(m.episodes.get(kept.id).lines[0][1], long)  # (only the look's copy is shorter)
+
+
 class MeaningTests(unittest.TestCase):
     def test_meaning_finds_an_exchange_with_no_word_in_common(self):
         m, _ = companion(embed=embedder())
