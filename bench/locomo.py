@@ -15,6 +15,8 @@ Arms:
               retriever
   both        notes and pieces together, through the common retriever
   full        the whole conversation in the prompt (the reference)
+  agent       the model searches the conversation itself (`search`, `read`: exchanges, up to six calls), after a first
+              look of `--budget` characters (0: none)
 
 `--unit exchange` stores the conversation as exchanges (each run of one side's messages with the other's reply, the
 unit `aobserve` is given) in place of pieces; `--neighbors N` brings the N items on each side of every one chosen;
@@ -59,7 +61,7 @@ DEEPSEEK = "https://api.deepseek.com"
 EMBEDDINGS = "https://api.openai.com/v1/embeddings"
 UTC = timezone.utc
 CATEGORIES = {1: "multi-hop", 2: "temporal", 3: "open-domain", 4: "single-hop", 5: "adversarial"}
-ARMS = ("production", "notes", "verbatim", "both", "full")
+ARMS = ("production", "notes", "verbatim", "both", "full", "agent")
 QUOTA = 8  # the students' automatic notes a person a day (mneme-llm's `memory.daily_quota`)
 
 
@@ -193,9 +195,15 @@ class Models:
         return left
 
     async def ask(self, system: str, user: str, *, step: str, max_tokens: int = 2500) -> str:
-        body = {"model": self.model, "messages": [{"role": "system", "content": system},
-                                                  {"role": "user", "content": user}],
-                "max_tokens": max_tokens, "reasoning_effort": self.effort}
+        message = await self.chat([{"role": "system", "content": system}, {"role": "user", "content": user}],
+                                  step=step, max_tokens=max_tokens)
+        return message.get("content") or ""
+
+    async def chat(self, messages: list[dict], *, step: str, max_tokens: int = 2500, tools: list | None = None) -> dict:
+        """One call with the whole conversation so far; the assistant's message back (its tool calls, if any)."""
+        body = {"model": self.model, "messages": messages, "max_tokens": max_tokens, "reasoning_effort": self.effort}
+        if tools:
+            body.update(tools=tools, tool_choice="auto")  # (a thinking model refuses a forced choice)
         headers = {"Authorization": f"Bearer {self.secrets['DEEPSEEK_API_KEY']}"}
         for attempt in range(6):
             try:
@@ -214,14 +222,14 @@ class Models:
                 self.calls += 1
                 if self.calls % 500 == 0:
                     await self.check()
-                return data["choices"][0]["message"].get("content") or ""
+                return data["choices"][0]["message"]
             except OutOfBalance:
                 raise
             except (aiohttp.ClientError, asyncio.TimeoutError, RuntimeError, KeyError, ValueError):
                 if attempt == 5:
                     raise
                 await asyncio.sleep(2 ** attempt)
-        return ""
+        return {}
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         headers = {"Authorization": f"Bearer {self.secrets['OPENAI_API_KEY']}"}
@@ -480,6 +488,73 @@ JUDGE_NONE = ("You grade an answer to a question about a conversation. The conve
               "WRONG if it gives an answer. Reply with one word: CORRECT or WRONG.")
 
 
+AGENT = ("You remember the conversations between {a} and {b}, which went on over many sessions; it is now {today}. "
+         "Everything said before is kept word for word, and you can look it up: `search` finds the exchanges that "
+         "match what you ask (each with its id and the date it was said), and `read` shows an exchange with the ones "
+         "around it. Search as often as you need: with other words (names, places, things, feelings) when the first "
+         "results don't answer, once per part of a question about several things, and for each date you need. Work "
+         "out relative dates such as 'last week' from the date of the exchange that says them. When you know, answer "
+         "with a short phrase (a name, a date, a few words). If what was said does not answer it, say: Not mentioned.")
+# Checked before answering: what was found is about the person and the thing asked (a question may name the other
+# person, or something that never happened).
+GUARD = (" Before you answer, check that what you found is about the same person and the same thing the question asks: "
+         "a question may name the other person, or something that never happened. If it does not match, say: Not "
+         "mentioned.")
+TOOLS = [
+    {"type": "function", "function": {
+        "name": "search", "description": "Search everything said before. Returns the best matching exchanges you have "
+                                         "not seen yet, each with its id and date.",
+        "parameters": {"type": "object", "properties": {"query": {"type": "string", "description": "what to look for"}},
+                       "required": ["query"]}}},
+    {"type": "function", "function": {
+        "name": "read", "description": "An exchange with the one before and the one after it.",
+        "parameters": {"type": "object", "properties": {"id": {"type": "integer"}}, "required": ["id"]}}},
+]
+
+
+async def agent_answer(models: Models, vectors: "Vectors", index: "Index", system: str, opening: str, question: str,
+                       step: str, steps: int = 6, per_search: int = 5) -> tuple[str, dict]:
+    """The question answered by a model that searches the conversation itself: up to `steps` calls, the last one
+    without tools; what it did, for the report."""
+    messages = [{"role": "system", "content": system},
+                {"role": "user", "content": (f"{opening}\n\n" if opening else "") + f"Question: {question}"}]
+    seen: set[int] = set()
+    did = {"searches": 0, "reads": 0, "calls": 0, "shown_chars": 0}
+    for turn in range(steps):
+        last = turn == steps - 1
+        reply = await models.chat(messages, step=step, tools=None if last else TOOLS)
+        did["calls"] += 1
+        calls = reply.get("tool_calls") or []
+        if not calls or last:
+            return reply.get("content") or "", did
+        kept = {"role": "assistant", "content": reply.get("content") or "", "tool_calls": calls}
+        if reply.get("reasoning_content"):  # (DeepSeek wants its thinking back while it uses tools)
+            kept["reasoning_content"] = reply["reasoning_content"]
+        messages.append(kept)
+        for call in calls:
+            try:
+                arguments = json.loads(call["function"].get("arguments") or "{}")
+            except ValueError:
+                arguments = {}
+            if call["function"]["name"] == "search":
+                did["searches"] += 1
+                query = str(arguments.get("query") or question)
+                vector = (await vectors.of([query]))[0]
+                fresh = [place for place in index.rank(query, vector) if place not in seen][:per_search]
+                seen.update(fresh)
+                found = "\n\n".join(f"#{place} {index.items[place].text}" for place in sorted(fresh)) or "Nothing new."
+            elif call["function"]["name"] == "read":
+                did["reads"] += 1
+                place = int(arguments.get("id", -1)) if str(arguments.get("id", "")).lstrip("-").isdigit() else -1
+                found = "\n\n".join(f"#{near} {index.items[near].text}" for near in (place - 1, place, place + 1)
+                                     if 0 <= near < len(index.items)) or "No such exchange."
+            else:
+                found = "No such tool."
+            did["shown_chars"] += len(found)
+            messages.append({"role": "tool", "tool_call_id": call["id"], "content": found})
+    return "", did
+
+
 def normal(text: str) -> list[str]:
     text = str(text).lower().replace(",", "")
     text = "".join(char for char in text if char not in set(string.punctuation))
@@ -509,7 +584,7 @@ async def answer(conversations: list[Conversation], out: Path, arm: str, budget:
         for line in path.read_text(encoding="utf-8").splitlines():
             row = json.loads(line)
             done.add((row["conversation"], row["index"]))
-    vectors = Vectors(out, models) if arm in ("notes", "verbatim", "both") else None
+    vectors = Vectors(out, models) if arm in ("notes", "verbatim", "both", "agent") else None
     lock = asyncio.Lock()
     for conversation in conversations:
         todo = [(index, qa) for index, qa in enumerate(conversation.qa) if (conversation.id, index) not in done]
@@ -521,7 +596,7 @@ async def answer(conversations: list[Conversation], out: Path, arm: str, budget:
             recent, since = latest(conversation, window) if window else ("", float("inf"))
             items = ((notes_of(out, conversation) if arm in ("notes", "both") else []) +
                      ((pieces(conversation) if unit == "piece" else turns_of(conversation))
-                      if arm in ("verbatim", "both") else []))
+                      if arm in ("verbatim", "both", "agent") else []))
             items = [item for item in items if item.at < since]  # what the window shows is not looked up again
             index_of = Index(items, await vectors.of([item.text for item in items]))
             asked = await vectors.of([qa["question"] for _, qa in todo])
@@ -529,12 +604,19 @@ async def answer(conversations: list[Conversation], out: Path, arm: str, budget:
             memories = [(person, open_memory(production_copy(out, conversation, person), conversation, companion,
                                              lambda: conversation.end))
                         for person, companion in ((conversation.a, conversation.b), (conversation.b, conversation.a))]
-        system = (CITE if prompt == "cite" else ANSWER).format(a=conversation.a, b=conversation.b,
-                                                               today=day(conversation.end))
+        system = (AGENT if arm == "agent" else CITE if prompt == "cite" else ANSWER).format(
+            a=conversation.a, b=conversation.b, today=day(conversation.end)) + (GUARD if prompt == "guard" else "")
 
         async def one(place: int, index: int, qa: dict) -> None:
             question = qa["question"]
-            if arm == "full":
+            did = None
+            if arm == "agent":  # a first look of `budget` characters (0: none), then its own searches
+                opening = "\n\n".join(item.text for item in index_of.take(question, asked[place], budget)) if budget else ""
+                reply, did = await agent_answer(models, vectors, index_of, system,
+                                                f"What your memory brings up first:\n{opening}" if opening else "",
+                                                question, f"answer:{name}")
+                memory = opening
+            elif arm == "full":
                 memory = whole(conversation)
             elif arm == "production":
                 memory = "\n\n".join(block for person, mind in memories
@@ -546,7 +628,9 @@ async def answer(conversations: list[Conversation], out: Path, arm: str, budget:
                 if window:
                     memory = (memory + "\n\n" if memory else "") + "The latest messages, word for word:\n" + recent
             # The whole conversation first, so every question about it reuses DeepSeek's cache of that prefix.
-            if arm == "full":
+            if arm == "agent":
+                pass
+            elif arm == "full":
                 reply = await models.ask(system + "\n\n" + memory, f"Question: {question}", step=f"answer:{name}")
             else:
                 reply = await models.ask(system, f"{memory or '(nothing)'}\n\nQuestion: {question}",
@@ -562,7 +646,8 @@ async def answer(conversations: list[Conversation], out: Path, arm: str, budget:
             label = re.search(r"\b(CORRECT|WRONG)\b", graded.upper())
             row = {"conversation": conversation.id, "index": index, "category": category, "question": question,
                    "gold": gold, "answer": reply, "correct": bool(label and label.group(1) == "CORRECT"),
-                   "f1": None if category == 5 else round(f1(reply, gold), 4), "memory_chars": len(memory)}
+                   "f1": None if category == 5 else round(f1(reply, gold), 4),
+                   "memory_chars": len(memory) + (did or {}).get("shown_chars", 0), **({"did": did} if did else {})}
             async with lock:
                 with path.open("a", encoding="utf-8") as file:
                     file.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -654,8 +739,9 @@ def parse(argv=None):
                         help="what the conversation is stored as: 512-character pieces, or exchanges")
     parser.add_argument("--neighbors", type=int, default=0, help="items next to each one chosen that come with it")
     parser.add_argument("--search", choices=("hybrid", "bm25", "vector"), default="hybrid")
-    parser.add_argument("--prompt", choices=("plain", "cite"), default="plain",
-                        help="cite: the answer first copies the lines it rests on, or says none")
+    parser.add_argument("--prompt", choices=("plain", "cite", "guard"), default="plain",
+                        help="cite: the answer first copies the lines it rests on, or says none; guard: it checks the "
+                             "person and the thing asked before answering")
     parser.add_argument("--window", type=int, default=0,
                         help="characters of the newest turns shown word for word besides what is looked up")
     parser.add_argument("--env", default="../.env", help="the .env holding DEEPSEEK_API_KEY and OPENAI_API_KEY")
