@@ -52,7 +52,7 @@ BINS = 200            # the spread's histogram: similarity from −1 to 1 in ste
 MAX_LINE = 8000       # characters of one line kept (its opening and its end, when longer)
 MAX_LINES = 40        # lines of one exchange
 MAX_NAME = 80         # characters of who said a line
-SHOWN_LINE = 2000     # characters of one line shown to a model
+SHOWN_LINE = 2000     # characters of one line a look or a search shows (`read` shows it whole)
 RRF = 61              # reciprocal rank fusion: a ranking's place p counts 1 / (RRF + p)
 BATCH = 64            # exchanges embedded per request
 SCANNED = 200         # the best-ranked exchanges a look reads to fill its budget
@@ -366,17 +366,17 @@ class Episodes(Speaks, Resolves):
         return math.exp(-max(0.0, now - last) / (max(episode.stability, 1e-6) * DAY))
 
     def look(self, subject: str, query: str, *, budget: int = 6000, conversation: str = "", skip: int = 0,
-             found=None) -> list[Episode]:
+             fade: bool = True, found=None) -> list[Episode]:
         """What comes to mind for `query` (words only; `alook` adds meaning): the best matches, a faded one counting
-        less, within `budget` characters as `render` shows them, in the order they were said. The newest `skip`
-        exchanges of `conversation` are left out (the host still shows them)."""
+        less (unless `fade` is False), within `budget` characters as `render` shows them, in the order they were
+        said. The newest `skip` exchanges of `conversation` are left out (the host still shows them)."""
         subject, query = self.who(subject), self._query(query)
         left_out: set[int] = set()
         if skip > 0:
             left_out = {row["id"] for row in self.store.rows(
                 "select id from episodes where space = ? and subject = ? and conversation = ? order by at desc, id "
                 "desc limit ?", (self.space, subject, conversation, int(skip)))}
-        ranked = [id for id in self._ranked(subject, query, found, fade=True) if id not in left_out][:SCANNED]
+        ranked = [id for id in self._ranked(subject, query, found, fade=fade) if id not in left_out][:SCANNED]
         chosen, used = [], 0
         for episode in self._get_many(ranked):
             size = len(self.shown(episode)) + 2
@@ -437,13 +437,14 @@ class Episodes(Speaks, Resolves):
                 say(self.words, "said.unsure_search" if search else "said.unsure")
         return "\n\n".join([header, *(self.shown(episode) for episode in episodes)])
 
-    def shown(self, episode: Episode) -> str:
-        """One exchange as a model reads it: `#id [date time]`, then its lines; a line's own line breaks are indented,
-        so nothing said can pose as another exchange."""
+    def shown(self, episode: Episode, *, whole: bool = False) -> str:
+        """One exchange as a model reads it: `#id [date time]`, then its lines, each up to SHOWN_LINE characters (its
+        opening and its end) unless `whole`; a line's own line breaks are indented, so nothing said can pose as
+        another exchange."""
         stamp = dates.local(episode.at, self.zone).strftime("%Y-%m-%d %H:%M")
         lines = [f"#{episode.id} [{stamp}]"]
         for who, said in episode.lines:
-            said = fit(said, SHOWN_LINE).replace("\n", "\n  ")
+            said = (said if whole else fit(said, SHOWN_LINE)).replace("\n", "\n  ")
             lines.append(f"{who}: {said}" if who else f"  {said}")
         return "\n".join(lines)
 

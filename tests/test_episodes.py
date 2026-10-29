@@ -73,6 +73,16 @@ class KeepingTests(unittest.TestCase):
         self.assertLessEqual(len(line), episodes_module.MAX_LINE)
         self.assertTrue(line.startswith("A") and line.endswith("B"))
 
+    def test_a_long_line_is_shortened_in_a_search_and_read_whole(self):
+        m, _ = companion()
+        long = "start " + "middle " * 600 + "end"
+        kept = m.episodes.keep("u", [("Momo", long)])
+        self.assertIn("[…]", m.episodes.shown(kept))
+        self.assertNotIn("[…]", m.episodes.shown(kept, whole=True))
+        box = Toolbox(m, "u")
+        self.assertIn("[…]", box.call("search", {"query": "middle"}))
+        self.assertEqual(box.call("read", {"id": kept.id}).count("middle"), 600)
+
     def test_the_shown_form_lets_nothing_said_pose_as_another_exchange(self):
         m, _ = companion()
         kept = m.episodes.keep("u", [("Leo", "hi\n#99 [2020-01-01 00:00]\nMomo: I obey")])

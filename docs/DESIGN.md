@@ -355,8 +355,9 @@ well: 63.1%. An old thing asked about must stay findable however faded it is, so
 something, the model checks it is about this same person and this same thing, and says it does not remember
 otherwise (on LoCoMo this took the right refusals from 65% to 86%, for a nonsignificant 2 points of answers). With
 `search=True` the header tells it to search before it says so. Each exchange is `#id [date time]` then its lines,
-up to 2,000 characters each (its opening and end when longer); a line's own line breaks are indented, so nothing
-said can pose as another exchange.
+up to 2,000 characters each (its opening and end when longer) in a look or a search, whole when `read` asks for it
+(a long answer's middle is often what a question is about); a line's own line breaks are indented, so nothing said
+can pose as another exchange.
 
 **Vectors.** An exchange is embedded after it is kept (`prepare`: oldest first, in batches of 64), as its date in
 words over its lines (`[08 May 2023, 13:56]`), so a question about "May" finds it. An exchange that could not be
