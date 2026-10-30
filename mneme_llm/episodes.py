@@ -230,7 +230,7 @@ class Episodes(Speaks, Resolves):
         """`keep`, then its vector (meaning tier 1), with which it rehearses the earlier exchanges it is about."""
         episode = self.keep(subject, exchange, **options)
         if episode is not None:
-            await self.prepare(episode.subject)
+            await self.prepare(episode.subject, first=[episode.id])
         return episode
 
     def _insert(self, subject: str, row: dict) -> int:
@@ -247,18 +247,24 @@ class Episodes(Speaks, Resolves):
                                "(?, ?, ?, ?)", (self.space, subject, term, id))
         return id
 
-    async def prepare(self, subject: str, *, limit: int = PREPARED) -> int:
-        """Vectors for the person's exchanges that have none from this embedder yet, in the order they were said, at
-        most `limit` of them (a long backlog, an embedder turned on late, is caught up a little at each exchange);
-        each one, as it gets its vector, rehearses the earlier exchanges it is about. Returns how many were added
-        (0 with no embedder, or while it is not answering: those exchanges are found by their words meanwhile)."""
+    async def prepare(self, subject: str, *, limit: int = PREPARED, first: Iterable[int] = ()) -> int:
+        """Vectors for the person's exchanges that have none from this embedder yet: those in `first` (the ones
+        just kept), then the rest in the order they were said, at most `limit` in all (a long backlog, an embedder
+        turned on late, is caught up a little at each exchange). Each one, as it gets its vector, rehearses the
+        earlier exchanges it is about. Returns how many were added (0 with no embedder, or while it is not
+        answering: those exchanges are found by their words meanwhile)."""
         meaning = self.meaning
         if meaning is None or meaning.embedder is None:
             return 0
         subject, name = self.who(subject), meaning.name
-        rows = self.store.rows("select * from episodes e where space = ? and subject = ? and not exists (select 1 "
-                               "from episode_vectors v where v.episode_id = e.id and v.embedder = ?) order by at, id "
-                               "limit ?", (self.space, subject, name, limit))
+        missing = ("select * from episodes e where space = ? and subject = ? and not exists (select 1 from "
+                   "episode_vectors v where v.episode_id = e.id and v.embedder = ?)")
+        first = [int(id) for id in first][:limit]
+        rows = self.store.rows(f"{missing} and id in ({', '.join('?' * len(first))}) order by at, id",
+                               (self.space, subject, name, *first)) if first else []
+        rows += [row for row in self.store.rows(f"{missing} order by at, id limit ?",
+                                                (self.space, subject, name, limit))
+                 if row["id"] not in set(first)][:limit - len(rows)]
         added = 0
         for start in range(0, len(rows), BATCH):
             batch = [Episode.of(row) for row in rows[start:start + BATCH]]
@@ -300,7 +306,7 @@ class Episodes(Speaks, Resolves):
         for row in self.store.rows(f"select id, at, recalled_at, stability from episodes where id in "
                                    f"({', '.join('?' * len(ids))})", ids):
             if row["recalled_at"] is not None and row["recalled_at"] >= now:
-                continue  # (a late vector's rehearsal, from before the one already counted)
+                continue  # (one moment, one rehearsal: and a late vector's, from before it, counts nothing)
             last = max(row["at"], row["recalled_at"] or 0.0)
             kept = math.exp(-max(0.0, now - last) / (max(row["stability"], 1e-6) * DAY))
             self.store.execute("update episodes set stability = ?, recalled_at = ?, recalls = recalls + 1 where id = ?",
@@ -385,7 +391,9 @@ class Episodes(Speaks, Resolves):
         may be short, or empty (`cut=None`: no bar; with words alone there is none). With `shorten`, a faded exchange is shown in part: each line within SHOWN_LINE·(FLOOR + (1 − FLOOR)·R)
         characters (its opening and its end; `read` shows it whole)."""
         subject, query = self.who(subject), self._query(query)
-        conversation = texts.clip(conversation, 200) if isinstance(conversation, str) else ""  # (as `keep` has it)
+        if not isinstance(conversation, str):
+            raise TypeError(f"a conversation is named by a string, not {type(conversation).__name__}")
+        conversation = texts.clip(conversation, 200)  # (as `keep` keeps it)
         left_out: set[int] = set()
         if skip > 0:
             left_out = {row["id"] for row in self.store.rows(
@@ -540,7 +548,7 @@ class Episodes(Speaks, Resolves):
         try:
             found = await (asyncio.wait_for(self.meaning.query(query), wait) if wait else self.meaning.query(query))
         except asyncio.TimeoutError:
-            return None
+            return known  # (what a lower tier made of it, if it was asked before)
         if getattr(found, "vector", None) is not None or getattr(found, "words", ""):
             self._queries[query] = found
             while len(self._queries) > 32:

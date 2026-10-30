@@ -8,7 +8,7 @@ from unittest import mock
 
 from mneme_llm import Embeddings, Mneme, episodes as episodes_module
 from mneme_llm.episodes import Episodes, lines_of, threshold
-from mneme_llm.meaning import Found
+from mneme_llm.meaning import FLOOR, Found
 from mneme_llm.store import Store
 from mneme_llm.tools import Toolbox
 
@@ -383,14 +383,44 @@ class LifecycleTests(unittest.TestCase):
 
 
 class EdgeTests(unittest.TestCase):
-    def test_a_quiet_spell_ends_a_turn_for_a_host_that_never_says(self):
+    def test_what_a_search_showed_comes_back_after_a_turn_for_a_host_that_never_says(self):
         m, _ = companion()
         m.episodes.keep("u", [("Leo", "my cat Mochi")])
         box = Toolbox(m, "u")
-        self.assertIn("Mochi", box.call("search", {"query": "Mochi"}))
-        self.assertNotIn("Mochi", box.call("search", {"query": "Mochi"}))  # (shown this turn)
-        with mock.patch("mneme_llm.tools.time.monotonic", return_value=box._last + Toolbox.QUIET + 1):
+        clock = mock.patch("mneme_llm.tools.time.monotonic", return_value=1000.0)
+        with clock as now:
             self.assertIn("Mochi", box.call("search", {"query": "Mochi"}))
+            now.return_value = 1000.0 + Toolbox.TURN - 1  # (the same turn, however busy the chat)
+            self.assertNotIn("Mochi", box.call("search", {"query": "Mochi"}))
+            now.return_value = 1000.0 + Toolbox.TURN + 1
+            self.assertIn("Mochi", box.call("search", {"query": "Mochi"}))
+
+    def test_what_was_just_said_gets_its_vector_before_a_backlog(self):
+        path = tempfile.mkdtemp() + "/late.db"
+        words, clock = companion(path=path)  # (no embedder yet)
+        for index in range(300):
+            words.episodes.keep("u", [("Leo", f"topic{index}")])
+        words.close()
+        m, _ = companion(clock, embed=embedder(), path=path)  # an embedder turned on late
+        new = asyncio.run(m.episodes.akeep("u", [("Leo", "my cat Mochi")]))
+        self.assertIsNotNone(m.store.row("select 1 from episode_vectors where episode_id = ?", (new.id,)))
+        self.assertEqual(m.store.row("select count(*) as n from episode_vectors")["n"], episodes_module.PREPARED)
+        m.close()
+
+    def test_a_slow_embedder_keeps_what_a_lower_tier_made_of_a_query(self):
+        m, _ = companion(embed=embedder())
+        before = Found("micro", vector=meaning_of("hello"))
+        m.episodes._queries["hello"] = before
+
+        async def slow(text, **_):
+            await asyncio.sleep(1)
+        with mock.patch.object(m.meaning, "query", slow):
+            self.assertIs(asyncio.run(m.episodes._found("hello", wait=0.01)), before)
+
+    def test_a_conversation_is_named_by_a_string_in_a_look_too(self):
+        m, _ = companion()
+        with self.assertRaises(TypeError):
+            m.episodes.look("u", "Mochi", skip=3, conversation=None)
 
     def test_skip_finds_a_conversation_by_the_name_it_was_kept_under(self):
         m, clock = companion()
@@ -433,6 +463,8 @@ class EdgeTests(unittest.TestCase):
         self.assertEqual((m.meaning.floor, m.meaning.set_floor), (0.75, 0.55))
         self.assertEqual([e.id for e in asyncio.run(m.episodes.alook("u", "a kitten", cut=(0.1, 0.1)))], [cat.id])
         self.assertEqual(asyncio.run(m.episodes.alook("u", "a kitten", cut=(0.2, 0.2))), [])  # (0.71 under 0.75)
+        m.store.set_meta("floor:free", '{"version": 1, "floor": 0.75, "file": {}}')  # (no set: the default)
+        self.assertEqual(m.meaning.set_floor, FLOOR)
 
     def test_few_people_vectors_stay_in_memory_and_a_backlog_is_caught_up_in_steps(self):
         calls = []

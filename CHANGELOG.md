@@ -24,9 +24,10 @@ before 1.0, a minor version may change the Python API, and this file says how.
 - **Two tools:** `search` (the best exchanges the model has not seen yet this turn, by relevance alone, however
   faded; each is rehearsed; long messages shortened) and `read` (an exchange in full, with the ones before and after
   it). `specs()` now lists six tools; a `Toolbox` remembers what its searches showed (`new_turn()` forgets it, and
-  so do five quiet minutes, for a host such as the MCP server that never says when a turn ends).
+  and each comes back two minutes after it was shown, for a host such as the MCP server that never says when a turn
+  ends).
 - **Keeping it small and safe:** who said a line is not a search word (it is in every exchange); a person's vectors
-  stay in memory for the 16 people looked at last; an embedder turned on late catches up 256 exchanges at a time;
+  stay in memory for the 16 people looked at last; an embedder turned on late catches up 256 exchanges at a time, the one just said first;
   importing the same export twice keeps each exchange once; `skip` finds a conversation by the name it was kept under.
 - **Measured** on LoCoMo (four conversations, 704 questions, DeepSeek V4.1 Flash answering and judging;
   `bench/locomo.py`): a first look of 6,000 characters with the two tools and the person check answered 80.8%, the

@@ -344,7 +344,7 @@ class Mneme:
             except Exception as failure:  # the note writer is the host's model: report it, keep the mood
                 error = f"{type(failure).__name__}: {failure}"[:300]
         if episode is not None:
-            await self.episodes.prepare(episode.subject)  # its vector, with which it rehearses what it is about
+            await self.episodes.prepare(episode.subject, first=[episode.id])  # its vector: it rehearses what it is about
         return Observation(event, notes, worth.probability if worth is not None else None, error, episode)
 
     def observe(self, subject: str, exchange, **options) -> Observation:

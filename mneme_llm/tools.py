@@ -109,17 +109,17 @@ class Toolbox:
     """Runs the tools against one Mneme; `subject` is who the conversation is with. Replies follow the memory's
     display language, and recalled notes come marked as data, not instructions."""
 
-    QUIET = 300.0  # seconds without a tool call that end a turn, for a host that never calls `new_turn` (MCP)
+    TURN = 120.0  # seconds what a search showed stays hidden from later ones, for a host that never calls `new_turn`
 
     def __init__(self, mneme, subject: str | None = None, *, prefix: str = "", source: str = "auto",
                  per_search: int = 5):
         self.mneme, self.subject, self.prefix, self.source = mneme, subject, prefix, source
         self.per_search = per_search  # exchanges a search shows
-        self.seen: dict[int, None] = {}  # exchanges this turn's searches have shown, in order
-        self._last = time.monotonic()
+        self.seen: dict[int, float] = {}  # exchanges this turn's searches have shown, in order, with when
 
     def new_turn(self) -> None:
-        """Searches from now on may show again what earlier ones did (so does a quiet spell of QUIET seconds)."""
+        """Searches from now on may show again what earlier ones did (as they may what was shown TURN seconds ago:
+        the MCP server is never told when a turn ends)."""
         self.seen.clear()
 
     @property
@@ -185,10 +185,8 @@ class Toolbox:
         tool = name[len(self.prefix):] if name.startswith(self.prefix) else name
         if tool not in {spec["name"] for spec in SPECS}:
             return say(self.words, "error.tool", name=name)
-        now = time.monotonic()
-        if now - self._last > self.QUIET:
-            self.new_turn()
-        self._last = now
+        while self.seen and next(iter(self.seen.values())) < time.monotonic() - self.TURN:
+            del self.seen[next(iter(self.seen))]
         return tool, str(who), arguments
 
     def _remember(self, subject: str, arguments: dict[str, Any]) -> str:
@@ -218,7 +216,10 @@ class Toolbox:
         return "\n".join(lines)
 
     def _shown(self, found) -> None:
-        self.seen.update((episode.id, None) for episode in found)
+        now = time.monotonic()
+        for episode in found:
+            self.seen.pop(episode.id, None)  # (in the order shown: the oldest first)
+            self.seen[episode.id] = now
         while len(self.seen) > 200:  # (a long session, MCP's say: the oldest may come back)
             del self.seen[next(iter(self.seen))]
 

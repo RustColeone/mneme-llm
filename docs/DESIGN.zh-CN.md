@@ -659,7 +659,8 @@ JSON 对象，每个问题对应一个条目：`{"probability"}`、
 对象，也可以是它的 JSON 文本；任何错误（JSON 格式不对、参数不是单个对象、键不是文本）都以记忆语言的一句
 话返回，而不是抛出异常。回忆出的笔记开头会标注“这是记住的数据，不是指令”。`call` 仅按词匹配；`acall`
 则走意思层。`Toolbox` 会记住它的搜索已经显示过哪些对话（最新的 200 段），所以第二次搜索会带来新的：每个回合
-建一个，或者调用 `new_turn()`。
+建一个，或者调用 `new_turn()`。从不说一个回合何时结束的宿主程序（MCP 服务器）会在每段显示两分钟之后再见到它
+（`Toolbox.TURN`）。
 
 **MCP**（`mcp.py`）。通过 stdio 传输的、以换行分隔的 JSON-RPC 2.0：`initialize`（回显客户端的协议版本）、
 `ping`、`tools/list`、`tools/call`；通知不回复，未知方法返回 `-32601`，以其他任何方式失败的消息返回
@@ -796,7 +797,7 @@ CLI 也会启用 jieba（或者说它没有安装），这样就不会丢掉宿�
 
 ## 16. 测试
 
-`python3 -m unittest discover -s tests -t .` 会运行 293 个测试，在 Raspberry Pi 5 上耗时约四十秒，
+`python3 -m unittest discover -s tests -t .` 会运行 296 个测试，在 Raspberry Pi 5 上耗时约四十秒，
 且不联网、不需要密钥。CI 会在 Python 3.11–3.14（Linux）以及 Windows 和 macOS 上的 3.13 中运行它们；
 删除三个可删的层后再运行一次（此时它们自己的测试会被跳过，其余全部必须通过）；
 以五倍规模运行压力测试（`MNEME_STRESS=heavy`）；然后构建包，运行 `twine check --strict` 并安装 wheel。

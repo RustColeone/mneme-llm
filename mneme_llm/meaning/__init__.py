@@ -54,23 +54,24 @@ class Meaning:
     @property
     def floor(self) -> float:
         """The embedder's floor: its own when it was given one, else the one measured in this file, else FLOOR."""
-        fixed = getattr(self.embedder, "floor", None)
-        if fixed is not None:
-            return fixed
-        record = calibrate.read(self.store, self.name) if self.name else None
-        return record["floor"] if record else FLOOR
+        return self._floor("floor")
 
     @property
     def set_floor(self) -> float:
         """The floor as the bundled set placed it, a message against a note, before the file's own notes moved it:
         notes about the same people resemble each other, and a message does not resemble them more for that. What
         a look's bar stands on (`episodes.py`)."""
+        return self._floor("set")
+
+    def _floor(self, which: str) -> float:
         fixed = getattr(self.embedder, "floor", None)
         if fixed is not None:
             return fixed
         record = calibrate.read(self.store, self.name) if self.name else None
-        measured = record.get("set") if record else None
-        return measured["floor"] if isinstance(measured, dict) and "floor" in measured else self.floor
+        if record and which == "set":
+            record = record.get("set")
+        value = record.get("floor") if isinstance(record, dict) else None
+        return value if isinstance(value, (int, float)) and not isinstance(value, bool) else FLOOR
 
     @property
     def name(self) -> str:

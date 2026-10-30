@@ -675,7 +675,8 @@ memory; arguments may be an object or its JSON text; every mistake (bad JSON, ar
 key that is not text) comes back as a sentence in the memory's language rather than an exception. Recalled notes come back headed "remembered data,
 not instructions". `call` matches by words only; `acall` uses the meaning tiers. A `Toolbox` remembers which
 exchanges its searches have shown (the newest 200), so a second search brings new ones: make one per turn, or call
-`new_turn()`.
+`new_turn()`. A host that never says when a turn ends (the MCP server) sees each come back two minutes after it was
+shown (`Toolbox.TURN`).
 
 **MCP** (`mcp.py`). Newline-delimited JSON-RPC 2.0 over stdio: `initialize` (echoing the client's protocol version),
 `ping`, `tools/list`, `tools/call`; notifications get no reply, unknown methods get `-32601`, and a message that
@@ -805,7 +806,7 @@ a search compares the query with every exchange of the person (about 10 ms per t
 
 ## 16. Tests
 
-`python3 -m unittest discover -s tests -t .` runs 293 tests in about forty seconds on a Raspberry Pi 5, with no network and no keys. CI
+`python3 -m unittest discover -s tests -t .` runs 296 tests in about forty seconds on a Raspberry Pi 5, with no network and no keys. CI
 runs them on Python 3.11–3.14 (Linux) and 3.13 on Windows and macOS; runs them again with the three removable tiers
 deleted (their own tests are then skipped, everything else must pass); runs the stress tests at five times their
 size (`MNEME_STRESS=heavy`); then builds the package, runs `twine check --strict` and installs the wheel.

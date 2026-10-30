@@ -30,6 +30,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import re
 import shutil
 import sqlite3
 import sys
@@ -122,7 +123,7 @@ def extract_locomo(source: Path, only: list[str], target: Path) -> int:
             for index, qa in enumerate(raw["qa"]):
                 category = qa.get("category")
                 unanswerable = category == 5
-                evidence = {f"s{str(item).split(':')[0].lstrip('D')}" for item in qa.get("evidence", [])}
+                evidence = {f"s{number}" for number in re.findall(r"D(\d+):", " ".join(map(str, qa.get("evidence", []))))}
                 out.write(json.dumps({
                     "question_id": f"{raw['sample_id']}-{index}" + ("_abs" if unanswerable else ""),
                     "history": raw["sample_id"], "speakers": [a, b], "category": category,
