@@ -3,7 +3,7 @@
 All notable changes to mneme-llm are listed here. The project follows [semantic versioning](https://semver.org);
 before 1.0, a minor version may change the Python API, and this file says how.
 
-## 0.3.0 (unreleased)
+## 0.3.0 (2026-10-29)
 
 - **Episodes: what was said, word for word.** `aobserve` now keeps every exchange the person starts, as it was
   said (`(who, said)` lines), with when (`at=`, now by default) and where (`conversation=`), before anything else
