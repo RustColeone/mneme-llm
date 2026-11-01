@@ -348,7 +348,8 @@ When a side is wanted enough (`GROWS`: about four days for family, six for a fri
 several people want it) her model writes one sentence from what the word means and what they asked for, and the gut
 keeps it, so a wipe or another model does not take it. Any word works, in any language; a word already in her character
 is no side. At most two show at once, strongest first, to people at closeness 40 or more. Objecting counts every time,
-in any words, against her strongest side: four times from family and it is gone.
+in any words, against her strongest side: four times from family and it is gone. A side is never a child: words such as
+萝莉 and 幼女 are not noted, grown or written, and `tags` and `write_side` refuse them.
 
 ```python
 gut.report()["sides"]                       # what grew

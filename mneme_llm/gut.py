@@ -56,6 +56,8 @@ GROWS = 6.0  # how much a side must be wanted: about four days for family (close
 SPACED = 20 * 3600  # a person's "more" counts once in this long, so one evening's joke is one sighting
 STAYS = 14 * 86400  # a sighting is half gone in this long, as her tone is
 NOTED, WANTS, LOOK = 4, 6, 400  # sides named when she reads; wants a sentence is made from; characters of a message read
+CHILD = re.compile(r"萝莉|蘿莉|幼女|幼童|女童|正太|小学生|小學生|初中生|未成年|小女孩|小孩子|儿童|兒童|ロリ|ショタ|子供|\bloli|\bshota|\bunderage\b"
+                   r"|\bchild\b|\bchildlike\b|\blittle girl\b", re.I)  # a companion people flirt with is never a child
 SAME = .5  # sentences this alike are one side: .63 to 1 for four words for one thing, about 0 to .4 for different sides
 Ask = Callable[[list, int], Awaitable[str]]  # ask(messages, max_tokens) -> the reply's text, on her model, no thinking
 
@@ -81,7 +83,7 @@ SHAPE = ('You read the end of a chat between a person and their AI companion. Is
          'for it in their language", "more": true if they want more of it and false if they want less, "what": "what '
          'they want her to do, in a few words"}}. Only what the person says counts, not how she acts. Ordinary warmth, '
          'jokes, thanks and chat are no, and that is nearly always.')
-GROW = ('大家常说的「{name}」是什么样的人，你知道。有人在聊天里一直想让她变成这样，他们说的是：\n{wants}\n{held}只回一行 JSON：{{"name": "最常用的一个词，'
+GROW = ('大家常说的「{name}」是什么样的人，你知道。有人在聊天里一直想让她变成这样，他们说的是：\n{wants}\n{held}她是成年人。只回一行 JSON：{{"name": "最常用的一个词，'
         '他们说过的词优先，不超过8个字", "what": "一句话（不超过50字），对她说，写她的做法：别人提到其他人时她怎么接话，平时怎么说话，她想达到什么。保留这个词本来的味道，'
         '把他们说的融进去。写做法，不写场景，不写表情和动作。以“你”开头"}}')
 HELD = "她已经有的样子：{sides}。如果这是其中一个，name 就用那个词，并把两边合成一句。\n"
@@ -375,6 +377,10 @@ def overlap(one: str, other: str) -> float:
     return len(pairs[0] & pairs[1]) / max(1, len(pairs[0] | pairs[1]))
 
 
+def childlike(text: str) -> bool:
+    return bool(CHILD.search(text))
+
+
 def short_name(value) -> str:
     """One word to `$side` and to the line: no quotes or brackets, and "big sis type" as big-sis-type."""
     return "-".join(re.sub(r"[\"'“”「」()（）\[\]{}]", "", str(value or "")).split())[:24]
@@ -510,6 +516,8 @@ class Gut:
 
     def __init__(self, path, starter=None, tags: dict[str, str] | None = None):
         self.path, self.starter, self.tags = Path(path), Path(starter) if starter else None, dict(tags or {})
+        if any(childlike(f"{name} {what}") for name, what in self.tags.items()):
+            raise ValueError("A side cannot be a child.")
         self.net, self.marks, self.tone = Net(), Marks(), Tone()
         self.languages: dict[str, str] = {}
         self.sightings: list[tuple] = []  # (subject, when, name, more, closeness, what they want)
@@ -618,7 +626,7 @@ class Gut:
         counts once in a day, "less" every time: nobody should have to come back on four days to be heard. Whatever word
         they use, "less" is about what they are meeting, her strongest side: asked to stop, a person says 端着, not 御姐."""
         name, more, now = found["name"], found["more"], time.time() if now is None else now
-        if closeness < TEACH_FROM:
+        if closeness < TEACH_FROM or childlike(f"{name} {found['what']}"):
             return None
         with self.lock:
             if not more and name not in self.grown and self.grown:
@@ -643,6 +651,8 @@ class Gut:
     def grow(self, name: str, made: dict) -> None:
         """A side of hers from now on. A sentence saying what one of hers says is that side, whatever her model calls it:
         people say 绿茶, pick-me and ぶりっ子, and told to reuse a name she reworded the sentence and kept the new word."""
+        if childlike(f"{made['name']} {made['what']}"):
+            return
         with self.lock:
             like = max(self.grown, key=lambda held: overlap(self.grown[held], made["what"]), default=None)
             new = like if like and overlap(self.grown[like], made["what"]) >= SAME else made["name"]
@@ -654,6 +664,8 @@ class Gut:
 
     def write_side(self, name: str, what: str) -> None:
         """A person's own sentence for a side, or a new side by hand: a person can write a better one."""
+        if childlike(f"{name} {what}"):
+            raise ValueError("A side cannot be a child.")
         with self.lock:
             self.grown[name] = what
             with self._open() as db:

@@ -421,6 +421,19 @@ class Growing(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(self.gut.grown), {"shared", "written"})
         self.assertEqual([row[0] for row in self.gut.sightings], ["b"])
 
+    async def test_a_side_is_never_a_child(self):
+        for word in ("萝莉", "合法萝莉", "幼女", "ロリ", "loli", "a little girl"):
+            self.assertIsNone(self.gut.sighted("a", {"name": word, "more": True, "what": ""}, 85))
+        self.assertIsNone(self.gut.sighted("a", {"name": "乖", "more": True, "what": "像小女孩一样"}, 85))
+        self.assertEqual(self.gut.sightings, [])
+        self.gut.grow("x", {"name": "乖", "what": "你说话像小学生。"})
+        self.assertEqual(self.gut.grown, {})
+        with self.assertRaises(ValueError):
+            self.gut.write_side("萝莉", "x")
+        with self.assertRaises(ValueError):
+            G.Gut(self.path, tags={"幼女": "x"})
+        self.assertFalse(any(G.childlike(word) for word in ("御姐", "孩子气", "childish", "熟女", "傲娇", "早熟")))
+
     async def test_a_person_can_rewrite_or_remove_a_side(self):
         self.gut.grow("x", {"name": "御姐", "what": "draft"})
         self.gut.write_side("御姐", "你从容。")
@@ -502,6 +515,7 @@ def vectors() -> dict:
                        for closeness in (40, 60, 85, 100)]
     out["shaping"] = [G.shaping(text) for text in ('{"side": null}', 'nothing', '{"side": {"name": " 「小 绿茶」 ", "more": false, "what": " 说 她\\n不好 "}}',
                                                    '{"side": {"name": "御姐", "what": "' + "从容" * 40 + '"}}', '{"side": {"name": ""}}')]
+    out["childlike"] = [G.childlike(text) for text in ("合法萝莉", "ロリ系", "LOLI", "a little girl", "御姐", "孩子气", "childish", "shotacon")]
     out["overlap"] = [round(G.overlap(one, other), 9) for one, other in (("你先夸她，再让她不如你。", "你先夸她，再 让她不如你！"), ("你从容。", "你先夸她。"), ("", "x"))]
     out["grown side"] = [G.grown_side(text) for text in ('{"name": "（御姐）", "what": "你从容（不急）\\n，不撒娇。"}', '{"name": "x"}', 'no')]
     return out
