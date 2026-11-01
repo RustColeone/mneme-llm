@@ -260,6 +260,17 @@ class Turns(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.gut.report()["lessons"], 0)
 
 
+class Draft(unittest.IsolatedAsyncioTestCase):
+    async def test_her_model_drafts_the_sentence(self):
+        asked = []
+
+        async def ask(messages, tokens):
+            asked.append(messages)
+            return "  你话很少。\n"
+        self.assertEqual(await G.draft("三无", ask), "你话很少。")
+        self.assertIn("「三无」", asked[0][0]["content"])
+
+
 class Sides(unittest.TestCase):
     def test_a_name_and_a_sentence_and_at_most_two(self):
         self.assertEqual(G.sides({"御姐": "你从容。"}), "(Right now your 御姐 side is showing: 你从容。)")

@@ -66,6 +66,8 @@ NOTE = ('Now write your private note about the reply you just gave. Answer with 
         "shares adding up to 1. The note is yours alone and the person never sees it. Be honest: it records how you "
         "really feel.")
 BESIDE = "[From the system, not from the person]"
+DRAFT = ("用一句话（不超过50字）写出拥有「{tag}」这个属性的人在聊天里的做法：对方提到别人时她怎么接话，平时怎么说话，她想达到什么。"
+         "写做法，不写场景，不写表情和动作。以“你”开头，只写这一句。")
 
 # ---- the network: seven numbers from a form and a closeness ---------------------------------------------------------
 SCALE, FADE = .6, 250  # how much a starter lesson counts against a lived one, and after how many lessons half that
@@ -337,8 +339,15 @@ def line(feeling: dict, words=()) -> str:
 def sides(tags: dict[str, str]) -> str:
     """Her 属性: a name a model knows, with one sentence of what she does. The name alone hardly moves her (DeepSeek: 1 of
     20 for 病娇, 2 for 小绿茶, 1 for 御姐) and the sentence does (7, 8, 13), as well beside the message as written into her
-    character (6, 9, 10). What a model will play is its own: Terra stays sweet on the first two whatever it is told."""
+    character (6, 9, 10). What a model will play is its own: Terra stays sweet on the first two whatever it is told. Any
+    word can be a tag: lists of them are long and never whole, and 小绿茶 is not on the longest one we found."""
     return " ".join(f"(Right now your {name} side is showing: {what})" for name, what in list(tags.items())[:TAGS])
+
+
+async def draft(tag: str, ask: Ask) -> str:
+    """Her model's first draft of the sentence for a tag given by name alone. Good for some (小绿茶 7 of 20, 三无 17) and
+    weak for others (御姐 5, 病娇 2): a person can write a better one."""
+    return (await ask([{"role": "user", "content": DRAFT.format(tag=tag)}], 100)).strip()
 
 
 def json_in(text: str) -> dict | None:
