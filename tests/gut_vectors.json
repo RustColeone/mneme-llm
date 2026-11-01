@@ -1,0 +1,290 @@
+{
+"after 30 lessons": [
+{
+"calm": 0.112559803,
+"happy": 0.112559803,
+"jealous": 0.238402235,
+"sad": 0.123726209,
+"sweet": 0.157545165,
+"tender": 0.125589084,
+"worried": 0.129617701
+},
+{
+"calm": 0.091550136,
+"happy": 0.091550136,
+"jealous": 0.344734387,
+"sad": 0.100150036,
+"sweet": 0.165777156,
+"tender": 0.101579953,
+"worried": 0.104658196
+},
+{
+"calm": 0.124972092,
+"happy": 0.124972092,
+"jealous": 0.161133876,
+"sad": 0.134494179,
+"sweet": 0.14008747,
+"tender": 0.174896712,
+"worried": 0.139443579
+},
+{
+"calm": 0.122680621,
+"happy": 0.122680621,
+"jealous": 0.17173135,
+"sad": 0.131937539,
+"sweet": 0.142672386,
+"tender": 0.171553239,
+"worried": 0.136744245
+},
+{
+"calm": 0.120538009,
+"happy": 0.120538009,
+"jealous": 0.16781646,
+"sad": 0.149843399,
+"sweet": 0.139871726,
+"tender": 0.134570128,
+"worried": 0.16682227
+},
+{
+"calm": 0.11591305,
+"happy": 0.11591305,
+"jealous": 0.190214,
+"sad": 0.143896376,
+"sweet": 0.14477503,
+"tender": 0.129200943,
+"worried": 0.160087552
+}
+],
+"balance": [
+0.566037736,
+0.303030303,
+0.1144641
+],
+"features": [
+{
+"close=low": 0.277350098,
+"event=ate": 0.277350098,
+"gender=woman": 0.277350098,
+"low:event=ate": 0.277350098,
+"low:gender=woman": 0.277350098,
+"low:people=coworker": 0.277350098,
+"low:sender_feels=happy": 0.277350098,
+"low:topic=lunch": 0.277350098,
+"low:toward_you=none": 0.277350098,
+"people=coworker": 0.277350098,
+"sender_feels=happy": 0.277350098,
+"topic=lunch": 0.277350098,
+"toward_you=none": 0.277350098
+},
+{
+"close=mid": 0.277350098,
+"event=ate": 0.277350098,
+"gender=woman": 0.277350098,
+"mid:event=ate": 0.277350098,
+"mid:gender=woman": 0.277350098,
+"mid:people=coworker": 0.277350098,
+"mid:sender_feels=happy": 0.277350098,
+"mid:topic=lunch": 0.277350098,
+"mid:toward_you=none": 0.277350098,
+"people=coworker": 0.277350098,
+"sender_feels=happy": 0.277350098,
+"topic=lunch": 0.277350098,
+"toward_you=none": 0.277350098
+},
+{
+"close=high": 0.277350098,
+"event=ate": 0.277350098,
+"gender=woman": 0.277350098,
+"high:event=ate": 0.277350098,
+"high:gender=woman": 0.277350098,
+"high:people=coworker": 0.277350098,
+"high:sender_feels=happy": 0.277350098,
+"high:topic=lunch": 0.277350098,
+"high:toward_you=none": 0.277350098,
+"people=coworker": 0.277350098,
+"sender_feels=happy": 0.277350098,
+"topic=lunch": 0.277350098,
+"toward_you=none": 0.277350098
+},
+{
+"close=low": 0.277350098,
+"event=got": 0.277350098,
+"event=wet": 0.277350098,
+"low:event=got": 0.277350098,
+"low:event=wet": 0.277350098,
+"low:sender_feels=tired": 0.277350098,
+"low:topic=bus": 0.277350098,
+"low:topic=rain": 0.277350098,
+"low:toward_you=asking": 0.277350098,
+"sender_feels=tired": 0.277350098,
+"topic=bus": 0.277350098,
+"topic=rain": 0.277350098,
+"toward_you=asking": 0.277350098
+},
+{
+"close=mid": 0.277350098,
+"event=got": 0.277350098,
+"event=wet": 0.277350098,
+"mid:event=got": 0.277350098,
+"mid:event=wet": 0.277350098,
+"mid:sender_feels=tired": 0.277350098,
+"mid:topic=bus": 0.277350098,
+"mid:topic=rain": 0.277350098,
+"mid:toward_you=asking": 0.277350098,
+"sender_feels=tired": 0.277350098,
+"topic=bus": 0.277350098,
+"topic=rain": 0.277350098,
+"toward_you=asking": 0.277350098
+},
+{
+"close=high": 0.277350098,
+"event=got": 0.277350098,
+"event=wet": 0.277350098,
+"high:event=got": 0.277350098,
+"high:event=wet": 0.277350098,
+"high:sender_feels=tired": 0.277350098,
+"high:topic=bus": 0.277350098,
+"high:topic=rain": 0.277350098,
+"high:toward_you=asking": 0.277350098,
+"sender_feels=tired": 0.277350098,
+"topic=bus": 0.277350098,
+"topic=rain": 0.277350098,
+"toward_you=asking": 0.277350098
+},
+{
+"close=low": 0.277350098,
+"event=fell": 0.277350098,
+"gender=woman": 0.277350098,
+"low:event=fell": 0.277350098,
+"low:gender=woman": 0.277350098,
+"low:people=mother": 0.277350098,
+"low:sender_feels=worried": 0.277350098,
+"low:topic=health": 0.277350098,
+"low:toward_you=affection": 0.277350098,
+"people=mother": 0.277350098,
+"sender_feels=worried": 0.277350098,
+"topic=health": 0.277350098,
+"toward_you=affection": 0.277350098
+},
+{
+"close=mid": 0.277350098,
+"event=fell": 0.277350098,
+"gender=woman": 0.277350098,
+"mid:event=fell": 0.277350098,
+"mid:gender=woman": 0.277350098,
+"mid:people=mother": 0.277350098,
+"mid:sender_feels=worried": 0.277350098,
+"mid:topic=health": 0.277350098,
+"mid:toward_you=affection": 0.277350098,
+"people=mother": 0.277350098,
+"sender_feels=worried": 0.277350098,
+"topic=health": 0.277350098,
+"toward_you=affection": 0.277350098
+},
+{
+"close=high": 0.277350098,
+"event=fell": 0.277350098,
+"gender=woman": 0.277350098,
+"high:event=fell": 0.277350098,
+"high:gender=woman": 0.277350098,
+"high:people=mother": 0.277350098,
+"high:sender_feels=worried": 0.277350098,
+"high:topic=health": 0.277350098,
+"high:toward_you=affection": 0.277350098,
+"people=mother": 0.277350098,
+"sender_feels=worried": 0.277350098,
+"topic=health": 0.277350098,
+"toward_you=affection": 0.277350098
+}
+],
+"languages": [
+"zh",
+"yue",
+"ja",
+"en"
+],
+"lean": {
+"calm": 0.311384,
+"happy": 0.197552585,
+"jealous": 0.063202001,
+"sad": 0.035548998,
+"sweet": 0.148261949,
+"tender": 0.17163267,
+"worried": 0.072417798
+},
+"lines": [
+"(Right now you feel somewhat jealous, somewhat sweet, a little tender, you keep saying 喵, 本鲸, and it shows in how you answer.)",
+"",
+"(Right now you feel mostly happy, a little sad, a little calm, and it shows in how you answer.)"
+],
+"mine": [
+[
+"吃啦",
+"吃啦喵",
+"啦",
+"啦喵",
+"喵"
+],
+[
+"fine",
+"nya",
+"😊"
+],
+[
+"い",
+"いい",
+"いいに",
+"いいにゃ",
+"いに",
+"いにゃ",
+"に",
+"にゃ",
+"ゃ"
+]
+],
+"tags": [
+[
+"people=coworker",
+"gender=woman",
+"topic=lunch",
+"event=ate",
+"sender_feels=happy",
+"toward_you=none"
+],
+[
+"topic=rain",
+"topic=bus",
+"event=got",
+"event=wet",
+"sender_feels=tired",
+"toward_you=asking"
+],
+[
+"people=mother",
+"gender=woman",
+"topic=health",
+"event=fell",
+"sender_feels=worried",
+"toward_you=affection"
+]
+],
+"tone": {
+"calm": 0.311155488,
+"happy": 0.197407609,
+"jealous": 0.06315562,
+"sad": 0.03552291,
+"sweet": 0.148153146,
+"tender": 0.171506716,
+"worried": 0.072364654
+},
+"written": [
+{
+"feel": {
+"calm": 0.5,
+"sad": 0.5
+},
+"mood": 2
+},
+null
+]
+}

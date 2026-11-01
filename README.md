@@ -313,6 +313,33 @@ answers["urgent"].probability, answers["urgent"].by          # 0.93, "luna"
 
 `m.report()` shows what every tier answered, abstained on or failed, and what the paid ones cost.
 
+## A gut: what stays when memory is gone
+
+`mneme_llm.gut` keeps what a companion is, apart from what she remembers: wipe her memory or swap her model and she is
+still her. Before she answers, her model reads the message into a small form and a tiny network of her own gives seven
+numbers, one per mood; her model votes seven more with her memory in view, and a balance that moves by itself weighs the
+two. One line of fixed size goes beside the message, so it adds no context however long she lives. After she has
+answered she writes a private note in a call of its own, and that note teaches the network.
+
+```python
+from mneme_llm import Gut, Turn
+
+gut = Gut("her.gut.db", tags={"傲娇": "你嘴硬心软，明明在意却偏要否认。"})   # a 属性: a name and one sentence of what she does
+gut.wake()                                                 # (seconds the first time: not on an event loop)
+
+async def ask(messages, max_tokens):                       # her own model, thinking off
+    return await my_model(messages, max_tokens)
+
+turn = Turn(gut, ask, her_prompt, message, "discord:42")   # her reading starts at once
+line = await turn.feel(earlier_messages, memory_text, closeness, exchanges)   # put this beside the message
+answer = await my_model(with_line(line))
+await turn.learn(earlier_messages, answer)                 # beside the conversation: her note, a lesson, sleep
+```
+
+A host needs two moments and nothing else: the message before she answers, and the finished turn after it. It needs no
+dependency, and the rest of the package does not use it. A `starter` file gives her lessons she was born with; without
+one her model decides alone until she has lived. `tests/gut_vectors.json` pins its numbers for ports to other languages.
+
 ## Using it from any model
 
 **Tools.** Give the model `remember`, `recall`, `forget`, `mood`, `search` and `read` in its API's format, and run
@@ -400,7 +427,8 @@ at five times their size: `MNEME_STRESS=heavy python3 -m unittest tests.test_str
 
 The memory and mood designs borrow from Yuuyuko-uu's [dsh-fish-memory](https://github.com/Yuuyuko-uu)
 (evidence-ranked recall, freshness, human dates, keys, quota) and dsh-feiyu-mood (decay, guardrails, source-aware
-judging, telling once), and from [Honcho](https://github.com/plastic-labs/honcho) (the profile card).
+judging, telling once, and the seven moods the gut also uses), and from [Honcho](https://github.com/plastic-labs/honcho)
+(the profile card).
 
 ## License
 

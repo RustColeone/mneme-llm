@@ -3,6 +3,16 @@
 All notable changes to mneme-llm are listed here. The project follows [semantic versioning](https://semver.org);
 before 1.0, a minor version may change the Python API, and this file says how.
 
+## 0.4.0 (unreleased)
+
+- **The gut (CMP): what stays of a companion when her memory is wiped and her model is swapped.** `mneme_llm.gut`: `Gut`
+  and `Turn`. Her model reads each message into a small form, a tiny network of her own and her vote give seven numbers,
+  a balance that moves by itself weighs them, and one line of fixed size goes beside the message, with her word habits,
+  her 属性 and the language to answer in. She writes a private note after she has answered, so nothing is hidden in her
+  reply; lessons are forms and feelings, never messages, and she sleeps on them. A host needs two moments: the message
+  before she answers, and the finished turn after. It needs no dependency, and the rest of the package does not use it.
+  `tests/gut_vectors.json` pins its numbers for ports to other languages.
+
 ## 0.3.0 (2026-10-29)
 
 - **Episodes: what was said, word for word.** `aobserve` now keeps every exchange the person starts, as it was

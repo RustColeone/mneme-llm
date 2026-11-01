@@ -26,6 +26,7 @@ from .capture import WORTH_NAME, notes_in, reflect_prompt, worth, writer_prompt
 from .config import STORED, Config
 from .decide import Answer, Chain, Choice, Luna, Predicate, Prompt, Score, fit
 from .episodes import Episode, Episodes
+from .gut import Gut, Turn
 from .i18n import Words, say
 from .meaning import Embeddings, Meaning, OpenAIEmbeddings, ledger
 from .memory import KINDS, Memory, Note, Recall
@@ -484,7 +485,7 @@ class Mneme:
         self.close()
 
 
-__all__ = ["Aliases", "Answer", "Chain", "Choice", "Config", "Embeddings", "Emotion", "Episode", "Episodes", "KINDS",
+__all__ = ["Aliases", "Answer", "Chain", "Choice", "Config", "Embeddings", "Emotion", "Episode", "Episodes", "Gut", "KINDS",
            "Luna", "Meaning", "Memory", "Mneme", "Mood", "MoodEvent", "MoodSettings", "Note", "Observation",
            "OpenAIEmbeddings", "People", "Predicate", "Prompt", "Recall", "Relations", "Relationship", "Role", "STORED",
-           "Score", "Store", "Unavailable", "__version__"]
+           "Score", "Store", "Turn", "Unavailable", "__version__"]
