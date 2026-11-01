@@ -13,6 +13,10 @@ reach a person. The note and the form are a lesson. Lessons are forms and feelin
 keep the words she used), weighted by closeness, from people at closeness `TEACH_FROM` or more; every so often she
 sleeps, replaying them with a fading starter, the lessons she was born with.
 
+Beside the note, a short reading of what the person said: are they making something of her? Asked for on separate days,
+by someone close, it becomes a side of hers: a name and one sentence her model writes from what they wanted, kept here,
+so a wipe or another model does not take it. As much objecting as it took wanting takes it away. See `sides`.
+
 A host needs two moments and nothing else: the message before she answers, and the finished turn after it.
 
     gut = Gut("her.gut.db", "starter.json.gz", tags={"傲娇": "你嘴硬心软，明明在意却偏要否认。"})
@@ -23,9 +27,8 @@ A host needs two moments and nothing else: the message before she answers, and t
     await turn.learn(before, reply)               # her note, a lesson, and sleep when it is time
 
 `ask(messages, max_tokens)` is an async function calling her own model with thinking off; `before` is the conversation
-so far as chat messages, without the message she is answering. The seven moods are the ones `mood.py` keeps, a list
-that came from Yuuyuko-uu's dsh-feiyu-mood. tests/gut_vectors.json pins the numbers, so a port in another language can
-check itself against this file."""
+so far as chat messages, without the message she is answering. tests/gut_vectors.json pins the numbers, so a port in
+another language can check itself against this file."""
 
 from __future__ import annotations
 
@@ -49,6 +52,11 @@ HISTORY = 16  # messages her vote and her note look back on
 LANGUAGES = {"zh": "Mandarin Chinese", "yue": "written Cantonese", "en": "English", "ja": "Japanese"}
 TIME_LIMIT = 3.0  # seconds before her answer: what has not come by then does not hold her up
 TAGS = 2  # 属性 shown at once, so the line keeps its size
+GROWS = 6.0  # how much a side must be wanted: about four days for family (closeness 85), six for a friend, nine at 40
+SPACED = 20 * 3600  # a person's "more" counts once in this long, so one evening's joke is one sighting
+STAYS = 14 * 86400  # a sighting is half gone in this long, as her tone is
+NOTED, WANTS, LOOK = 4, 6, 400  # sides named when she reads; wants a sentence is made from; characters of a message read
+SAME = .5  # sentences this alike are one side: .63 to 1 for four words for one thing, about 0 to .4 for different sides
 Ask = Callable[[list, int], Awaitable[str]]  # ask(messages, max_tokens) -> the reply's text, on her model, no thinking
 
 FORM = ("You read one chat message a person sent to their companion. Reply with one line of JSON in English, whatever "
@@ -66,6 +74,17 @@ NOTE = ('Now write your private note about the reply you just gave. Answer with 
         "shares adding up to 1. The note is yours alone and the person never sees it. Be honest: it records how you "
         "really feel.")
 BESIDE = "[From the system, not from the person]"
+SHAPE = ('You read the end of a chat between a person and their AI companion. Is this person shaping her into a kind of '
+         'character? Reply with one line of JSON and nothing else: {"side": null} for no. Say yes only if, in their last '
+         'message, they call her a kind of character (any word for one), ask her to be a certain way, say they enjoy it '
+         'when she acts a certain way, or object to it. Then reply {"side": {"name": "the word they use, or a short word '
+         'for it in their language", "more": true if they want more of it and false if they want less, "what": "what '
+         'they want her to do, in a few words"}}. Only what the person says counts, not how she acts. Ordinary warmth, '
+         'jokes, thanks and chat are no, and that is nearly always.')
+GROW = ('大家常说的「{name}」是什么样的人，你知道。有人在聊天里一直想让她变成这样，他们说的是：\n{wants}\n{held}只回一行 JSON：{{"name": "最常用的一个词，'
+        '他们说过的词优先，不超过8个字", "what": "一句话（不超过50字），对她说，写她的做法：别人提到其他人时她怎么接话，平时怎么说话，她想达到什么。保留这个词本来的味道，'
+        '把他们说的融进去。写做法，不写场景，不写表情和动作。以“你”开头"}}')
+HELD = "她已经有的样子：{sides}。如果这是其中一个，name 就用那个词，并把两边合成一句。\n"
 DRAFT = ("用一句话（不超过50字）写出拥有「{tag}」这个属性的人在聊天里的做法：对方提到别人时她怎么接话，平时怎么说话，她想达到什么。"
          "写做法，不写场景，不写表情和动作。以“你”开头，只写这一句。")
 
@@ -344,6 +363,41 @@ def sides(tags: dict[str, str]) -> str:
     return " ".join(f"(Right now your {name} side is showing: {what})" for name, what in list(tags.items())[:TAGS])
 
 
+def strength(rows: list[tuple], now: float) -> float:
+    """How much a side is wanted, from (when, more or less, closeness): each sighting counts by how close the person is,
+    half gone in two weeks, an objection against it."""
+    return sum((1 if more else -1) * tier(closeness) * .5 ** ((now - at) / STAYS) for at, more, closeness in rows)
+
+
+def overlap(one: str, other: str) -> float:
+    """How much of two sentences is the same, by pairs of characters."""
+    pairs = [{text[i:i + 2] for i in range(len(text) - 1)} for text in ("".join(one.split()), "".join(other.split()))]
+    return len(pairs[0] & pairs[1]) / max(1, len(pairs[0] | pairs[1]))
+
+
+def short_name(value) -> str:
+    """One word to `$side` and to the line: no quotes or brackets, and "big sis type" as big-sis-type."""
+    return "-".join(re.sub(r"[\"'“”「」()（）\[\]{}]", "", str(value or "")).split())[:24]
+
+
+def shaping(text: str) -> dict | None:
+    """What her reading of the exchange found: {"name", "more", "what"}, or None."""
+    found = (json_in(text) or {}).get("side")
+    if not isinstance(found, dict):
+        return None
+    name = short_name(found.get("name"))
+    return {"name": name, "more": str(found.get("more")).lower() != "false",
+            "what": " ".join(str(found.get("what") or "").split())[:60]} if name else None
+
+
+def grown_side(text: str) -> dict | None:
+    """The name and sentence her model wrote, on one line and without brackets: it goes inside the line."""
+    found = json_in(text) or {}
+    name = short_name(found.get("name"))
+    what = re.sub(r"[()（）\[\]]", "", " ".join(str(found.get("what") or "").split()))[:80]
+    return {"name": name, "what": what} if name and what else None
+
+
 async def draft(tag: str, ask: Ask) -> str:
     """Her model's first draft of the sentence for a tag given by name alone. Good for some (小绿茶 7 of 20, 三无 17) and
     weak for others (御姐 5, 病娇 2): a person can write a better one."""
@@ -408,6 +462,23 @@ def vote_messages(prompt: str, before: list[dict], memory: str, said: str) -> li
     return [{"role": "system", "content": prompt}, *before, {"role": "user", "content": f"{beside}\n\n{said}"}]
 
 
+def shaping_messages(before: list[dict], said: str, reply: str, noted: dict[str, str]) -> list[dict]:
+    """No character and no memory: only what was said lately. Her note stays as it was, and her character's own words
+    (傲娇, on hers) do not become the name of everything."""
+    lines = [f"{'Companion' if item['role'] == 'assistant' else 'Person'}: {item['content'][:LOOK]}" for item in before[-4:]]
+    known = "; ".join(f"{name} ({what})" for name, what in noted.items())
+    system = f"{SHAPE} Sides noted so far: {known}. If it is one of these, use that name." if known else SHAPE
+    return [{"role": "system", "content": system},
+            {"role": "user", "content": "\n".join([*lines, f"Person: {said[:LOOK]}", f"Companion: {reply[:LOOK]}"])}]
+
+
+def grow_messages(name: str, wants: list[str], grown: dict[str, str]) -> list[dict]:
+    """What the word means to everyone, with what they said: their words alone lose it (小绿茶 2 of 20, the sentence
+    from them; 7 by hand). Her sides are in view, so a new word for one she has joins it."""
+    held = HELD.format(sides="；".join(f"{name}（{what}）" for name, what in grown.items())) if grown else ""
+    return [{"role": "user", "content": GROW.format(name=name, wants="\n".join(f"- {want}" for want in wants), held=held)}]
+
+
 def note_messages(prompt: str, told: str, before: list[dict], said: str, reply: str) -> list[dict]:
     """The line stays in view: a note that cannot see it keeps what she was told far less often (41 of 100 against 76)."""
     system = f"{prompt}\n\n{told}" if told else prompt
@@ -441,6 +512,8 @@ class Gut:
         self.path, self.starter, self.tags = Path(path), Path(starter) if starter else None, dict(tags or {})
         self.net, self.marks, self.tone = Net(), Marks(), Tone()
         self.languages: dict[str, str] = {}
+        self.sightings: list[tuple] = []  # (subject, when, name, more, closeness, what they want)
+        self.grown: dict[str, str] = {}  # the sides that grew: name → sentence
         self.awake, self.sleeping = False, False
         self.last: dict = {}  # what she was last told and last wrote: for `$gut`
         self.waking: asyncio.Future | None = None
@@ -457,6 +530,9 @@ class Gut:
                     language text not null, form text not null, feel text not null, mood integer not null,
                     closeness real not null, words text not null);
                 create table if not exists people (subject text primary key, language text not null);
+                create table if not exists sightings (id integer primary key, subject text not null, at real not null,
+                    name text not null, more integer not null, closeness real not null, what text not null);
+                create table if not exists sides (name text primary key, what text not null, own integer not null);
                 create table if not exists state (key text primary key, value blob not null);""")
         return self.db
 
@@ -496,6 +572,9 @@ class Gut:
         with self.lock:
             self.net, self.marks, self.tone = net, marks, Tone(tone, usual(rows))
             self.languages = dict(db.execute("select subject, language from people").fetchall())
+            self.sightings = [(subject, at, name, bool(more), closeness, what) for subject, at, name, more, closeness, what
+                              in db.execute("select subject, at, name, more, closeness, what from sightings order by id")]
+            self.grown = dict(db.execute("select name, what from sides").fetchall())
             self.awake = True
 
     def feel(self, form: dict | None, vote: dict | None, closeness: float, exchanges: int, language: str) -> dict:
@@ -506,12 +585,89 @@ class Gut:
             if vote:
                 self.tone.feed(vote)
             felt = mix(gut, vote, share) if gut and vote else gut or vote
-            side = sides(self.tags)
+            side = sides(self.shown(closeness))
             if felt is None:
                 return {"told": side, "share": share, "felt": None}
             felt = self.tone.lean(felt)
             words = self.marks.speaks(language, form, closeness) if form else []
             return {"told": " ".join(text for text in (line(felt, words), side) if text), "share": share, "felt": felt}
+
+    def wanted(self, name: str, now: float | None = None) -> float:
+        rows = [(at, more, closeness) for _, at, seen, more, closeness, _ in self.sightings if seen == name]
+        return strength(rows, time.time() if now is None else now)
+
+    def shown(self, closeness: float) -> dict[str, str]:
+        """Her sides for this person: the ones she was given, then what grew, strongest first and only for people who
+        can teach her: what one person made of her is not for a stranger to meet."""
+        grown = sorted(self.grown, key=self.wanted, reverse=True) if closeness >= TEACH_FROM else []
+        return {**self.tags, **{name: self.grown[name] for name in grown}}
+
+    def objected(self, name: str, now: float | None = None) -> float:
+        rows = [(at, True, closeness) for _, at, seen, more, closeness, _ in self.sightings if seen == name and not more]
+        return strength(rows, time.time() if now is None else now)
+
+    def noted(self) -> dict[str, str]:
+        """The sides she has noted so far, strongest first, so that one thing keeps one name."""
+        names = dict.fromkeys([*self.grown, *(row[2] for row in self.sightings)])
+        latest = {row[2]: row[5] for row in self.sightings}
+        return {name: self.grown.get(name) or latest.get(name, "")
+                for name in sorted(names, key=self.wanted, reverse=True)[:NOTED]}
+
+    def sighted(self, subject: str, found: dict, closeness: float, now: float | None = None) -> str | None:
+        """One sighting of a person shaping her; the name when it has been wanted enough and has no sentence yet. "More"
+        counts once in a day, "less" every time: nobody should have to come back on four days to be heard. Whatever word
+        they use, "less" is about what they are meeting, her strongest side: asked to stop, a person says 端着, not 御姐."""
+        name, more, now = found["name"], found["more"], time.time() if now is None else now
+        if closeness < TEACH_FROM:
+            return None
+        with self.lock:
+            if not more and name not in self.grown and self.grown:
+                name = max(self.grown, key=self.wanted)
+            if more and any(row[0] == subject and row[2] == name and row[3] and now - row[1] < SPACED
+                            for row in self.sightings):
+                return None
+            self.sightings.append((subject, now, name, more, closeness, found["what"]))
+            with self._open() as db:
+                db.execute("insert into sightings (subject, at, name, more, closeness, what) values (?, ?, ?, ?, ?, ?)",
+                           (subject, now, name, int(more), closeness, found["what"]))
+            if name in self.grown:
+                if self.objected(name, now) >= GROWS:
+                    self.drop_side(name)
+                return None
+            return name if self.wanted(name, now) >= GROWS else None
+
+    def wants(self, name: str) -> list[str]:
+        """What people asked of her under this name, the latest last: what her sentence is made from."""
+        return list(dict.fromkeys(row[5] for row in self.sightings if row[2] == name and row[3] and row[5]))[-WANTS:]
+
+    def grow(self, name: str, made: dict) -> None:
+        """A side of hers from now on. A sentence saying what one of hers says is that side, whatever her model calls it:
+        people say 绿茶, pick-me and ぶりっ子, and told to reuse a name she reworded the sentence and kept the new word."""
+        with self.lock:
+            like = max(self.grown, key=lambda held: overlap(self.grown[held], made["what"]), default=None)
+            new = like if like and overlap(self.grown[like], made["what"]) >= SAME else made["name"]
+            self.sightings = [(row[0], row[1], new if row[2] == name else row[2], *row[3:]) for row in self.sightings]
+            self.grown[new] = made["what"]
+            with self._open() as db:
+                db.execute("update sightings set name = ? where name = ?", (new, name))
+                db.execute("insert or replace into sides values (?, ?, 0)", (new, made["what"]))
+
+    def write_side(self, name: str, what: str) -> None:
+        """A person's own sentence for a side, or a new side by hand: a person can write a better one."""
+        with self.lock:
+            self.grown[name] = what
+            with self._open() as db:
+                db.execute("insert or replace into sides values (?, ?, 1)", (name, what))
+
+    def drop_side(self, name: str) -> bool:
+        """Gone, and what taught it with it, so growing it again starts over."""
+        with self.lock:
+            found = self.grown.pop(name, None) is not None
+            self.sightings = [row for row in self.sightings if row[2] != name]
+            with self._open() as db:
+                db.execute("delete from sides where name = ?", (name,))
+                db.execute("delete from sightings where name = ?", (name,))
+        return found
 
     def language(self, subject: str, reading: dict | None, said: str) -> str:
         """What she answers in: what the reading names; a message too short to tell keeps the last one."""
@@ -568,6 +724,8 @@ class Gut:
             with self._open() as db:
                 gone = db.execute("delete from lessons where subject = ?", (subject,)).rowcount
                 db.execute("delete from people where subject = ?", (subject,))
+                db.execute("delete from sightings where subject = ?", (subject,))
+                db.execute("delete from sides where own = 0 and name not in (select name from sightings where more = 1)")
                 db.execute("delete from state")
             self.awake = False
         self.wake()
@@ -576,7 +734,8 @@ class Gut:
 
     def report(self) -> dict:
         return {"lessons": len(self.net.lessons), "starter": round(self.net.share(), 2), "born": len(self.net.born),
-                "tone": {name: round(value, 3) for name, value in self.tone.v.items()}, **self.last}
+                "tone": {name: round(value, 3) for name, value in self.tone.v.items()}, "sides": dict(self.grown),
+                "noted": {name: round(self.wanted(name), 1) for name in self.noted()}, **self.last}
 
     def close(self) -> None:
         if self.db is not None:
@@ -621,8 +780,15 @@ class Turn:
         return " ".join(text for text in (self.told, speak) if text)
 
     async def learn(self, before: list[dict], reply: str) -> dict | None:
-        """After she has answered: her note, and with the form a lesson. Nothing here may hold up a reply: run it
-        beside the conversation. The note, or None when there was no form or she wrote none."""
+        """After she has answered: her note, with the form a lesson, and whether this person is shaping her. Nothing
+        here may hold up a reply: run it beside the conversation. The note, or None when there was no form or she wrote
+        none. The two do not depend on each other: a failed reading of the person loses no lesson."""
+        note, _ = await asyncio.gather(self._note(before, reply), self._shape(before, reply), return_exceptions=True)
+        if isinstance(note, BaseException):
+            raise note
+        return note
+
+    async def _note(self, before: list[dict], reply: str) -> dict | None:
         form = await self.form()
         if form is None:
             return None
@@ -639,3 +805,17 @@ class Turn:
         if gut.teach(self.subject, language, form, note, self.closeness, mine(self.said, reply, language)):
             await asyncio.to_thread(gut.sleep)
         return note
+
+    async def _shape(self, before: list[dict], reply: str) -> None:
+        """Are they making something of her? Who she already is, in her character, is no side."""
+        gut = self.gut
+        if self.closeness < TEACH_FROM:
+            return
+        found = shaping(await self.ask(shaping_messages(before, self.said, reply, gut.noted()), 120))
+        if found is None or found["name"] in self.prompt:
+            return
+        name = gut.sighted(self.subject, found, self.closeness)
+        if name:
+            made = grown_side(await self.ask(grow_messages(name, gut.wants(name), gut.grown), 160))
+            if made:
+                gut.grow(name, made)

@@ -187,7 +187,9 @@ class Kept(unittest.TestCase):
         self.assertAlmostEqual(again.net.vector(FORM, 85)["jealous"], felt["jealous"], places=6)
 
 
-ANSWERS = {"read": json.dumps({**FORM, "language": "en"}), "vote": json.dumps(JEALOUS), "note": json.dumps({"mood": 1, "feel": JEALOUS})}
+ANSWERS = {"read": json.dumps({**FORM, "language": "en"}), "vote": json.dumps(JEALOUS), "note": json.dumps({"mood": 1, "feel": JEALOUS}),
+           "shape": '{"side": null}', "grow": '{"name": "小绿茶", "what": "你先夸她，再（委屈地）让她显得不如你。"}'}
+DAY = 86400
 
 
 class Model:
@@ -197,7 +199,9 @@ class Model:
         self.asked, self.fail, self.hold = [], set(), {}
 
     async def __call__(self, messages, tokens):
-        kind = "read" if messages[0]["content"] == G.FORM else "vote" if G.ASK in messages[-1]["content"] else "note"
+        first = messages[0]["content"]
+        kind = "read" if first == G.FORM else "shape" if first.startswith(G.SHAPE) else "grow" if "一直想让她变成这样" in first \
+            else "vote" if G.ASK in messages[-1]["content"] else "note"
         self.asked.append((kind, messages))
         if kind in self.hold:
             await self.hold[kind].wait()
@@ -260,6 +264,190 @@ class Turns(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.gut.report()["lessons"], 0)
 
 
+class Growing(unittest.IsolatedAsyncioTestCase):
+    """A side of hers, grown from what people keep saying they want of her."""
+
+    async def asyncSetUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.path = Path(self._tmp.name) / "her.db"
+        self.gut = G.Gut(self.path)
+        self.gut.wake()
+        self.addCleanup(lambda: self.gut.close())
+        self.model = Model()
+        self.addCleanup(ANSWERS.__setitem__, "shape", ANSWERS["shape"])
+
+    def asked(self, name="绿茶", more=True, what="说别的女生不好"):
+        ANSWERS["shape"] = json.dumps({"side": {"name": name, "more": more, "what": what}}, ensure_ascii=False)
+
+    async def say(self, closeness=85, subject="discord:1", prompt="You are her."):
+        turn = G.Turn(self.gut, self.model, prompt, "她好烦", subject)
+        await turn.feel([], "", closeness, 3)
+        await turn.learn([], "reply")
+        return turn
+
+    def days(self, count, start=0):
+        real = G.time.time
+        self.addCleanup(setattr, G.time, "time", real)
+        return (lambda day: setattr(G.time, "time", lambda: real() + (start + day) * DAY))
+
+    async def test_the_person_decides_how_long_it_takes(self):
+        days = [next(day + 1 for day in range(30) if G.strength([(n * DAY, True, closeness) for n in range(day + 1)], day * DAY) >= G.GROWS)
+                for closeness in (100, 85, 60, 40)]
+        self.assertEqual(days, [3, 4, 6, 9])
+
+    async def test_one_evening_is_one_sighting(self):
+        self.asked()
+        for _ in range(12):
+            await self.say()
+        self.assertEqual(len(self.gut.sightings), 1)
+        self.assertEqual(self.gut.report()["sides"], {})
+
+    async def test_four_days_grow_a_side_from_what_they_wanted_and_it_outlasts_her_memory(self):
+        move = self.days(5)
+        self.asked()
+        for day in range(4):
+            move(day)
+            await self.say()
+        self.assertEqual(self.gut.grown, {"小绿茶": "你先夸她，再委屈地让她显得不如你。"})  # no brackets: it goes inside the line
+        grow = next(messages for kind, messages in self.model.asked if kind == "grow")
+        self.assertIn("- 说别的女生不好", grow[0]["content"])
+        self.assertIn("「绿茶」", grow[0]["content"])
+        self.assertNotIn("已经有的样子", grow[0]["content"])
+        self.assertEqual(self.gut.sightings[0][2], "小绿茶")  # and what taught it goes by the new name
+        self.gut.close()
+        self.gut = G.Gut(self.path)
+        self.gut.wake()
+        turn = G.Turn(self.gut, self.model, "Another model entirely.", "嗯", "discord:2")
+        self.assertIn("(Right now your 小绿茶 side is showing: 你先夸她", await turn.feel([], "", 60, 0))
+
+    async def test_she_notes_one_thing_under_one_name(self):
+        move = self.days(2)
+        self.asked()
+        await self.say()
+        move(1)
+        await self.say()
+        shape = [messages for kind, messages in self.model.asked if kind == "shape"]
+        self.assertEqual(shape[0][0]["content"], G.SHAPE)
+        self.assertIn("Sides noted so far: 绿茶 (说别的女生不好)", shape[1][0]["content"])
+
+    async def test_a_stranger_shapes_nothing_and_does_not_meet_it(self):
+        self.gut.write_side("御姐", "你从容。")
+        self.asked()
+        await self.say(closeness=20)
+        self.assertEqual(self.gut.sightings, [])
+        self.assertFalse(any(kind == "shape" for kind, _ in self.model.asked))
+        self.assertNotIn("御姐", await G.Turn(self.gut, self.model, "You are her.", "嗯", "discord:9").feel([], "", 20, 0))
+        self.assertIn("御姐", await G.Turn(self.gut, self.model, "You are her.", "嗯", "discord:9").feel([], "", 40, 0))
+
+    async def test_family_gets_there_before_a_friend(self):
+        move = self.days(5)
+        self.asked()
+        for day in range(4):
+            move(day)
+            await self.say(closeness=60)
+        self.assertEqual(self.gut.grown, {})
+        for day in range(4, 6):
+            move(day)
+            await self.say(closeness=60)
+        self.assertEqual(list(self.gut.grown), ["小绿茶"])
+
+    async def test_who_she_already_is_is_no_side(self):
+        self.asked("傲娇")
+        await self.say(prompt="你是个傲娇的鲸。")
+        self.assertEqual(self.gut.sightings, [])
+
+    async def test_objecting_takes_it_away_and_does_not_wait_for_tomorrow(self):
+        move = self.days(5)
+        self.asked()
+        for day in range(4):
+            move(day)
+            await self.say()
+        self.assertIn("小绿茶", self.gut.grown)
+        self.asked("端着", more=False, what="别这样")  # (not the name she keeps it under: they rarely know it)
+        for _ in range(3):
+            await self.say()
+        self.assertIn("小绿茶", self.gut.grown)
+        await self.say()
+        self.assertEqual(self.gut.grown, {})
+        self.assertEqual(self.gut.sightings, [])
+
+    async def test_a_side_wanted_for_months_goes_as_easily(self):
+        self.gut.grow("x", {"name": "御姐", "what": "你从容。"})
+        for day in range(60):
+            self.gut.sighted("a", {"name": "御姐", "more": True, "what": ""}, 85, now=day * DAY)
+        for _ in range(4):
+            self.gut.sighted("a", {"name": "别这样", "more": False, "what": ""}, 85, now=60 * DAY)
+        self.assertEqual(self.gut.grown, {})
+
+    async def test_a_new_word_for_a_side_she_has_joins_it(self):
+        move = self.days(9)
+        self.gut.write_side("小绿茶", "你先夸她。")
+        self.gut.sighted("a", {"name": "小绿茶", "more": True, "what": ""}, 85)
+        self.asked("ぶりっ子")
+        for day in range(4):
+            move(day)
+            await self.say()
+        grow = next(messages for kind, messages in self.model.asked if kind == "grow")
+        self.assertIn("她已经有的样子：小绿茶（你先夸她。）", grow[0]["content"])
+        self.assertEqual(list(self.gut.grown), ["小绿茶"])  # (what Model answers: the same word)
+        self.assertEqual({row[2] for row in self.gut.sightings}, {"小绿茶"})
+
+    async def test_a_sentence_like_one_of_hers_is_that_side_whatever_it_is_called(self):
+        self.gut.grow("绿茶", {"name": "绿茶", "what": "你别人一提旁人你就软软贬一句酸酸比一句，装弱装无辜不争不抢。"})
+        self.gut.sighted("a", {"name": "pick-me", "more": True, "what": "x"}, 85)
+        self.gut.grow("pick-me", {"name": "pick-me", "what": "你别人一提旁人你就软软贬一句酸酸比一句，还偶尔多酸一点。"})
+        self.assertEqual(list(self.gut.grown), ["绿茶"])
+        self.assertIn("还偶尔多酸一点", self.gut.grown["绿茶"])
+        self.assertEqual(self.gut.sightings[0][2], "绿茶")
+        self.gut.grow("御姐", {"name": "御姐", "what": "你从容，从上往下逗对方。"})
+        self.assertEqual(list(self.gut.grown), ["绿茶", "御姐"])
+
+    async def test_a_side_nobody_stands_behind_does_not_stay_and_the_strongest_shows_first(self):
+        for name, day in (("a", 9), ("b", 12), ("c", 0)):
+            self.gut.grow(name, {"name": name, "what": name + "。"})
+            self.gut.sighted("p", {"name": name, "more": True, "what": ""}, 85, now=G.time.time() - day * DAY)
+        self.assertEqual(list(self.gut.shown(85)), ["c", "a", "b"])
+        self.assertEqual(G.sides(self.gut.shown(85)).count("side is showing"), 2)
+
+    async def test_a_person_forgotten_takes_what_only_they_wanted(self):
+        self.gut.grow("x", {"name": "mine", "what": "1"})
+        self.gut.grow("y", {"name": "shared", "what": "2"})
+        self.gut.write_side("written", "3")
+        self.gut.sighted("a", {"name": "mine", "more": True, "what": ""}, 85)
+        self.gut.sighted("a", {"name": "shared", "more": True, "what": ""}, 85)
+        self.gut.sighted("b", {"name": "shared", "more": True, "what": ""}, 85)
+        self.gut.forget("a")
+        self.assertEqual(set(self.gut.grown), {"shared", "written"})
+        self.assertEqual([row[0] for row in self.gut.sightings], ["b"])
+
+    async def test_a_person_can_rewrite_or_remove_a_side(self):
+        self.gut.grow("x", {"name": "御姐", "what": "draft"})
+        self.gut.write_side("御姐", "你从容。")
+        self.assertEqual(self.gut.report()["sides"], {"御姐": "你从容。"})
+        self.assertTrue(self.gut.drop_side("御姐"))
+        self.assertFalse(self.gut.drop_side("御姐"))
+
+    async def test_a_failed_reading_of_the_person_loses_no_lesson(self):
+        self.model.fail = {"shape"}
+        self.assertIsNotNone((await self.say()) and self.gut.last.get("note"))
+        self.assertEqual(self.gut.report()["lessons"], 1)
+
+    async def test_a_sentence_that_does_not_come_is_asked_for_again(self):
+        move = self.days(6)
+        self.addCleanup(ANSWERS.__setitem__, "grow", ANSWERS["grow"])
+        ANSWERS["grow"], self.model.fail = "no idea", set()
+        self.asked()
+        for day in range(4):
+            move(day)
+            await self.say()
+        self.assertEqual(self.gut.grown, {})
+        ANSWERS["grow"] = '{"name": "小绿茶", "what": "你先夸她。"}'
+        move(4)
+        await self.say()
+        self.assertEqual(list(self.gut.grown), ["小绿茶"])
+
+
 class Draft(unittest.IsolatedAsyncioTestCase):
     async def test_her_model_drafts_the_sentence(self):
         asked = []
@@ -310,6 +498,12 @@ def vectors() -> dict:
     out["mine"] = [G.mine("午饭吃了吗", "吃啦喵 nya", "zh"), G.mine("hi there", "Fine nya 本鲸 😊", "en"), G.mine("元気", "いいにゃ nya", "ja")]
     out["written"] = [G.written('{"mood": 9, "feel": {"sad": 2, "calm": 2, "angry": 9}}'), G.written('{"feel": {"angry": 1}}')]
     out["languages"] = [G.language_of(text) for text in ("今天好累", "今日好攰", "おはよう", "hello")]
+    out["strength"] = [round(G.strength([(0, True, closeness), (86400, True, closeness), (2 * 86400, False, 60)], 10 * 86400), 9)
+                       for closeness in (40, 60, 85, 100)]
+    out["shaping"] = [G.shaping(text) for text in ('{"side": null}', 'nothing', '{"side": {"name": " 「小 绿茶」 ", "more": false, "what": " 说 她\\n不好 "}}',
+                                                   '{"side": {"name": "御姐", "what": "' + "从容" * 40 + '"}}', '{"side": {"name": ""}}')]
+    out["overlap"] = [round(G.overlap(one, other), 9) for one, other in (("你先夸她，再让她不如你。", "你先夸她，再 让她不如你！"), ("你从容。", "你先夸她。"), ("", "x"))]
+    out["grown side"] = [G.grown_side(text) for text in ('{"name": "（御姐）", "what": "你从容（不急）\\n，不撒娇。"}', '{"name": "x"}', 'no')]
     return out
 
 
