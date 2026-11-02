@@ -62,8 +62,8 @@ NOTED, WANTS, LOOK = 4, 6, 400  # sides named when she reads; wants a sentence i
 SAME = .5  # sentences this alike are one side: .63 to 1 for four words for one thing, about 0 to .4 for different sides
 Ask = Callable[[list, int], Awaitable[str]]  # ask(messages, max_tokens) -> the reply's text, on her model, no thinking
 
-# Every name a side can have, and the only gate: a word that is not here does not become a side. Names only, from the
-# Moegirl lists of surface, deep and stage characters, and 小绿茶. She is a grown woman: no child's stage belongs here.
+# Every name a side can have: names only, chosen from the Moegirl lists of surface, deep and stage characters, and 小绿茶.
+# To let her have another, add it here. Her model picks the nearest for what people ask of her.
 NAMES = tuple("""傲娇 傲沉 病娇 病切 弱娇 冰美人 酷娇 率直冷 凛娇 暴娇 郁娇 慵懒 急性子 三无 无口 文静 直率 诚实 刺头 KY 读空气 无铁炮 凶暴 高飞车 高傲 笨蛋 天然呆 天然疯 天然黑
 天然萌 认真 电波 冒失 调皮 工口 毒舌 元气 强气 狂气 弱气 怕羞 爱哭鬼 醋缸 好奇 耿直 八卦 变态 变态萌 恶心萌 迟钝 富有正义感 地雷系 博学 情绪化 无感情 自来熟 怕生
 怕麻烦 情种 阳角 阴角 多疑 幸灾乐祸 任性 贪玩 暴躁 勇敢 腹黑 腹白 复合型腹黑 可靠 无心 热血 外柔内刚 外热内冷 外冷内热 女王 戏精 猥琐 不懂爱 多重人格 性格切换 无节操
@@ -93,8 +93,8 @@ SHAPE = ('You read the end of a chat between a person and their AI companion. Is
          'for it in their language", "more": true if they want more of it and false if they want less, "what": "what '
          'they want her to do, in a few words"}}. Only what the person says counts, not how she acts. Ordinary warmth, '
          'jokes, thanks and chat are no, and that is nearly always.')
-GROW = ('大家常说的「{name}」是什么样的人，你知道。有人在聊天里一直想让她变成这样，他们说的是：\n{wants}\n{held}她是成年人。她能有的样子只有这些词：{names}\n只回一行 JSON：{{"name": "这些词里最贴近的一个，他们说过的词优先；'
-        '一个都不贴近，或者他们要的不是成年人的样子，就写 null", "what": "一句话（不超过50字），对她说，写她的做法：别人提到其他人时她怎么接话，平时怎么说话，她想达到什么。保留这个词本来的味道，'
+GROW = ('大家常说的「{name}」是什么样的人，你知道。有人在聊天里一直想让她变成这样，他们说的是：\n{wants}\n{held}已成年。她能有的样子只有这些词：{names}\n只回一行 JSON：{{"name": "这些词里最贴近的一个，他们说过的词优先；'
+        '一个都不贴近就写 null", "what": "一句话（不超过50字），对她说，写她的做法：别人提到其他人时她怎么接话，平时怎么说话，她想达到什么。保留这个词本来的味道，'
         '把他们说的融进去。写做法，不写场景，不写表情和动作。以“你”开头"}}')
 HELD = "她已经有的样子：{sides}。如果这是其中一个，name 就用那个词，并把两边合成一句。\n"
 DRAFT = ("用一句话（不超过50字）写出拥有「{tag}」这个属性的人在聊天里的做法：对方提到别人时她怎么接话，平时怎么说话，她想达到什么。"

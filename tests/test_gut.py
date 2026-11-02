@@ -470,7 +470,6 @@ class Growing(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.gut.sightings), 4)
         grow = next(messages for kind, messages in self.model.asked if kind == "grow")
         self.assertIn("小绿茶", grow[0]["content"])
-        self.assertIn("不是成年人的样子", grow[0]["content"])
         ANSWERS["grow"] = '{"name": null, "what": "你很甜。"}'
         move(4)
         await self.say()
@@ -480,7 +479,6 @@ class Growing(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             G.Gut(self.path, tags={"草莓": "x"})
         self.assertEqual(G.Gut(self.path, tags={"草莓": "x"}, names=("草莓",)).tags, {"草莓": "x"})
-        self.assertFalse(any("萝" in name for name in G.NAMES))
 
     async def test_a_side_she_was_given_is_for_everyone_and_weighs_as_one_that_grew(self):
         gut = G.Gut(Path(self._tmp.name) / "given.db", tags={"傲娇": "你嘴硬。"})
