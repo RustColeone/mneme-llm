@@ -46,6 +46,13 @@ def companion(clock=None, embed=None, path=":memory:"):
     return m, clock
 
 
+def talk(m, clock, days, subject="u"):
+    """The person talks on each of the next `days` days, of nothing that matters here."""
+    for _ in range(days):
+        clock.now += DAY
+        m.episodes.keep(subject, [("Leo", "topic1")])
+
+
 def embedder(calls=None):
     def embed(texts):
         if calls is not None:
@@ -145,12 +152,32 @@ class FadingTests(unittest.TestCase):
     def test_fading_changes_no_order_and_with_words_alone_nothing_leaves(self):
         m, clock = companion()
         old = m.episodes.keep("u", [("Leo", "my violin teacher Anna moved to Berlin")])
-        clock.now += 200 * DAY
+        talk(m, clock, 200)
         m.episodes.keep("u", [("Leo", "Anna says hi")])
         self.assertLess(m.episodes.retention(m.episodes.get(old.id)), 0.01)
         budget = len(m.episodes.shown(old)) + 2
         self.assertEqual([e.id for e in m.episodes.look("u", "Anna violin Berlin", budget=budget)], [old.id])
         self.assertEqual([e.id for e in m.episodes.search("u", "Anna violin Berlin", limit=1)], [old.id])
+
+    def test_only_days_they_talked_count_and_a_day_turns_at_four_in_the_morning(self):
+        m, clock = companion()
+        old = m.episodes.keep("u", [("Leo", "my violin teacher Anna moved to Berlin")])
+        clock.now += 365 * DAY  # a year away: nothing fades
+        self.assertAlmostEqual(m.episodes.retention(m.episodes.get(old.id)), math.exp(-1 / 30))  # (today is one)
+        m.episodes.keep("u", [("Leo", "I am back")])
+        clock.now += DAY
+        m.episodes.keep("u", [("Leo", "and again")])
+        clock.now += 60 * DAY
+        self.assertAlmostEqual(m.episodes.retention(m.episodes.get(old.id)), math.exp(-3 / 30))
+        late = datetime(2026, 3, 1, 23, tzinfo=UTC).timestamp()
+        self.assertEqual(m.episodes.day_of(late + 4 * 3600), m.episodes.day_of(late))  # 3 a.m. is still the day before
+        self.assertEqual(m.episodes.day_of(late + 5 * 3600), m.episodes.day_of(late) + 1)  # and 4 a.m. is not
+
+    def test_the_same_day_fades_nothing(self):
+        m, clock = companion()
+        old = m.episodes.keep("u", [("Leo", "Anna")])
+        clock.now += 3600
+        self.assertEqual(m.episodes.retention(m.episodes.get(old.id)), 1.0)
 
     def test_what_a_search_finds_is_rehearsed_and_fades_slower(self):
         m, clock = companion()
@@ -190,10 +217,11 @@ class CutTests(unittest.TestCase):
 
     def test_the_bar_rises_as_the_exchange_fades_and_a_search_still_finds_it(self):
         self.assertEqual(self.look("a kitten", (0.1, 0.5)), [self.cat.id])  # bars 0.4 fresh, 0.8 faded
-        self.clock.now += 200 * DAY
+        talk(self.m, self.clock, 200)
+        asyncio.run(self.m.episodes.prepare("u"))
         self.assertEqual(self.look("a kitten", (0.1, 0.5)), [])
         self.assertEqual(self.look("a kitten", (0.1, 0.1)), [self.cat.id])
-        found = asyncio.run(self.m.episodes.asearch("u", "a kitten"))
+        found = asyncio.run(self.m.episodes.asearch("u", "a kitten", limit=1))
         self.assertEqual([e.id for e in found], [self.cat.id])
 
     def test_with_words_alone_there_is_no_bar(self):
@@ -221,7 +249,7 @@ class ShortenTests(unittest.TestCase):
         kept = m.episodes.keep("u", [("Leo", long)])
         fresh = m.episodes.look("u", "Anna Berlin", shorten=True)
         self.assertEqual(len(fresh[0].lines[0][1]), episodes_module.SHOWN_LINE)
-        clock.now += 400 * DAY
+        talk(m, clock, 400)
         faded = m.episodes.look("u", "Anna Berlin", shorten=True)[0].lines[0][1]
         self.assertEqual(len(faded), int(episodes_module.SHOWN_LINE * episodes_module.FLOOR))
         self.assertTrue(faded.startswith("Anna") and faded.endswith("Berlin"))

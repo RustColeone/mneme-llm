@@ -119,6 +119,14 @@ create table if not exists episode_vectors (
     episode_id integer not null, embedder text not null, vector blob not null,
     primary key (episode_id, embedder)
 );
+create table if not exists surfaces (
+    space text not null, subject text not null, since real not null, summary text not null, updated_at real not null,
+    primary key (space, subject)
+);
+create table if not exists first_prompts (
+    space text not null, subject text not null, text text not null, at real not null, by_command integer not null,
+    send integer not null, primary key (space, subject)
+);
 create table if not exists episode_spread (
     space text not null, subject text not null, embedder text not null, bins text not null, pairs integer not null,
     primary key (space, subject, embedder)

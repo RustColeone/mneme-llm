@@ -14,15 +14,18 @@ They come back two ways:
              old thing asked about is still found; what it finds is rehearsed, and fades slower from then on.
 
 Ranking is BM25 over the search terms (`text.terms`), fused by reciprocal rank with closeness in meaning (tier 1's
-vectors); with no embedder, BM25 alone. Retention is R = e^(−t/S): t the time since the exchange was said or last
-rehearsed, S its stability (`days`, 30 to start). A rehearsal multiplies S by 1.5 + 3·(1 − R), so a thing that comes
-back just as it was fading lasts much longer, and it is fresh again. An exchange rehearses the earlier ones it is
-about: its three nearest in meaning, when they are closer than 98% of the pairs of this person's exchanges.
+vectors); with no embedder, BM25 alone. Retention is R = e^(−t/S): t the talking days since the exchange was said or
+last rehearsed, S its stability (`days`, 30 to start). Only days the person talked count, and a day turns at 4 in the
+morning (`dates.talking_day`): someone away for a year comes back to what they left, as nobody forgets by sleeping. A
+rehearsal multiplies S by 1.5 + 3·(1 − R), so a thing that comes back just as it was fading lasts much longer, and it
+is fresh again. An exchange rehearses the earlier ones it is about: its three nearest in meaning, when they are closer
+than 98% of the pairs of this person's exchanges.
 """
 
 from __future__ import annotations
 
 import asyncio
+import bisect
 import heapq
 import json
 import math
@@ -206,6 +209,8 @@ class Episodes(Speaks, Resolves):
         self.zone, self.meaning, self.clock = zone, meaning, clock
         self._matrices: OrderedDict[tuple[str, str], _Matrix] = OrderedDict()
         self._queries: OrderedDict[str, object] = OrderedDict()  # recent queries' vectors (a turn asks again)
+        self._talked: OrderedDict[str, tuple] = OrderedDict()  # people's talking days, with what they were read from
+        self._turning: dict[int, int] = {}  # a quarter of an hour's talking day
 
     # ---- writing ---------------------------------------------------------------------------------
     def keep(self, subject: str, exchange, *, at: float | None = None, conversation: str = "") -> Episode | None:
@@ -298,17 +303,48 @@ class Episodes(Speaks, Resolves):
         stamp = dates.local(episode.at, self.zone).strftime("%d %B %Y, %H:%M")
         return f"[{stamp}]\n{episode.text}"
 
+    def day_of(self, at: float) -> int:
+        """`dates.talking_day` for many moments: a day turns on a quarter of an hour in every zone."""
+        quarter = int(at // 900)
+        day = self._turning.get(quarter)
+        if day is None:
+            day = self._turning[quarter] = dates.talking_day(at, self.zone)
+        return day
+
+    def talking_days(self, subject: str) -> list[int]:
+        """The person's talking days, in order: the days an exchange of theirs was kept (`dates.talking_day`)."""
+        subject = self.who(subject)
+        mark = tuple(self.store.row("select count(*), max(at) from episodes where space = ? and subject = ?",
+                                    (self.space, subject)))
+        known = self._talked.get(subject)
+        if known is None or known[0] != mark:
+            found = sorted({self.day_of(row["at"]) for row in self.store.rows(
+                "select at from episodes where space = ? and subject = ?", (self.space, subject))})
+            known = self._talked[subject] = (mark, found)
+            while len(self._talked) > MATRICES:
+                self._talked.popitem(last=False)
+        self._talked.move_to_end(subject)
+        return known[1]
+
+    def _kept(self, row, now: float, days: list[int]) -> float:
+        """R of an exchange (or its row): t counts the talking days after its last day, up to today, which is one
+        because they are talking now."""
+        last = max(row["at"], row["recalled_at"] or 0.0)
+        since, today = self.day_of(last), self.day_of(now)
+        passed = bisect.bisect_left(days, today) - bisect.bisect_right(days, since) + 1 if today > since else 0
+        return math.exp(-passed / max(row["stability"], 1e-6))
+
     def _rehearse(self, ids: Iterable[int], now: float) -> None:
         """Each exchange recalled at `now`: its stability grows, the more the further it had faded, and it is fresh."""
         ids = list(ids)
         if not ids:
             return
-        for row in self.store.rows(f"select id, at, recalled_at, stability from episodes where id in "
+        for row in self.store.rows(f"select id, subject, at, recalled_at, stability from episodes where id in "
                                    f"({', '.join('?' * len(ids))})", ids):
             if row["recalled_at"] is not None and row["recalled_at"] >= now:
                 continue  # (one moment, one rehearsal: and a late vector's, from before it, counts nothing)
             last = max(row["at"], row["recalled_at"] or 0.0)
-            kept = math.exp(-max(0.0, now - last) / (max(row["stability"], 1e-6) * DAY))
+            kept = self._kept(row, now, self.talking_days(row["subject"]))
             self.store.execute("update episodes set stability = ?, recalled_at = ?, recalls = recalls + 1 where id = ?",
                                (min(STRONGEST, row["stability"] * (1.5 + 3 * (1 - kept))), max(last, now), row["id"]))
 
@@ -376,8 +412,8 @@ class Episodes(Speaks, Resolves):
     def retention(self, episode: Episode, now: float | None = None) -> float:
         """How much of it is still remembered (R, from 1 when it was said or rehearsed down to 0)."""
         now = self.clock() if now is None else now
-        last = max(episode.at, episode.recalled_at or 0.0)
-        return math.exp(-max(0.0, now - last) / (max(episode.stability, 1e-6) * DAY))
+        return self._kept({"at": episode.at, "recalled_at": episode.recalled_at, "stability": episode.stability}, now,
+                          self.talking_days(episode.subject))
 
     def look(self, subject: str, query: str, *, budget: int = 6000, conversation: str = "", skip: int = 0,
              cut: tuple[float, float] | None = (CUT, CUT_FADED), shorten: bool = False,
@@ -452,15 +488,16 @@ class Episodes(Speaks, Resolves):
 
     # ---- showing ---------------------------------------------------------------------------------
     def render(self, episodes: list[Episode], *, user_name: str | None = None, header: str | None = None,
-               search: bool = False) -> str:
+               search: bool = False, own: bool = False) -> str:
         """A block for a prompt: a header saying these are data and asking for the person check (is it about this
-        person and this thing?), then each exchange with its number and date. `search`: the model has the search
-        tool, and is told to look before it says it does not remember; with nothing to show, that is all it is told
-        ("" without `search`)."""
+        person and this thing?), then each exchange with its number and date. `own`: it is the person's own
+        conversation with the companion, what they said to it in the first place, so the header only says what this
+        is. `search`: the model has the search tool, and is told to look before it says it does not remember; with
+        nothing to show, that is all it is told ("" without `search`)."""
         if not episodes:
             return say(self.words, "said.none_search") if search else ""
         if header is None:
-            header = say(self.words, "said.header", who=user_name or episodes[0].subject) + \
+            header = say(self.words, "said.own" if own else "said.header", who=user_name or episodes[0].subject) + \
                 say(self.words, "said.unsure_search" if search else "said.unsure")
         return "\n\n".join([header, *(self.shown(episode) for episode in episodes)])
 
@@ -526,12 +563,11 @@ class Episodes(Speaks, Resolves):
             floor = self.meaning.set_floor
             lines = (floor + cut[0], floor + cut[1])
         if lines:
-            now = self.clock()
+            now, days = self.clock(), self.talking_days(subject)
             for row in rows:
                 id = row["id"]
                 if id in close:  # (one with no vector yet is not judged)
-                    last = max(row["at"], row["recalled_at"] or 0.0)
-                    kept = math.exp(-max(0.0, now - last) / (max(row["stability"], 1e-6) * DAY))
+                    kept = self._kept(row, now, days)
                     if close[id] < lines[0] + (1 - kept) * (lines[1] - lines[0]):
                         del fused[id]
         return sorted(fused, key=lambda id: (-fused[id], -id))

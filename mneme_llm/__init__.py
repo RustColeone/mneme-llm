@@ -8,6 +8,7 @@
     m.remember("discord:42", "养了一只叫年糕的猫", kind="fact", key="pet.name", importance=4)
     system_prompt += await m.aprompt("discord:42", query=user_message, user_name="Leo", said=6000)
     await m.aobserve("discord:42", [("Leo", user_message), ("大肥鱼", reply)], user_name="Leo")
+    context = m.surface.read("discord:42").messages   # what was said lately, as real turns (`surface.py`)
 
 Swap the model behind your app and point it at the same file: the facts, the history and the mood carry over.
 """
@@ -35,8 +36,10 @@ from .people import People
 from .providers import Unavailable, run
 from .relations import Relations, Relationship, Role
 from .store import SCHEMA_VERSION, Store
+from .surface import First, Surface, View
 
 __version__ = "0.3.0"
+RECALL_FOUND = 5  # exchanges a search adds to a look when a message reaches back
 
 
 def _optional(module: str, name: str):
@@ -130,6 +133,11 @@ class Mneme:
         self.aliases = Aliases(self.store, space, display_language=words, people=self.people, clock=clock)
         self.episodes = Episodes(self.store, space, days=own.get("memory.said_days"), zone=zone,
                                  display_language=words, meaning=self.meaning, people=self.people, clock=clock)
+        self.surface = Surface(self.store, space, self.episodes, days=own.get("memory.surface_days"),
+                               floor=own.get("memory.surface_floor"), cap=own.get("memory.surface_cap"),
+                               window=own.get("memory.surface_window"), companion_name=self.companion_name,
+                               display_language=words, prompts=self.prompts, people=self.people, complete=complete,
+                               clock=clock)
         self.said_budget = own.get("memory.said_budget")
         fresh = own.get("memory.said_cut")  # (a faded exchange's bar is never under a fresh one's; −1: none)
         self.said_cut = (fresh, max(fresh, own.get("memory.said_cut_faded")))
@@ -229,7 +237,7 @@ class Mneme:
         return self.people.of(subject)
 
     def _join(self, old: str, new: str) -> None:
-        for part in (self.memory, self.mood, self.relations, self.aliases, self.episodes):
+        for part in (self.memory, self.mood, self.relations, self.aliases, self.episodes, self.surface):
             part.join(old, new)
 
     def forget(self, subject: str, *, id: int | None = None, key: str | None = None) -> int:
@@ -242,16 +250,29 @@ class Mneme:
 
     def erase(self, subject: str) -> int:
         """Everything about a person, gone for good ("forget me"): notes, history, vectors, what they taught the
-        word centroids, profile card, recall log, every exchange kept word for word, mood and its timeline, their
-        role, their alias and the links of their other accounts. Returns how many notes there were."""
+        word centroids, profile card, recall log, every exchange kept word for word, the surface and their first
+        prompt, mood and its timeline, their role, their alias and the links of their other accounts. Returns how many
+        notes there were."""
         with self.store.transaction():
             subject = self.people.of(subject)
             count = self.memory.erase(subject)
             self.episodes.erase(subject)
+            self.surface.erase(subject)
             self.mood.reset(subject)
             self.relations.remove(subject)
             self.aliases.remove(subject)
             self.people.remove(subject)
+        return count
+
+    def wipe(self, subject: str) -> int:
+        """What she remembers of a person gone for good: notes, profile card, every exchange, the surface and their
+        first prompt. Who they are to her stays: their role, closeness, alias, mood and accounts, and whatever a gut
+        kept apart learned from them. Returns how many exchanges there were."""
+        with self.store.transaction():
+            subject = self.people.of(subject)
+            self.memory.erase(subject)
+            count = self.episodes.erase(subject)
+            self.surface.erase(subject)
         return count
 
     def prompt(self, subject: str, query: str = "", *, user_name: str | None = None, mark: bool = True, limit: int = 6,
@@ -303,6 +324,37 @@ class Mneme:
                                           skip=skip, cut=self.said_cut)
         return self.episodes.render(found, user_name=user_name, search=search)
 
+    async def asks_back(self, query: str) -> bool:
+        """Whether a message reaches back to something from before. With nobody to tell, or no answer, it does: a
+        search costs little, and without one she makes things up."""
+        if not self.decider.tiers:
+            return True
+        question = Predicate("recall", self.prompts["asks_back"])
+        try:
+            found = (await self.decider.adecide(query, [question])).get("recall")
+        except Exception:
+            return True
+        return found is None or found.probability >= 0.5
+
+    async def arecollect(self, subject: str, query: str, *, user_name: str | None = None, budget: int | None = None,
+                         conversation: str = "", skip: int = 0, search: bool = False, own: bool = False,
+                         found: int = RECALL_FOUND) -> str:
+        """What comes back for a message, ready for a prompt: the look, and when the message reaches back (`asks_back`,
+        with `search` on) also what a search finds, however faded. Then the look covers what the host still shows too,
+        as a block that leaves that out reads like she has forgotten it. Their same question asked before is left
+        out: all it holds is what she said then, and an "I don't remember" found again is said again. `own`: the
+        person's own conversation with her, so no data label; in a group, what others said keeps it."""
+        back = await self.asks_back(query) if search else False
+        looked = await self.episodes.alook(subject, query, budget=self._said(budget), conversation=conversation,
+                                           skip=0 if back else skip, cut=self.said_cut)
+        kept = list(looked)
+        if back:
+            shown = {item.id for item in kept}
+            kept += (await self.episodes.asearch(subject, query, limit=found + 3, seen=shown))[:found]
+        same = "".join(query.split())
+        kept = sorted((item for item in kept if "".join(item.lines[0][1].split()) != same), key=lambda item: item.at)
+        return self.episodes.render(kept, user_name=user_name, search=search, own=own)
+
     def _said(self, budget: int | None) -> int:
         return self.said_budget if budget is None else max(0, int(budget))
 
@@ -338,6 +390,8 @@ class Mneme:
                                          weight=self.relations.weight(subject)) if judge_mood else None)
         if source == "user":
             self.relations.seen(subject)
+            if keep and lines:
+                self.surface.noticed(subject, lines[0][1])
         notes, worth, error = [], answers.get(WORTH_NAME), ""
         if keep_notes:
             try:
@@ -443,7 +497,7 @@ class Mneme:
         return {"mneme_llm": SCHEMA_VERSION, "space": self.space, "exported_at": time.time(),
                 **self.memory.export_rows(), **self.mood.export_rows(), **self.relations.export_rows(),
                 **self.aliases.export_rows(), **self.people.export_rows(), **self.episodes.export_rows(),
-                **self.config.export_rows()}
+                **self.surface.export_rows(), **self.config.export_rows()}
 
     def import_data(self, data: dict, *, config: bool = False) -> int:
         """Add an export to this space, held to the rules of writing; returns how many notes were added. Its links
@@ -454,13 +508,14 @@ class Mneme:
             raise TypeError("an export is a JSON object")
         rows = {name: data.get(name) if isinstance(data.get(name), list) else []
                 for name in ("memories", "profiles", "moods", "mood_events", "relationships", "aliases", "people",
-                             "episodes", "config")}
+                             "episodes", "surfaces", "first_prompts", "config")}
         with self.store.transaction():
             added = self.memory.import_rows(rows["memories"], rows["profiles"])
             self.mood.import_rows(rows["moods"], rows["mood_events"])
             self.relations.import_rows(rows["relationships"])
             self.aliases.import_rows(rows["aliases"])
             self.episodes.import_rows(rows["episodes"])
+            self.surface.import_rows(rows["surfaces"], rows["first_prompts"])
             for subject, person in self.people.rows_of(rows["people"]):
                 try:
                     self.link(subject, person)
@@ -485,7 +540,7 @@ class Mneme:
         self.close()
 
 
-__all__ = ["Aliases", "Answer", "Chain", "Choice", "Config", "Embeddings", "Emotion", "Episode", "Episodes", "Gut", "KINDS",
+__all__ = ["Aliases", "Answer", "Chain", "Choice", "Config", "Embeddings", "Emotion", "Episode", "Episodes", "First", "Gut", "KINDS",
            "Luna", "Meaning", "Memory", "Mneme", "Mood", "MoodEvent", "MoodSettings", "Note", "Observation",
            "OpenAIEmbeddings", "People", "Predicate", "Prompt", "Recall", "Relations", "Relationship", "Role", "STORED",
-           "Score", "Store", "Turn", "Unavailable", "__version__"]
+           "Score", "Store", "Surface", "Turn", "Unavailable", "View", "__version__"]

@@ -1,6 +1,7 @@
 """Tests for the gut (mneme_llm/gut.py): what stays of a companion without her memory or her model."""
 
 import asyncio
+import contextlib
 import json
 import sqlite3
 import tempfile
@@ -153,7 +154,8 @@ class Kept(unittest.TestCase):
         self.assertEqual(gut.report()["lessons"], 2)
         self.assertNotIn("discord:1", gut.languages)
         self.assertLess(gut.net.vector(FORM, 85)["jealous"], .1)
-        rows = sqlite3.connect(self.path).execute("select count(*) from lessons where subject = 'discord:1'").fetchone()
+        with contextlib.closing(sqlite3.connect(self.path)) as db:
+            rows = db.execute("select count(*) from lessons where subject = 'discord:1'").fetchone()
         self.assertEqual(rows[0], 0)
 
     def test_she_answers_in_the_last_language_when_a_message_is_too_short(self):

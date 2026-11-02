@@ -372,6 +372,41 @@ is still what plays it: on GPT-6.1 Terra a kept side does about half of what it 
 is shaped by people and sits beside the message as a note from the system, so treat it as you would their words: check
 what grew, and keep closeness 40 for people you trust that far.
 
+## Surface and deep memory
+
+Everything said is kept word for word the moment it is said: that is deep memory (`m.episodes`). Compaction never touches
+it. The surface is its newest part, as real turns, because a companion sounds like herself from what she said a moment
+ago, and a model reads turns as its own past and a block of records as data.
+
+```python
+turns = m.surface.read("discord:42")                 # View: messages, summary, tokens
+messages = [system, *turns.messages, user_message]
+await m.surface.alet_go("discord:42", user_name="Leo")   # only if you send it: shortens it at its top
+said = await m.arecollect("discord:42", user_message, user_name="Leo", search=True, own=True)
+```
+
+| | |
+|---|---|
+| Keeps | what the last 30 talking days hold, never less than 70,000 tokens |
+| Lets go | at twice that: the older part becomes one summary, its words still in deep memory |
+| Top | 504,000 tokens, or 80% of a smaller model's window |
+| A day | turns at 4 in the morning, and only days the person talked count, here and in fading |
+
+**Whoever sends the context compacts it.** A host with its own context keeps it and never calls `alet_go`; our copy is
+then only what must read the same on any host, like `m.surface.slice(subject)`. A conversation that starts with nothing
+gets `m.surface.push(subject)` once.
+
+Search is how she reaches past the surface. `arecollect` gives a look, and when a message reaches back to something from
+before, also what a search finds, however faded. With `search=True` give your model the `search` and `read` tools
+(`tools.py`). Fading decides what comes to mind unprompted, and never what a search can find.
+
+**The first prompt.** The first thing a person says, usually who they want her to be, stays apart from the conversation,
+where it does not fade: `m.surface.first`, `set_first`, `drop_first`. `send_first` also sends it with a first push, off by
+default, since they may have grown away from it.
+
+`m.surface.clear(subject)` starts the surface over and keeps deep memory. `m.wipe(subject)` takes what she remembers of a
+person and keeps who they are to her. `m.erase(subject)` takes everything.
+
 ## Using it from any model
 
 **Tools.** Give the model `remember`, `recall`, `forget`, `mood`, `search` and `read` in its API's format, and run

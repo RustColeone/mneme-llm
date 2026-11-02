@@ -9,13 +9,22 @@ from __future__ import annotations
 import math
 import re
 import time
-from datetime import datetime, tzinfo
+from datetime import datetime, timedelta, tzinfo
 
 from .i18n import say
 
 
 def local(timestamp: float, zone: tzinfo | None = None) -> datetime:
     return datetime.fromtimestamp(timestamp, zone) if zone else datetime.fromtimestamp(timestamp).astimezone()
+
+
+DAY_STARTS = 4  # a person's day turns at 4 in the morning: staying up late is still today
+
+
+def talking_day(timestamp: float, zone: tzinfo | None = None) -> int:
+    """The day a moment belongs to, as a number that grows by one a day: the calendar day of `zone`, turning at
+    DAY_STARTS."""
+    return (local(timestamp, zone) - timedelta(hours=DAY_STARTS)).toordinal()
 
 
 def when(timestamp: float, now: float, zone: tzinfo | None = None, lang="en") -> str:

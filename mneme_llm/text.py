@@ -161,6 +161,16 @@ def script(text: str) -> str:
     return max(shares, key=shares.get) if shares else ""
 
 
+WIDE_TEXT = re.compile("[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af\uf900-\ufaff]")
+
+
+def tokens(text: str) -> float:
+    """About how many tokens a model counts in `text`, with no tokenizer: 0.85 a character of Chinese, Japanese or
+    Korean and 0.3 of anything else (within 3% of DeepSeek's count on two months of mixed chat)."""
+    wide = len(WIDE_TEXT.findall(text))
+    return wide * 0.85 + (len(text) - wide) * 0.3
+
+
 CONTROL = re.compile("[\x00-\x08\x0e-\x1b\x7f-\x84\x86-\x9f]")  # control characters that are not whitespace
 SURROGATE = re.compile("[\ud800-\udfff]")
 

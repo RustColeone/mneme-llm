@@ -19,6 +19,24 @@ before 1.0, a minor version may change the Python API, and this file says how.
 - **One side at a time, for a month at least.** She stays in a side, then her sides are drawn again by weight: what people
   asked for, half gone in three months, plus any number set by hand. `Gut.holding` says which, `Gut.weight` how much.
 
+- **The surface: what was said lately, as real turns.** `Mneme.surface` (`surface.py`) is a window on the newest part of
+  Episodes, not a second store: `read` gives chat messages, `slice` the newest few, `push` what goes into a new
+  conversation that starts with nothing. It keeps what the last 30 talking days hold, never less than 70,000 tokens; nothing
+  leaves until it holds twice that, and then `alet_go` turns the older part into a summary, with every word still in
+  Episodes. 504,000 tokens is the top, or 80% of a smaller model's window. A host with a context of its own keeps it and
+  compacts it: whoever sends the context compacts it. `memory.surface_days`, `surface_floor`, `surface_cap`,
+  `surface_window`.
+- **Fading counts talking days.** An exchange's retention counts the days the person talked, each turning at 4 in the
+  morning, not time: nobody forgets by being away or by sleeping. The bar of a look and every rehearsal follow.
+- **A person's first prompt.** The first thing they say is kept apart from the conversation, where it does not fade.
+  `Surface.set_first`, `first` and `drop_first` let them see and change it; `send_first` sends it with a first push, off
+  by default, since they may have grown away from it.
+- **`arecollect`: a look and a search as one call.** When a message reaches back to something from before (`asks_back`), a
+  search comes with the look, and the look also covers what the host still shows, so she never says she can't find
+  what she can see. With no decider, `asks_back` is yes. `own=True` leaves out the data label for a person's own
+  conversation. On two simulated chats in Mandarin, 3k of turns with this matched the whole chat on direct questions.
+- **`Mneme.wipe`.** What she remembers of a person gone, and who they are to her kept.
+
 ## 0.3.0 (2026-10-29)
 
 - **Episodes: what was said, word for word.** `aobserve` now keeps every exchange the person starts, as it was
