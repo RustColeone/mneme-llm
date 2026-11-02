@@ -264,6 +264,14 @@ class Mneme:
             self.people.remove(subject)
         return count
 
+    def everyone(self) -> list[str]:
+        """Everyone anything is kept of, in order."""
+        found: set[str] = set()
+        for table in ("episodes", "memories", "surfaces", "first_prompts"):
+            found |= {row["subject"] for row in self.store.rows(f"select distinct subject from {table} where space = ?",
+                                                                (self.space,))}
+        return sorted(found)
+
     def wipe(self, subject: str) -> int:
         """What she remembers of a person gone for good: notes, profile card, every exchange, the surface and their
         first prompt. Who they are to her stays: their role, closeness, alias, mood and accounts, and whatever a gut
@@ -338,13 +346,14 @@ class Mneme:
 
     async def arecollect(self, subject: str, query: str, *, user_name: str | None = None, budget: int | None = None,
                          conversation: str = "", skip: int = 0, search: bool = False, own: bool = False,
-                         found: int = RECALL_FOUND) -> str:
+                         found: int = RECALL_FOUND, back: bool | None = None) -> str:
         """What comes back for a message, ready for a prompt: the look, and when the message reaches back (`asks_back`,
         with `search` on) also what a search finds, however faded. Then the look covers what the host still shows too,
         as a block that leaves that out reads like she has forgotten it. Their same question asked before is left
         out: all it holds is what she said then, and an "I don't remember" found again is said again. `own`: the
-        person's own conversation with her, so no data label; in a group, what others said keeps it."""
-        back = await self.asks_back(query) if search else False
+        person's own conversation with her, so no data label; in a group, what others said keeps it. `back`: `asks_back`
+        when you asked it already."""
+        back = (await self.asks_back(query) if search else False) if back is None else back
         looked = await self.episodes.alook(subject, query, budget=self._said(budget), conversation=conversation,
                                            skip=0 if back else skip, cut=self.said_cut)
         kept = list(looked)

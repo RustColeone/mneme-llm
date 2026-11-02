@@ -272,7 +272,31 @@ class RecollectTests(unittest.TestCase):
         self.assertTrue(asyncio.run(m.asks_back("今天天气不错")))
 
 
+    def test_what_was_noticed_already_is_not_asked_again(self):
+        m, clock = companion()
+        say(m, clock, "我的猫叫年糕")
+        said = asyncio.run(m.arecollect("u", "我的猫", skip=1, search=True, back=False))
+        self.assertNotIn("年糕", said)
+
+
 class KeepingTests(unittest.TestCase):
+    def test_it_knows_when_it_starts_and_whether_anything_is_in_it(self):
+        m, clock = companion()
+        self.assertEqual(m.surface.began("u"), 0.0)
+        self.assertTrue(m.surface.empty("u"))
+        say(m, clock, "第一句")
+        self.assertFalse(m.surface.empty("u"))
+        m.surface.clear("u")
+        self.assertGreater(m.surface.began("u"), 0.0)
+        self.assertTrue(m.surface.empty("u"))
+
+    def test_everyone_anything_is_kept_of(self):
+        m, clock = companion()
+        say(m, clock, "第一句", subject="b")
+        m.remember("a", "养猫", kind="fact")
+        m.surface.set_first("c", "说话简短")
+        self.assertEqual(m.everyone(), ["a", "b", "c"])
+
     def test_erase_takes_all_of_it(self):
         m, clock = companion()
         say(m, clock, "第一句")

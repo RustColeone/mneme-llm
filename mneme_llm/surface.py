@@ -85,6 +85,16 @@ class Surface(Speaks, Resolves):
         return self.store.row("select since, summary from surfaces where space = ? and subject = ?",
                               (self.space, subject))
 
+    def began(self, subject: str) -> float:
+        """When it starts: 0 until it has let something go or been cleared."""
+        row = self._row(self.who(subject))
+        return row["since"] if row else 0.0
+
+    def empty(self, subject: str) -> bool:
+        subject = self.who(subject)
+        return self.store.row("select 1 from episodes where space = ? and subject = ? and at >= ? limit 1",
+                              (self.space, subject, self.began(subject))) is None
+
     def _held(self, subject: str, conversation: str) -> list:
         """The exchanges in it, oldest first, with what each costs."""
         row = self._row(subject)
