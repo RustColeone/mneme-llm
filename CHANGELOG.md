@@ -15,7 +15,9 @@ before 1.0, a minor version may change the Python API, and this file says how.
 - **Sides that grow from chat.** A short reading after each reply notes when a person calls her a kind of character, asks
   for one, enjoys it or objects. Wanted on separate days by someone close, it becomes a side: a name and one sentence
   from her model, kept in the gut, so it outlasts her memory and her model. Objecting takes it away. `Gut.write_side` and
-  `Gut.drop_side` let a person step in.
+  `Gut.drop_side` let a person step in. A side's name comes from one list, `NAMES` (`names=` for your own).
+- **One side at a time, for a month at least.** She stays in a side, then her sides are drawn again by weight: what people
+  asked for, half gone in three months, plus any number set by hand. `Gut.holding` says which, `Gut.weight` how much.
 
 ## 0.3.0 (2026-10-29)
 

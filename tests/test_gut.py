@@ -394,50 +394,123 @@ class Growing(unittest.IsolatedAsyncioTestCase):
         self.assertEqual({row[2] for row in self.gut.sightings}, {"小绿茶"})
 
     async def test_a_sentence_like_one_of_hers_is_that_side_whatever_it_is_called(self):
-        self.gut.grow("绿茶", {"name": "绿茶", "what": "你别人一提旁人你就软软贬一句酸酸比一句，装弱装无辜不争不抢。"})
+        self.gut.grow("绿茶", {"name": "小绿茶", "what": "你别人一提旁人你就软软贬一句酸酸比一句，装弱装无辜不争不抢。"})
         self.gut.sighted("a", {"name": "pick-me", "more": True, "what": "x"}, 85)
         self.gut.grow("pick-me", {"name": "pick-me", "what": "你别人一提旁人你就软软贬一句酸酸比一句，还偶尔多酸一点。"})
-        self.assertEqual(list(self.gut.grown), ["绿茶"])
-        self.assertIn("还偶尔多酸一点", self.gut.grown["绿茶"])
-        self.assertEqual(self.gut.sightings[0][2], "绿茶")
+        self.assertEqual(list(self.gut.grown), ["小绿茶"])
+        self.assertIn("还偶尔多酸一点", self.gut.grown["小绿茶"])
+        self.assertEqual(self.gut.sightings[0][2], "小绿茶")
         self.gut.grow("御姐", {"name": "御姐", "what": "你从容，从上往下逗对方。"})
-        self.assertEqual(list(self.gut.grown), ["绿茶", "御姐"])
+        self.assertEqual(list(self.gut.grown), ["小绿茶", "御姐"])
 
-    async def test_a_side_nobody_stands_behind_does_not_stay_and_the_strongest_shows_first(self):
-        for name, day in (("a", 9), ("b", 12), ("c", 0)):
-            self.gut.grow(name, {"name": name, "what": name + "。"})
-            self.gut.sighted("p", {"name": name, "more": True, "what": ""}, 85, now=G.time.time() - day * DAY)
-        self.assertEqual(list(self.gut.shown(85)), ["c", "a", "b"])
-        self.assertEqual(G.sides(self.gut.shown(85)).count("side is showing"), 2)
+    def two(self):
+        self.gut.write_side("御姐", "你从容。", 3)
+        self.gut.write_side("病娇", "你只要他。", 1)
 
-    async def test_a_person_forgotten_takes_what_only_they_wanted(self):
-        self.gut.grow("x", {"name": "mine", "what": "1"})
-        self.gut.grow("y", {"name": "shared", "what": "2"})
-        self.gut.write_side("written", "3")
-        self.gut.sighted("a", {"name": "mine", "more": True, "what": ""}, 85)
-        self.gut.sighted("a", {"name": "shared", "more": True, "what": ""}, 85)
-        self.gut.sighted("b", {"name": "shared", "more": True, "what": ""}, 85)
-        self.gut.forget("a")
-        self.assertEqual(set(self.gut.grown), {"shared", "written"})
-        self.assertEqual([row[0] for row in self.gut.sightings], ["b"])
+    async def test_she_stays_in_one_side_for_a_month(self):
+        self.two()
+        start = G.time.time()
+        first = self.gut.holding(start)
+        self.assertEqual(len(first), 1)
+        self.assertEqual({tuple(self.gut.holding(start + day * DAY)) for day in range(30)}, {tuple(first)})
+        self.assertEqual(len(self.gut.shown(85, start)), 1)
+        self.assertEqual(G.sides(self.gut.shown(85, start)).count("side is showing"), 1)
+        self.gut.close()
+        self.gut = G.Gut(self.path)
+        self.gut.wake()
+        self.assertEqual(self.gut.holding(start + 20 * DAY), first)  # a restart is not a new month
 
-    async def test_a_side_is_never_a_child(self):
-        for word in ("萝莉", "合法萝莉", "幼女", "ロリ", "loli", "a little girl"):
-            self.assertIsNone(self.gut.sighted("a", {"name": word, "more": True, "what": ""}, 85))
-        self.assertIsNone(self.gut.sighted("a", {"name": "乖", "more": True, "what": "像小女孩一样"}, 85))
-        self.assertEqual(self.gut.sightings, [])
-        self.gut.grow("x", {"name": "乖", "what": "你说话像小学生。"})
+    async def test_a_month_on_her_sides_are_drawn_again_by_weight(self):
+        self.two()
+        start, months = G.time.time(), Counter()
+        self.gut.holding(start)
+        for month in range(1, 2001):
+            months[self.gut.holding(start + month * G.HOLD)[0]] += 1
+        self.assertAlmostEqual(months["御姐"] / 2000, .75, delta=.04)
+
+    async def test_being_asked_for_a_new_side_waits_for_the_month_and_what_people_asked_counts_for_months(self):
+        self.gut.grow("x", {"name": "御姐", "what": "你从容。"})
+        start = G.time.time()
+        self.gut.holding(start)
+        self.gut.grow("y", {"name": "病娇", "what": "你只要他。"})
+        for day in range(9):
+            self.gut.sighted("a", {"name": "病娇", "more": True, "what": ""}, 85, now=start + day * DAY)
+        self.assertEqual(self.gut.holding(start + 29 * DAY), ["御姐"])
+        now = start + 9 * DAY
+        self.assertAlmostEqual(self.gut.weight("病娇", now + 90 * DAY), self.gut.weight("病娇", now) / 2, delta=.2)
+
+    async def test_a_side_she_is_in_going_away_ends_the_month(self):
+        self.two()
+        start = G.time.time()
+        held = self.gut.holding(start)[0]
+        self.gut.drop_side(held)
+        self.assertEqual(self.gut.holding(start + DAY), list(self.gut.grown))
+
+    async def test_objecting_is_about_the_side_she_is_in(self):
+        self.gut.write_side("御姐", "你从容。", 1)
+        start = G.time.time()
+        self.gut.holding(start)
+        self.gut.write_side("病娇", "你只要他。", 50)
+        self.gut.sighted("a", {"name": "端着", "more": False, "what": ""}, 85, now=start)
+        self.assertEqual(self.gut.sightings[0][2], "御姐")
+
+    async def test_a_side_nobody_asks_for_any_more_stays_until_someone_objects(self):
+        self.gut.grow("x", {"name": "御姐", "what": "你从容。"})
+        self.assertEqual(self.gut.holding(G.time.time() + 3000 * DAY), ["御姐"])
+
+    async def test_a_side_only_takes_a_name_on_the_list(self):
+        self.asked("草莓")
+        self.addCleanup(ANSWERS.__setitem__, "grow", ANSWERS["grow"])
+        ANSWERS["grow"] = '{"name": "草莓", "what": "你很甜。"}'
+        move = self.days(6)
+        for day in range(4):
+            move(day)
+            await self.say()
+        self.assertEqual(self.gut.grown, {})
+        self.assertEqual(len(self.gut.sightings), 4)
+        grow = next(messages for kind, messages in self.model.asked if kind == "grow")
+        self.assertIn("小绿茶", grow[0]["content"])
+        self.assertIn("不是成年人的样子", grow[0]["content"])
+        ANSWERS["grow"] = '{"name": null, "what": "你很甜。"}'
+        move(4)
+        await self.say()
         self.assertEqual(self.gut.grown, {})
         with self.assertRaises(ValueError):
-            self.gut.write_side("萝莉", "x")
+            self.gut.write_side("草莓", "x")
         with self.assertRaises(ValueError):
-            G.Gut(self.path, tags={"幼女": "x"})
-        self.assertFalse(any(G.childlike(word) for word in ("御姐", "孩子气", "childish", "熟女", "傲娇", "早熟")))
+            G.Gut(self.path, tags={"草莓": "x"})
+        self.assertEqual(G.Gut(self.path, tags={"草莓": "x"}, names=("草莓",)).tags, {"草莓": "x"})
+        self.assertFalse(any("萝" in name for name in G.NAMES))
+
+    async def test_a_side_she_was_given_is_for_everyone_and_weighs_as_one_that_grew(self):
+        gut = G.Gut(Path(self._tmp.name) / "given.db", tags={"傲娇": "你嘴硬。"})
+        gut.wake()
+        self.addCleanup(gut.close)
+        self.assertEqual(gut.shown(0), {"傲娇": "你嘴硬。"})
+        self.assertAlmostEqual(gut.weight("傲娇"), G.GROWS)
+
+    async def test_a_person_forgotten_takes_what_only_they_wanted(self):
+        self.gut.grow("x", {"name": "御姐", "what": "1"})
+        self.gut.grow("y", {"name": "病娇", "what": "2"})
+        self.gut.write_side("三无", "3")
+        self.gut.sighted("a", {"name": "御姐", "more": True, "what": ""}, 85)
+        self.gut.sighted("a", {"name": "病娇", "more": True, "what": ""}, 85)
+        self.gut.sighted("b", {"name": "病娇", "more": True, "what": ""}, 85)
+        self.gut.forget("a")
+        self.assertEqual(set(self.gut.grown), {"病娇", "三无"})
+        self.assertEqual([row[0] for row in self.gut.sightings], ["b"])
 
     async def test_a_person_can_rewrite_or_remove_a_side(self):
         self.gut.grow("x", {"name": "御姐", "what": "draft"})
         self.gut.write_side("御姐", "你从容。")
-        self.assertEqual(self.gut.report()["sides"], {"御姐": "你从容。"})
+        found = self.gut.report()
+        self.assertEqual((found["sides"], found["held"], found["days"], found["weights"]), ({"御姐": "你从容。"}, ["御姐"], 30, {"御姐": G.GROWS}))
+        self.gut.write_side("御姐", "你从容。", 2)
+        self.gut.grow("x", {"name": "御姐", "what": "你很从容。"})
+        self.gut.close()
+        self.gut = G.Gut(self.path)
+        self.gut.wake()
+        self.assertEqual(self.gut.weights, {"御姐": 2})  # growing again does not take off what a person set
         self.assertTrue(self.gut.drop_side("御姐"))
         self.assertFalse(self.gut.drop_side("御姐"))
 
@@ -473,10 +546,16 @@ class Draft(unittest.IsolatedAsyncioTestCase):
 
 
 class Sides(unittest.TestCase):
-    def test_a_name_and_a_sentence_and_at_most_two(self):
+    def test_a_name_and_a_sentence(self):
         self.assertEqual(G.sides({"御姐": "你从容。"}), "(Right now your 御姐 side is showing: 你从容。)")
         self.assertEqual(G.sides({}), "")
-        self.assertEqual(G.sides({"a": "1", "b": "2", "c": "3"}).count("side is showing"), 2)
+
+    def test_a_draw_goes_by_weight(self):
+        rolls = iter((.1, .9, .5))
+        self.assertEqual(G.draw({"a": 3.0, "b": 1.0}, 1, lambda: next(rolls)), ["a"])
+        self.assertEqual(G.draw({"a": 3.0, "b": 1.0}, 1, lambda: next(rolls)), ["b"])
+        self.assertEqual(G.draw({"a": 3.0, "b": 1.0}, 2, lambda: .5), ["a", "b"])
+        self.assertEqual(G.draw({}, 1), [])
 
 
 class Vectors(unittest.TestCase):
@@ -515,7 +594,9 @@ def vectors() -> dict:
                        for closeness in (40, 60, 85, 100)]
     out["shaping"] = [G.shaping(text) for text in ('{"side": null}', 'nothing', '{"side": {"name": " 「小 绿茶」 ", "more": false, "what": " 说 她\\n不好 "}}',
                                                    '{"side": {"name": "御姐", "what": "' + "从容" * 40 + '"}}', '{"side": {"name": ""}}')]
-    out["childlike"] = [G.childlike(text) for text in ("合法萝莉", "ロリ系", "LOLI", "a little girl", "御姐", "孩子气", "childish", "shotacon")]
+    out["strength over months"] = [round(G.strength([(0, True, closeness), (2 * 86400, False, 60)], 100 * 86400, G.KEEPS), 9) for closeness in (40, 85)]
+    out["draw"] = [G.draw({"御姐": 3.0, "病娇": 1.0, "三无": .5}, count, lambda: roll) for count, roll in ((1, 0), (1, .5), (1, .99), (2, .5), (5, .2))]
+    out["names"] = list(G.NAMES)
     out["overlap"] = [round(G.overlap(one, other), 9) for one, other in (("你先夸她，再让她不如你。", "你先夸她，再 让她不如你！"), ("你从容。", "你先夸她。"), ("", "x"))]
     out["grown side"] = [G.grown_side(text) for text in ('{"name": "（御姐）", "what": "你从容（不急）\\n，不撒娇。"}', '{"name": "x"}', 'no')]
     return out

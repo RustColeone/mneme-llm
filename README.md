@@ -346,19 +346,28 @@ character, asking her to be one, saying they enjoy it, or objecting to it? Only 
 acts, so her own jealousy never feeds a side. "More" counts once a day per person, by closeness, half gone in two weeks.
 When a side is wanted enough (`GROWS`: about four days for family, six for a friend, nine at closeness 40, sooner when
 several people want it) her model writes one sentence from what the word means and what they asked for, and the gut
-keeps it, so a wipe or another model does not take it. Any word works, in any language; a word already in her character
-is no side. At most two show at once, strongest first, to people at closeness 40 or more. Objecting counts every time,
-in any words, against her strongest side: four times from family and it is gone. A side is never a child: words such as
-萝莉 and 幼女 are not noted, grown or written, and `tags` and `write_side` refuse them.
+keeps it, so a wipe or another model does not take it. People can use any word, in any language, but a side's name comes
+from one list, `gut.NAMES`: 144 words for a character. Her model picks the nearest, or none, and with none nothing grows;
+`tags` and `write_side` take only these names. Pass `names=` to use your own list. A word already in her character is no
+side. Objecting counts every time, in any words, against the side she is in: four times from family and it is gone.
+
+She is in one side at a time, for a month at least, shown to people at closeness 40 or more. When the month is over her
+sides are drawn again by weight, so a side of three parts to one gets about three months in four, in stretches of about
+four months, and the other stretches of about one. A side that has just grown waits its turn, and only a side going away
+ends the month sooner. A weight is what people asked for, half gone in three months, plus any number set by hand. Weight
+works only as how often: in a test on 40 cold messages, "mostly 御姐, a little 病娇" and the reverse came out the same (18
+and 16, 17 and 19), while one side at a time at 3:1 gave 15 and 6. Two sides at once blend if they get along, and if they
+do not one wipes out the other (三无 fell from 27 to 4 beside 御姐 and 腹黑); `TAGS` sets how many she is in at once.
 
 ```python
-gut.report()["sides"]                       # what grew
+gut.report()["sides"], gut.report()["held"]  # what grew, and the side she is in
 gut.write_side("御姐", "你从容，从上往下逗对方。")   # a better sentence, or a side by hand
+gut.write_side("御姐", "你从容。", 3)              # with how much of her it is (GROWS by default)
 gut.drop_side("御姐")                        # gone, with what taught it
 ```
 
 It works best when people say what they want. Someone who only praises what she does and never names it grows sides
-that show little. The sentence is her model's, so it varies and can come out odd; rewrite it when it matters. Her model
+that show little, and they can land on the wrong name: what is near on the list is not always what they meant. The sentence is her model's, so it varies and can come out odd; rewrite it when it matters. Her model
 is still what plays it: on GPT-6.1 Terra a kept side does about half of what it does on DeepSeek, or less. The sentence
 is shaped by people and sits beside the message as a note from the system, so treat it as you would their words: check
 what grew, and keep closeness 40 for people you trust that far.
