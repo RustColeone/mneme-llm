@@ -39,6 +39,7 @@ WINDOW = 1_048_576  # tokens the model reads at most
 SHARE = 0.8         # of them the surface may fill
 DAYS = 30           # talking days it keeps
 SLICE = 3000        # tokens of it that what reads a fixed slice reads
+GIVE_UP = 600.0     # seconds after a failed summary before another try
 SUMMARY = 8000      # characters of a summary
 FIRST = 8000        # characters of a first prompt
 
@@ -58,7 +59,8 @@ def _in_order(exchanges: list) -> list:
 @dataclass(frozen=True)
 class View:
     """The surface as it stands: its messages for a model, oldest first, how many tokens its turns come to, what it
-    keeps and may reach, and `upto`, when the newest of it was said: a host adds only what came after."""
+    keeps and may reach, and `upto`, when the newest of it from the host's chat was said: a host adds what came after.
+    """
     messages: list
     tokens: int
     keep: int
@@ -85,6 +87,7 @@ class Surface(Speaks, Resolves):
         self.span, self.floor, self.cap, self.window = max(1, days), floor, cap, window
         self.companion_name, self.prompts, self.clock = companion_name, prompts or PROMPTS, clock
         self.words = Words.of(display_language)
+        self.rest = providers.Rest(GIVE_UP)  # after a summary failed: a long surface is resent whole by each try
 
     # ---- reading ---------------------------------------------------------------------------------
     def _row(self, subject: str):
@@ -115,10 +118,11 @@ class Surface(Speaks, Resolves):
                 {"role": "user", "content": f"{who}: {said}" if len(others) > 1 and who else said}
                 for who, said in episode.lines]
 
-    def read(self, subject: str, *, user_name: str | None = None) -> View:
+    def read(self, subject: str, *, user_name: str | None = None, here: str = "") -> View:
         """What goes in front of a new message, in any conversation with this person: their first prompt if they asked
         for it, what stands for the older part, and at most `top` tokens of the newest turns (always the newest
-        exchange), whole exchanges, in the order they were said."""
+        exchange), whole exchanges, in the order they were said. `here` is the chat it goes into: what was left
+        unanswered there stays the host's to show, whatever was said in another chat since."""
         subject = self.who(subject)
         row, first = self._row(subject), self.first(subject)
         start = row["start_id"] if row else 0
@@ -129,7 +133,8 @@ class Surface(Speaks, Resolves):
             head.append({"role": "user", "content": say(self.words, "surface.summary", who=user_name or subject,
                                                         summary=row["summary"])})
         return View(head + [message for item in _in_order(kept) for message in self.turns(item)],
-                    int(sum(item.tokens for item in kept)), keep, top, max((item.at for item in kept), default=0.0))
+                    int(sum(item.tokens for item in kept)), keep, top,
+                    max((item.at for item in kept if not here or item.conversation == texts.clip(here, 200)), default=0.0))
 
     def slice(self, subject: str, tokens: int = SLICE) -> list[dict]:
         """The newest `tokens` of it as chat messages (always the newest exchange): the same on any host, for what must
@@ -143,12 +148,13 @@ class Surface(Speaks, Resolves):
         """If it has reached its top, the older part becomes a summary and it holds `keep` tokens again, and True.
         Their words stay in deep memory. For a host that sends the surface; one that compacts its own never calls
         this. With no model (`complete`, or the one given at start), or a failing one, nothing changes: `read` still
-        stops at the top, and the next call tries again. So does an erase, a clear or a link while the model writes."""
+        stops at the top, and it tries again after GIVE_UP seconds. An erase, a clear or a link while the model writes
+        leaves it as they left it."""
         subject, complete = self.who(subject), complete or self.complete
         row = self._row(subject)
         start = row["start_id"] if row else 0
         keep, top = self._bounds(subject, start)
-        if complete is None or self.episodes.tokens_after(subject, start) < top:
+        if complete is None or not self.rest.up() or self.episodes.tokens_after(subject, start) < top:
             return False
         staying = self.episodes.after(subject, start, keep)
         leaving = self.episodes.after(subject, start, before=staying[-1].id) if staying else []
@@ -160,9 +166,11 @@ class Surface(Speaks, Resolves):
                       earlier=earlier, lang=say(self.words, "reflect.language"), turns=turns)
         try:
             summary = (await providers.ask(complete, system, self.prompts["surface_now"])).strip()
-        except Exception:
+        except Exception as error:
+            self.rest.failed(error)
             return False
         if not summary:
+            self.rest.failed(ValueError("the summary came back empty"))
             return False
         first = staying[-1]
         with self.writing(subject) as person:

@@ -265,6 +265,34 @@ class LettingGoTests(unittest.TestCase):
         self.assertEqual(m.surface.read("u").messages[-1]["content"], "写总结的时候说的")
 
 
+class WhereItEndsTests(unittest.TestCase):
+    def test_what_was_left_unanswered_in_a_chat_stays_that_chats(self):
+        m, clock = companion()
+        say(m, clock, "这边", conversation="a")
+        clock.now += 60
+        here = clock.now
+        say(m, clock, "那边", conversation="b")
+        clock.now += 60
+        self.assertEqual(m.surface.read("u", here="a").upto, here - 60)
+        self.assertEqual(m.surface.read("u", here="b").upto, here)
+        self.assertEqual(m.surface.read("u", here="new").upto, 0.0)
+
+    def test_a_failed_summary_waits_before_it_tries_again(self):
+        calls = []
+
+        async def broken(system, user):
+            calls.append(system)
+            raise RuntimeError("down")
+        m, clock = companion(config=small(floor=20, days=1), complete=broken)
+        for number in range(40):
+            say(m, clock, "这是一句不长不短的话", "好的")
+            clock.now += DAY
+        self.assertFalse(asyncio.run(m.surface.alet_go("u")))
+        self.assertFalse(asyncio.run(m.surface.alet_go("u")))
+        self.assertEqual(len(calls), 1)
+        self.assertIn("down", m.surface.rest.error)
+
+
 class ClearTests(unittest.TestCase):
     def test_clearing_leaves_deep_memory_and_the_first_prompt(self):
         m, clock = companion()

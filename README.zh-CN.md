@@ -193,6 +193,32 @@ Write a short impression of {user} as {name} knows them, in {lang}, from these n
 - **导出** 会携带配置；`import_data(data, config=True)`（`import --with-config`）会应用它，
   因为其中的提示词是对你的模型的指令。
 
+## 表层记忆与深层记忆
+
+说过的每一句话都在说出的那一刻逐字保存：这就是深层记忆（`m.episodes`），压缩永远碰不到它。表层记忆是它最新的一段，以真实对话轮次发送。两者是同一个存储，没有任何内容保存两次，表层只是一个起点标记。
+
+```python
+view = m.surface.read("discord:42", user_name="Leo")     # View：messages、tokens、keep、top、upto
+said = await m.alook("discord:42", user_message, user_name="Leo", search=True, own=True)
+messages = [system, *view.messages, said + "\n\n" + user_message]
+await m.surface.alet_go("discord:42", user_name="Leo")   # 回复之后：到顶时缩短
+```
+
+| | |
+|---|---|
+| 保留 | 最近 30 个聊天日的内容，且不少于 70,000 词元 |
+| 放手 | 达到两倍时，较早的部分变成一段摘要，原话仍在深层记忆里 |
+| 上限 | 504,000 词元，或较小模型窗口的 80% |
+| 一天 | 从凌晨 4 点算起，只有对方说过话的日子才计数，淡忘也一样 |
+
+四项都可以设置，想设多高都行：`[memory]` 下的 `surface_days`、`surface_floor`、`surface_cap`、`surface_window`，或作为 `Mneme` 的参数。
+
+**谁发送上下文，谁负责压缩。** 自己有上下文的宿主保留它，不调用 `alet_go`，只读取在任何宿主上都必须一致的部分，比如 `m.surface.slice(subject)`。表层跟着人走，进入任何一个聊天。
+
+**第一条提示。** 一个人最先说的话，通常是希望她成为什么样，会存放在对话之外，不会淡去：`m.surface.first`、`set_first`、`drop_first`。`send_first` 把它放到表层前面，于是新聊天读到的是 {第一条提示} + {表层} + {新消息}。默认关闭，因为对方可能已经不再需要它。
+
+`m.surface.clear(subject)` 让表层重新开始，保留深层记忆。`m.wipe(subject)` 清除她记得的关于这个人的一切，保留这个人对她是谁。`m.erase(subject)` 清除全部。
+
 ## 判断与意思
 
 **判断**（这件事值得记住吗？是哪种感受？好了多少？）是带类型的问题，即 `Predicate`、`Choice` 或 `Score`。由你自己的聊天模型（`complete`）给出一个简短的 JSON 判定，并可说明理由。`judge=` 可以代替它作答：任何带有异步 `adecide(input, questions)`、按问题名称返回答案的对象都可以。判断者失败时会记入日志，并且不给出任何答案。
