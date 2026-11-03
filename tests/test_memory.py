@@ -204,13 +204,13 @@ class RecallTests(unittest.TestCase):
 
 class MovingTests(unittest.TestCase):
     def test_export_and_import_keep_history_and_links(self):
-        source = Mneme(":memory:", "a", luna=False, micro=False)
+        source = Mneme(":memory:", "a")
         source.remember("u", "Lives in Shanghai", kind="fact", key="user.city")
         source.remember("u", "Moved to Hangzhou", kind="fact", key="user.city")
         source.memory.set_profile("u", "card")
         source.mood.apply("u", delta=5, emotions={"happy": 20})
         data = json.loads(json.dumps(source.export_data(), ensure_ascii=False))
-        target = Mneme(":memory:", "b", luna=False, micro=False)
+        target = Mneme(":memory:", "b")
         target.remember("u", "unrelated", kind="fact")  # so ids differ from the source's
         self.assertEqual(target.import_data(data), 2)
         self.assertEqual([n.text for n in target.memory.notes("u", kinds=["fact"])][0], "Moved to Hangzhou")

@@ -69,18 +69,10 @@ class MoodSettings:
     step: float = 6.0            # mood points per scale level (+2 → +12 at most per exchange)
     gain: float = 40.0           # emotion points for a certain feeling
     threshold: float = 0.6       # below this the change is kept but not told
-    # The same, for the tier whose confidence counted: Luna's confidence for a feeling is lower than a chat model's
-    # self-report (several feelings fit at once), so it has a threshold of its own. To be measured in use.
-    thresholds: Mapping[str, float] = field(default_factory=lambda: {"luna": 0.45})
     tell: str = "event"          # "event" (what just moved her), "mood" (only how she feels) or "off"
     emotions: tuple[Emotion, ...] = EMOTIONS
     weights: Mapping[str, float] = field(default_factory=lambda: {"user": 1.0, "speak-up": 0.7, "duty": 0.5})
     skip: frozenset = frozenset({"runtime", "time"})
-
-    def threshold_of(self, judge: str) -> float:
-        """The threshold for a change judged by `judge` ("luna", "luna+prompt": the first tier is the one whose
-        confidence counted)."""
-        return self.thresholds.get(judge.split("+")[0], self.threshold)
 
 
 @dataclass(frozen=True)
@@ -154,7 +146,7 @@ class Mood(Speaks, Resolves):
             if row is None or row["last_event"] is None or row["last_event"] == row["told_event"]:
                 return None
             event = self.store.row("select * from mood_events where id = ?", (row["last_event"],))
-            if event is None or event["confidence"] < s.threshold_of(event["judge"]):
+            if event is None or event["confidence"] < s.threshold:
                 return None
             if mark:
                 self.store.execute("update moods set told_event = ? where space = ? and subject = ?",

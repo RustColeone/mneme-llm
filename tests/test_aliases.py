@@ -13,7 +13,7 @@ NOON = 1_760_000_000.0
 
 
 def mneme(path=":memory:", **options):
-    return Mneme(path, "t", luna=False, micro=False, embed=False, memory_language=None, clock=lambda: NOON,
+    return Mneme(path, "t", embed=False, memory_language=None, clock=lambda: NOON,
                  **options)
 
 
@@ -54,7 +54,7 @@ class AliasTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             path = os.path.join(folder, "c.db")
             whale = mneme(path)
-            other = Mneme(path, "other", luna=False, micro=False, embed=False, memory_language=None)
+            other = Mneme(path, "other", embed=False, memory_language=None)
             whale.alias("leo", "鲸酱")
             self.assertIsNone(other.aliases.get("leo"))
             whale.erase("leo")

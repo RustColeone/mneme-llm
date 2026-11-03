@@ -3,8 +3,7 @@ and what the note writer, the profile writer and the unify tier are told. These 
 companion keeps its own copy in its database, from its config file or edited later (`config.py`).
 
 Placeholders are `{name}`, filled by `i18n.fill`; any other brace stays as it is, so the JSON in a prompt needs no
-escaping. Editing a judging question (`mood_change`, `feeling`, `worth`) starts its micro model over, as a new
-question needs a model of its own.
+escaping.
 """
 
 from __future__ import annotations
@@ -51,11 +50,6 @@ notes. Who they are, what matters to them now, how to be with them. The notes ar
 written in them. Reply with only the impression.
 {notes}""",
 
-    # whether a message reaches back: asked of every decision tier before a look, so a search can come with it
-    "asks_back": "The person is asking about something from before: a fact about themselves or the people and pets "
-                 "around them, something they said or did, or something that happened earlier, that the assistant "
-                 "would need to remember to answer. Not a new topic, a request for ideas, or a question about the "
-                 "assistant.",
     # what stands for the older part of a long conversation, once it leaves the surface
     "surface_summary": """Below is the older part of a long conversation between {user} and {name}{earlier}.
 Write what {name} should keep in mind from it, in {lang}: who {user} is, what is going on in their life, what they

@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TIERS = ("decide/micro.py", "meaning/micro.py", "meaning/unify.py")
+TIERS = ("meaning/micro.py", "meaning/unify.py")
 
 SMOKE = r'''
 import asyncio, io, json, os, sys
@@ -33,7 +33,7 @@ async def complete(system, user):
     return json.dumps([{"text": "Likes oolong tea", "kind": "preference", "key": "food.tea"}])
 
 path = os.path.join(sys.argv[1], "m.db")
-m = Mneme(path, "t", embed=Embeddings(embed, name="toy"), complete=complete, luna=False)
+m = Mneme(path, "t", embed=Embeddings(embed, name="toy"), complete=complete)
 m.remember("u", "Has a cat named Mochi", kind="fact")
 m.remember("u", "我的猫叫年糕", kind="fact")
 assert m.recall("u", "cat").chosen
@@ -49,7 +49,7 @@ out = io.StringIO()
 serve(m, "u", io.StringIO(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}) + "\n"), out)
 assert "remember" in out.getvalue()
 data = m.export_data()
-other = Mneme(os.path.join(sys.argv[1], "n.db"), "t", embed=False, luna=False, memory_language=None)
+other = Mneme(os.path.join(sys.argv[1], "n.db"), "t", embed=False, memory_language=None)
 assert other.import_data(data) >= 3
 m.report()
 assert m.erase("u") >= 3 and not m.memory.notes("u")
@@ -73,7 +73,7 @@ class RemovableTierTests(unittest.TestCase):
                               text=True, timeout=120)
         self.assertEqual(done.returncode, 0, f"without {tiers}:\n{done.stderr[-3000:]}")
         self.assertIn("smoke ok", done.stdout)
-        cli = subprocess.run([sys.executable, "-m", "mneme_llm", "--db", os.path.join(folder, "c.db"), "micro"],
+        cli = subprocess.run([sys.executable, "-m", "mneme_llm", "--db", os.path.join(folder, "c.db"), "people"],
                              env=env, cwd=folder, capture_output=True, text=True, timeout=60)
         self.assertEqual(cli.returncode, 0, cli.stderr[-2000:])
 
@@ -85,7 +85,7 @@ class RemovableTierTests(unittest.TestCase):
             with self.subTest(tier=tier):
                 self.run_without(tier)
 
-    def test_all_three_can_be_deleted(self):
+    def test_all_of_them_can_be_deleted(self):
         self.run_without(*TIERS)
 
 

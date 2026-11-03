@@ -25,7 +25,7 @@ A host needs two moments and nothing else: the message before she answers, and t
     turn = Turn(gut, ask, her_prompt, message, subject)         # her reading starts at once
     line = await turn.feel(before, memory_text, closeness, exchanges)   # beside the message
     ...                                           # she answers
-    await turn.learn(before, reply)               # her note, a lesson, and sleep when it is time
+    await turn.learn(reply)                       # her note, a lesson, and sleep when it is time
 
 `ask(messages, max_tokens)` is an async function calling her own model with thinking off; `before` is the conversation
 so far as chat messages, without the message she is answering. tests/gut_vectors.json pins the numbers, so a port in
@@ -49,7 +49,6 @@ from typing import Awaitable, Callable
 MOODS = ("happy", "calm", "sweet", "tender", "worried", "sad", "jealous")
 NORMAL = {"happy": .269, "calm": .424, "sweet": .165, "tender": .11, "worried": .029, "sad": .002, "jealous": 0.0}
 TEACH_FROM = 40  # closeness: "friendly" in mneme-llm's relations; below it she answers with who she is and learns nothing
-HISTORY = 16  # messages her vote and her note look back on
 LANGUAGES = {"zh": "Mandarin Chinese", "yue": "written Cantonese", "en": "English", "ja": "Japanese"}
 TIME_LIMIT = 3.0  # seconds before her answer: what has not come by then does not hold her up
 TAGS = 1  # sides she is in at once: two side by side blend if they get along (御姐, 病娇: 17, 16 of 40) and if not one is lost (三无: 27 to 4)
@@ -466,20 +465,6 @@ def written(text: str) -> dict | None:
     return {"feel": {name: round(value, 3) for name, value in feel.items() if value}, "mood": mood}
 
 
-def earlier(items, said: str, name: str, limit: int = HISTORY) -> list[dict]:
-    """What was said before the message she is answering, as her turns and theirs."""
-    items = [item for item in items if item.kind == "text" and item.text]
-    at = next((i for i in range(len(items) - 1, -1, -1) if items[i].direction == "in" and items[i].text == said), None)
-    messages: list[dict] = []
-    for item in items[:at][-limit:]:
-        role = "assistant" if item.direction == "out" and item.sender_name in ("", name) else "user"
-        if messages and messages[-1]["role"] == role:
-            messages[-1] = {"role": role, "content": messages[-1]["content"] + "\n\n" + item.text}
-        else:
-            messages.append({"role": role, "content": item.text})
-    return messages
-
-
 def reading_messages(said: str) -> list[dict]:
     return [{"role": "system", "content": FORM}, {"role": "user", "content": said}]
 
@@ -795,6 +780,19 @@ class Gut:
         self.sleep()
         return gone
 
+    def wipe(self) -> int:
+        """All she learned of anyone goes, her sides and her tone with it, and she is as she was born. How many lessons
+        went."""
+        with self.lock:
+            with self._open() as db:
+                gone = db.execute("delete from lessons").rowcount
+                for table in ("people", "sightings", "sides", "state"):
+                    db.execute(f"delete from {table}")
+            self.awake = False
+        self.wake()
+        self.sleep()
+        return gone
+
     def report(self) -> dict:
         return {"lessons": len(self.net.lessons), "starter": round(self.net.share(), 2), "born": len(self.net.born),
                 "tone": {name: round(value, 3) for name, value in self.tone.v.items()}, "sides": dict(self.grown),
@@ -816,7 +814,7 @@ class Turn:
         self.gut, self.ask, self.prompt, self.said, self.subject = gut, ask, prompt, said, subject
         self.began = time.monotonic()
         self.reading = asyncio.ensure_future(ask(reading_messages(said), 300))
-        self.told, self.closeness, self.language = "", 0.0, ""
+        self.told, self.closeness, self.language, self.before = "", 0.0, "", []
 
     async def form(self, wait: float = 30.0) -> dict | None:
         """Her reading, waiting for it (the note may come long after the answer it was too late for)."""
@@ -827,6 +825,7 @@ class Turn:
 
     async def feel(self, before: list[dict], memory: str, closeness: float, exchanges: int) -> str:
         """The line beside the message; "" when nothing came in time, and she answers as she would without a gut."""
+        self.before = before
         voting = asyncio.ensure_future(self.ask(vote_messages(self.prompt, before, memory, self.said), 160))
         await asyncio.wait({self.reading, voting}, timeout=max(.1, TIME_LIMIT - (time.monotonic() - self.began)))
         if not voting.done():
@@ -844,11 +843,12 @@ class Turn:
                          "read": form is not None}
         return " ".join(text for text in (self.told, speak) if text)
 
-    async def learn(self, before: list[dict], reply: str) -> dict | None:
+    async def learn(self, reply: str) -> dict | None:
         """After she has answered: her note, with the form a lesson, and whether this person is shaping her. Nothing
         here may hold up a reply: run it beside the conversation. The note, or None when there was no form or she wrote
         none. The two do not depend on each other: a failed reading of the person loses no lesson."""
-        note, _ = await asyncio.gather(self._note(before, reply), self._shape(before, reply), return_exceptions=True)
+        note, _ = await asyncio.gather(self._note(self.before, reply), self._shape(self.before, reply),
+                                       return_exceptions=True)
         if isinstance(note, BaseException):
             raise note
         return note

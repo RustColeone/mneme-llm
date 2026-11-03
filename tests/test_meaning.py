@@ -44,7 +44,7 @@ class Flaky:
 
 
 def mneme(**options):
-    return Mneme(":memory:", "t", luna=False, micro=False, memory_language=None, **options)
+    return Mneme(":memory:", "t", memory_language=None, **options)
 
 
 class VectorTests(unittest.TestCase):
@@ -131,7 +131,7 @@ class UnifyTierTests(unittest.TestCase):
 
     def test_a_query_in_another_script_is_translated_and_notes_get_glosses(self):
         calls = []
-        m = Mneme(":memory:", "t", luna=False, micro=False, embed=False, complete=self.complete(calls))
+        m = Mneme(":memory:", "t", embed=False, complete=self.complete(calls))
         m.remember("u", "Has a cat named Mochi", kind="fact")
         m.remember("u", "周五有数学考试", kind="plan")
         found = asyncio.run(m.arecall("u", "我的猫叫什么", important=0, recent=0))
@@ -144,7 +144,7 @@ class UnifyTierTests(unittest.TestCase):
         self.assertIn("周五有数学考试", [r.note.text for r in m.recall("u", "exam Friday", recent=0).chosen])  # by gloss
 
     def test_without_any_chat_model_unify_quietly_stands_aside(self):
-        m = Mneme(":memory:", "t", luna=False, micro=False, embed=False)
+        m = Mneme(":memory:", "t", embed=False)
         m.remember("u", "Has a cat", kind="fact")
         found = asyncio.run(m.arecall("u", "我的猫"))
         self.assertEqual(found.tier, "")

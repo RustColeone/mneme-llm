@@ -1,9 +1,9 @@
 """The surface: what was said lately, as real turns, in front of the deep memory that holds every word.
 
 Everything said is kept word for word the moment it is said (`episodes.py`): that is deep memory, and compaction never
-touches it. The surface is not a second store but a window on its newest part. A host that has a context of its own
-keeps it and compacts it itself, since whoever sends the context compacts it, and this stays a copy for what must read
-the same on any host; a host with none sends `read`, and lets `alet_go` shorten it.
+touches it. The surface is not a second store: nothing is kept twice, it is only where the newest part of deep memory
+starts. Whoever sends the context compacts it. A host that sends `read` lets `alet_go` shorten it; one that keeps a
+context of its own compacts that itself, and reads only what must be the same on any host (`slice`).
 
 How much it keeps counts talking days, as fading does (`dates.talking_day`). It keeps what the last `days` talking days
 hold, but never less than `floor` tokens, so six messages a day are not summarised after a month. Nothing leaves until
@@ -14,8 +14,9 @@ the rest says, or 80% of `window` on a smaller model:
 
 A person's first prompt is kept here too: the first thing they said, usually who they want the companion to be. A
 conversation can lose it, so a copy stays out of the conversation, where it does not fade. The person can set it
-(`set_first`), and it goes in with the first push of a new conversation only if they ask (`send_first`), since they
-may have grown away from it. The surface follows the person; a host can ask for one `conversation`.
+(`set_first`), and it goes in front of the surface only if they ask (`send_first`), since they may have grown away from
+it. So a new chat reads {first prompt} + {surface} + {the new message}. The surface follows the person into any chat; a
+host can ask for one `conversation`.
 """
 
 from __future__ import annotations
@@ -53,12 +54,13 @@ def bounds(recent: float, floor: int = FLOOR, cap: int = CAP, window: int = WIND
 
 @dataclass(frozen=True)
 class View:
-    """The surface as it stands: its turns as chat messages, what stands for the older part, and its size."""
+    """The surface as it stands: its messages for a model, oldest first, how many tokens its turns come to, what it keeps
+    and may reach, and `upto`, when the newest of it was said: a host adds only what came after."""
     messages: list
-    summary: str
     tokens: int
     keep: int
     top: int
+    upto: float
 
 
 @dataclass(frozen=True)
@@ -90,11 +92,6 @@ class Surface(Speaks, Resolves):
         row = self._row(self.who(subject))
         return row["since"] if row else 0.0
 
-    def empty(self, subject: str) -> bool:
-        subject = self.who(subject)
-        return self.store.row("select 1 from episodes where space = ? and subject = ? and at >= ? limit 1",
-                              (self.space, subject, self.began(subject))) is None
-
     def _held(self, subject: str, conversation: str) -> list:
         """The exchanges in it, oldest first, with what each costs."""
         row = self._row(subject)
@@ -111,22 +108,17 @@ class Surface(Speaks, Resolves):
         return bounds(recent, self.floor, self.cap, self.window)
 
     def turns(self, episode) -> list[dict]:
-        """An exchange as chat messages. Its lines by the companion are hers; with none named so, the last line is, as
-        an exchange is what the person said and the reply. A line of someone else in a group keeps its name."""
-        lines = episode.lines
-        named = {who for who, _ in lines if who == self.companion_name}
-        reply = len(lines) - 1 if not named and len(lines) > 1 else -1
-        speakers = {who for number, (who, _) in enumerate(lines) if who not in named and number != reply}
-        found = []
-        for number, (who, said) in enumerate(lines):
-            if who in named or number == reply:
-                found.append({"role": "assistant", "content": said})
-            else:
-                found.append({"role": "user", "content": f"{who}: {said}" if len(speakers) > 1 and who else said})
-        return found
+        """An exchange as chat messages: the companion's own lines are hers, by name. Anyone else's are the other side's,
+        named when there are several of them: a group, or a classmate she heard."""
+        others = {who for who, _ in episode.lines if who != self.companion_name}
+        return [{"role": "assistant", "content": said} if who == self.companion_name else
+                {"role": "user", "content": f"{who}: {said}" if len(others) > 1 and who else said}
+                for who, said in episode.lines]
 
-    def read(self, subject: str, *, conversation: str = "") -> View:
-        """The surface now: at most `top` tokens of the newest turns, whole exchanges, in the order they were said."""
+    def read(self, subject: str, *, user_name: str | None = None, conversation: str = "") -> View:
+        """What goes in front of a new message, in any conversation with this person: their first prompt if they asked
+        for it, what stands for the older part, and at most `top` tokens of the newest turns, whole exchanges, in the
+        order they were said."""
         subject = self.who(subject)
         held = self._held(subject, conversation)
         keep, top = self._bounds(subject, held)
@@ -136,9 +128,13 @@ class Surface(Speaks, Resolves):
                 break
             kept.append(item)
             used += cost
-        row = self._row(subject)
-        return View([message for item in reversed(kept) for message in self.turns(item)],
-                    row["summary"] if row else "", int(used), keep, top)
+        row, first = self._row(subject), self.first(subject)
+        head = [{"role": "user", "content": first.text}] if first and first.send else []
+        if row and row["summary"]:
+            head.append({"role": "user", "content": say(self.words, "surface.summary", who=user_name or subject,
+                                                        summary=row["summary"])})
+        return View(head + [message for item in reversed(kept) for message in self.turns(item)], int(used), keep, top,
+                    kept[0].at if kept else 0.0)
 
     def slice(self, subject: str, tokens: int = SLICE, *, conversation: str = "") -> list[dict]:
         """The newest `tokens` of it as chat messages: the same on any host, for what must not depend on one."""
@@ -149,17 +145,6 @@ class Surface(Speaks, Resolves):
             kept.append(item)
             used += cost
         return [message for item in reversed(kept) for message in self.turns(item)]
-
-    def push(self, subject: str, *, user_name: str | None = None, conversation: str = "") -> list[dict]:
-        """What goes into a new conversation that starts with nothing, once: their first prompt if they asked for it,
-        what stands for the older part, and the surface. Not after a person cleared it, as it is empty then."""
-        subject = self.who(subject)
-        view, first = self.read(subject, conversation=conversation), self.first(subject)
-        head = [{"role": "user", "content": first.text}] if first and first.send else []
-        if view.summary:
-            head.append({"role": "user", "content": say(self.words, "surface.summary", who=user_name or subject,
-                                                        summary=view.summary)})
-        return head + view.messages
 
     # ---- letting go ------------------------------------------------------------------------------
     async def alet_go(self, subject: str, *, user_name: str | None = None, complete=None,

@@ -14,7 +14,7 @@ import time
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from tests.tiers import needs_centroids, needs_decide_micro, needs_unify
+from tests.tiers import needs_centroids, needs_unify
 from mneme_llm import Embeddings, Mneme
 from mneme_llm.dates import find, local, noon
 from mneme_llm.decide import Answer, Choice, Prompt, Score, fit
@@ -30,7 +30,7 @@ SHANGHAI = timezone(timedelta(hours=8), "Asia/Shanghai")
 
 
 def plain(**options):
-    return Mneme(":memory:", "t", luna=False, micro=False, embed=False, memory_language=None, **options)
+    return Mneme(":memory:", "t", embed=False, memory_language=None, **options)
 
 
 def toy(texts):  # a fake embedder: one direction per word family
@@ -91,7 +91,7 @@ class MalformedInputTests(unittest.TestCase):
 
 class ZoneTests(unittest.TestCase):
     def test_written_dates_are_the_persons_day(self):
-        m = Mneme(":memory:", "t", luna=False, micro=False, embed=False, memory_language=None, zone=SHANGHAI)
+        m = Mneme(":memory:", "t", embed=False, memory_language=None, zone=SHANGHAI)
         Toolbox(m, "u").call("remember", {"text": "dentist", "kind": "plan", "date": "2026-10-30"})
         note = m.memory.notes("u")[0]
         self.assertEqual(local(note.happened_at, SHANGHAI).strftime("%Y-%m-%d %H:%M"), "2026-10-30 12:00")
@@ -101,7 +101,7 @@ class ZoneTests(unittest.TestCase):
         async def writer(system, user):
             return json.dumps([{"text": "Exam", "kind": "plan", "date": "2026-10-30"},
                                {"text": "体检在11月2日", "kind": "plan"}])
-        m = Mneme(":memory:", "t", luna=False, micro=False, embed=False, memory_language=None, zone=SHANGHAI,
+        m = Mneme(":memory:", "t", embed=False, memory_language=None, zone=SHANGHAI,
                   complete=writer)
         notes = m.observe("u", "Leo: exam friday", user_name="Leo", mood=False).notes
         self.assertEqual([local(n.happened_at, SHANGHAI).strftime("%m-%d %H") for n in notes], ["10-30 12", "11-02 12"])
@@ -146,7 +146,7 @@ class BlockingWriterTests(unittest.TestCase):
         def slow(system, user):
             time.sleep(0.4)
             return "[]"
-        m = Mneme(":memory:", "t", luna=False, micro=False, embed=False, memory_language=None, complete=slow)
+        m = Mneme(":memory:", "t", embed=False, memory_language=None, complete=slow)
 
         async def main():
             ticks = 0
@@ -166,7 +166,7 @@ class BlockingWriterTests(unittest.TestCase):
 class TwoProcessTests(unittest.TestCase):
     def test_a_writer_waits_for_another_connection_instead_of_failing(self):
         path = os.path.join(tempfile.mkdtemp(), "m.db")
-        m = Mneme(path, "t", luna=False, micro=False, embed=False, memory_language=None)
+        m = Mneme(path, "t", embed=False, memory_language=None)
         other = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
         other.execute("begin immediate")
         other.execute("insert into meta (key, value) values ('busy', '1')")
@@ -182,7 +182,7 @@ class TwoProcessTests(unittest.TestCase):
 @needs_centroids
 class EraseTests(unittest.TestCase):
     def test_erase_leaves_none_of_the_persons_words_in_the_file(self):
-        m = Mneme(":memory:", "t", luna=False, micro=False, memory_language=None, embed=Embeddings(toy, name="toy:1"))
+        m = Mneme(":memory:", "t", memory_language=None, embed=Embeddings(toy, name="toy:1"))
         m.remember("u", "Diagnosed with diabetes, takes metformin", kind="fact")
         m.remember("v", "Likes green tea", kind="preference")
         asyncio.run(m.arecall("u", "medication"))
@@ -288,7 +288,7 @@ class CaptureItemTests(unittest.TestCase):
             return json.dumps([{"text": "Plays cello", "kind": "fact"}, {"text": "bad", "kind": "fact", "key": 23},
                                {"text": "Exam on Friday", "kind": "plan", "gloss": ["not", "text"]},
                                {"text": 5, "kind": "fact"}])
-        m = Mneme(":memory:", "t", luna=False, micro=False, memory_language=None, complete=writer,
+        m = Mneme(":memory:", "t", memory_language=None, complete=writer,
                   embed=Embeddings(toy, name="toy:1"))
         seen = m.observe("u", "Leo: I play cello; exam on Friday", user_name="Leo", mood=False)
         self.assertEqual(seen.error, "")
@@ -318,7 +318,7 @@ class PromptTierTests(unittest.TestCase):
 class MeaningRobustnessTests(unittest.TestCase):
     @needs_centroids
     def test_a_learning_problem_never_discards_the_embedding(self):
-        m = Mneme(":memory:", "t", luna=False, micro=False, memory_language=None, embed=Embeddings(toy, name="toy:1"))
+        m = Mneme(":memory:", "t", memory_language=None, embed=Embeddings(toy, name="toy:1"))
         m.remember("u", "Has a cat", kind="fact")
 
         def broken(store, embedder, items):
@@ -339,7 +339,7 @@ class MeaningRobustnessTests(unittest.TestCase):
             if "Translate" in system:
                 raise RuntimeError("down")
             return "[null]"
-        m = Mneme(":memory:", "t", luna=False, micro=False, embed=False, complete=complete)
+        m = Mneme(":memory:", "t", embed=False, complete=complete)
         m.remember("u", "周五有考试", kind="plan")
         asyncio.run(m.arecall("u", "exam"))  # Latin query: no translation; glossing runs
         self.assertEqual(m.memory.notes("u")[0].gloss, "周五有考试")  # not the text "None"
@@ -368,7 +368,7 @@ def centroids(m):
 
 
 def learned(path=":memory:", **notes):
-    m = Mneme(path, "t", luna=False, micro=False, memory_language=None, embed=Embeddings(toy, name="toy:1"))
+    m = Mneme(path, "t", memory_language=None, embed=Embeddings(toy, name="toy:1"))
     for subject, texts in notes.items():
         for text in texts:
             m.remember(subject, text, kind="fact")
@@ -400,7 +400,7 @@ class UnlearnTests(unittest.TestCase):
         done = subprocess.run([sys.executable, "-m", "mneme_llm", "--db", path, "--space", "t", "erase", "u",
                                "--yes"], env=env, capture_output=True, text=True, timeout=60)
         self.assertEqual(done.returncode, 0, done.stderr)
-        m = Mneme(path, "t", luna=False, micro=False, embed=False, memory_language=None)
+        m = Mneme(path, "t", embed=False, memory_language=None)
         self.assertEqual(centroids(m)["tea"][0], 1)
         self.assertNotIn("metformin", centroids(m))
         m.store.close()
@@ -458,7 +458,7 @@ class PlanDateTests(unittest.TestCase):
         async def writer(system, user):
             return json.dumps([{"text": "10月30日体检", "kind": "plan"}])
         april = datetime(2026, 4, 10, 15, tzinfo=SHANGHAI).timestamp()
-        m = Mneme(":memory:", "t", luna=False, micro=False, embed=False, memory_language=None, zone=SHANGHAI,
+        m = Mneme(":memory:", "t", embed=False, memory_language=None, zone=SHANGHAI,
                   complete=writer, clock=lambda: april)
         (note,) = m.observe("u", "Leo: 10月30日体检", user_name="Leo", mood=False).notes
         self.assertEqual(local(note.happened_at, SHANGHAI).strftime("%Y-%m-%d"), "2026-10-30")
@@ -496,20 +496,6 @@ class StdioTests(unittest.TestCase):
         self.assertEqual([(reply["id"], "error" in reply) for reply in replies], [(None, True), (7, False)])
 
 
-@needs_decide_micro
-class MicroSignatureTests(unittest.TestCase):
-    def test_a_new_tokenizer_gives_a_new_model(self):
-        from unittest import mock
-        from mneme_llm.decide.micro import signature
-        question = Choice("feeling", "how they felt", ["happy", "sad"])
-        with mock.patch("mneme_llm.text.version", return_value="99"):
-            other = signature(question)
-        self.assertNotEqual(signature(question), other)
-
-
-# ---- the third pass ---------------------------------------------------------------------------------------------
-
-@needs_centroids
 class TaughtTests(unittest.TestCase):
     def test_an_older_files_centroids_are_dropped_and_relearned_from_its_notes(self):
         path = os.path.join(tempfile.mkdtemp(), "old.db")
@@ -527,7 +513,7 @@ class TaughtTests(unittest.TestCase):
         def counting(texts):
             embedded.extend(texts)
             return toy(texts)
-        m = Mneme(path, "t", luna=False, micro=False, memory_language=None, embed=Embeddings(counting, name="toy:1"))
+        m = Mneme(path, "t", memory_language=None, embed=Embeddings(counting, name="toy:1"))
         self.assertEqual(centroids(m), {})  # what the earlier build learned (queries too) is gone
         asyncio.run(m.arecall("u", "medicine"))
         self.assertEqual(set(centroids(m)), {"take", "metformin"})  # relearned from the stored vector,
@@ -541,7 +527,7 @@ class TaughtTests(unittest.TestCase):
             async def slow(texts):
                 await gate.wait()
                 return toy(texts)
-            m = Mneme(":memory:", "t", luna=False, micro=False, memory_language=None, embed=Embeddings(slow, name="toy:1"))
+            m = Mneme(":memory:", "t", memory_language=None, embed=Embeddings(slow, name="toy:1"))
             m.remember("u", "Takes metformin", kind="fact")
             recall = asyncio.create_task(m.arecall("u", "anything"))
             await asyncio.sleep(0.05)
@@ -559,7 +545,7 @@ class TaughtTests(unittest.TestCase):
             async def slow(texts):
                 await gate.wait()
                 return toy(texts)
-            m = Mneme(":memory:", "t", luna=False, micro=False, memory_language=None, embed=Embeddings(slow, name="toy:1"))
+            m = Mneme(":memory:", "t", memory_language=None, embed=Embeddings(slow, name="toy:1"))
             m.remember("u", "Takes metformin", kind="fact")
             recalls = [asyncio.create_task(m.arecall("u", "anything")) for _ in range(2)]
             await asyncio.sleep(0.05)
@@ -637,7 +623,7 @@ class GlossBudgetTests(unittest.TestCase):
         async def complete(system, user):
             asked.append(len([line for line in user.splitlines() if line.strip()]))
             return "[]"  # always the wrong count
-        m = Mneme(":memory:", "t", luna=False, micro=False, embed=False, complete=complete)
+        m = Mneme(":memory:", "t", embed=False, complete=complete)
         for index in range(20):
             m.remember("u", f"第{index}号笔记", kind="fact")
         asyncio.run(m.arecall("u", "note"))  # placed by no tier: glosses are written, two requests at most
@@ -678,7 +664,7 @@ class FourthPassTests(unittest.TestCase):
             if any("秘密" in item for item in items):
                 return "I can't help with that."  # a refusal, not a list
             return json.dumps([f"gloss {index}" for index in range(len(items))])
-        m = Mneme(":memory:", "t", luna=False, micro=False, embed=False, complete=complete)
+        m = Mneme(":memory:", "t", embed=False, complete=complete)
         m.remember("u", "一个秘密", kind="fact", importance=5)  # first in line, every time
         for index in range(20):
             m.remember("u", f"第{index}号笔记", kind="fact")
@@ -695,7 +681,7 @@ class FourthPassTests(unittest.TestCase):
             async def slow(texts):
                 await gate.wait()
                 return toy(texts)
-            m = Mneme(":memory:", "t", luna=False, micro=False, memory_language=None, embed=Embeddings(slow, name="toy:1"))
+            m = Mneme(":memory:", "t", memory_language=None, embed=Embeddings(slow, name="toy:1"))
             first = m.remember("u", "Takes metformin", kind="fact")
             recall = asyncio.create_task(m.arecall("u", "anything"))
             await asyncio.sleep(0.05)
@@ -739,7 +725,7 @@ class FourthPassTests(unittest.TestCase):
         m.store.execute("insert into meaning_terms values ('toy:1', 'query', 1, ?)", (pack([0, 0, 0, 1]),))
         m.store.execute("update meta set value = '2' where key = 'meaning_texts:toy:1'")  # an earlier build's lesson
         m.store.close()
-        m = Mneme(path, "t", luna=False, micro=False, memory_language=None, embed=Embeddings(toy, name="toy:1"))
+        m = Mneme(path, "t", memory_language=None, embed=Embeddings(toy, name="toy:1"))
         self.assertNotIn("query", centroids(m))
         asyncio.run(m.arecall("u", "x"))
         self.assertEqual(set(centroids(m)), {"take", "metformin"})
@@ -786,7 +772,7 @@ class RefactorReviewTests(unittest.TestCase):
 
     @needs_unify
     def test_no_chat_model_marks_no_note_and_a_later_model_glosses_it(self):
-        m = Mneme(":memory:", "t", luna=False, micro=False, embed=False)
+        m = Mneme(":memory:", "t", embed=False)
         m.remember("u", "养了一只叫年糕的猫", kind="fact")
         for _ in range(5):
             asyncio.run(m.arecall("u", "pet"))
@@ -804,7 +790,7 @@ class RefactorReviewTests(unittest.TestCase):
         async def wrong(texts):
             calls.append(texts)
             raise Unavailable("embeddings API answered 404: no such model")
-        m = Mneme(":memory:", "t", luna=False, micro=False, memory_language=None, embed=Embeddings(wrong, name="x"))
+        m = Mneme(":memory:", "t", memory_language=None, embed=Embeddings(wrong, name="x"))
         m.remember("u", "Has a cat", kind="fact")
         for _ in range(5):
             asyncio.run(m.arecall("u", "cat"))
@@ -817,7 +803,7 @@ class RefactorReviewTests(unittest.TestCase):
         async def writer(system, user):
             return json.dumps([{"text": "Exam", "kind": "plan", "date": "0001-01-01"},
                                {"text": "Plays cello", "kind": "fact"}])
-        m = Mneme(":memory:", "t", luna=False, micro=False, embed=False, memory_language=None, complete=writer)
+        m = Mneme(":memory:", "t", embed=False, memory_language=None, complete=writer)
         seen = m.observe("u", "Leo: hi", user_name="Leo", mood=False)
         self.assertEqual((seen.error, sorted(n.text for n in seen.notes)), ("", ["Exam", "Plays cello"]))
 
@@ -842,7 +828,7 @@ class RefactorReviewTests(unittest.TestCase):
 
             async def adecide(self, input, questions):
                 return {}
-        m = Mneme(":memory:", "t", luna=False, micro=Tier(), memory_language=None, meaning_micro=Centroids(),
+        m = Mneme(":memory:", "t", judge=Tier(), memory_language=None, meaning_micro=Centroids(),
                   embed=Embeddings(toy, name="toy:1"))
         m.remember("u", "Has a cat", kind="fact")
         m.meaning.rest.until = float("inf")  # embeddings down: the host's centroids answer
@@ -867,29 +853,6 @@ class RefactorReviewTests(unittest.TestCase):
         self.assertEqual(len(fit("x" * 100, 8)), 8)
         self.assertLessEqual(len(fit("x" * 5000, 300)), 300)
 
-    @needs_decide_micro
-    def test_a_nested_chain_passes_lessons_on(self):
-        from mneme_llm.decide import Chain, Predicate
-        learned = []
-
-        class Teacher:
-            name = "teacher"
-
-            async def adecide(self, input, questions):
-                return {q.name: Answer(q.name, "predicate", {"true": 0.9, "false": 0.1}, 0.9, "teacher")
-                        for q in questions}
-
-        class Student:
-            name = "student"
-
-            async def adecide(self, input, questions):
-                return {}
-
-            def learn(self, input, question, answer):
-                learned.append(question.name)
-        Chain(Teacher(), Chain(Student(), name="inner")).decide("x", [Predicate("p", "?")])
-        self.assertEqual(learned, ["p"])
-
     @needs_unify
     def test_chinese_japanese_and_korean_are_told_apart_and_mixed_text_is_translated(self):
         from mneme_llm.meaning.unify import Unify
@@ -912,7 +875,7 @@ class RefactorReviewTests(unittest.TestCase):
             if state["refuse"]:
                 return "no"
             return json.dumps([f"gloss of {item}" for item in items])
-        m = Mneme(":memory:", "t", luna=False, micro=False, embed=False, complete=complete)
+        m = Mneme(":memory:", "t", embed=False, complete=complete)
         m.remember("u", "养了一只猫", kind="fact")
         m.remember("u", "喜欢喝茶", kind="preference")
         for _ in range(4):
@@ -929,20 +892,20 @@ class RefactorReviewTests(unittest.TestCase):
         if UNIFY:
             from mneme_llm.meaning.unify import Unify
             mine = Unify(None, "Chinese", cache=8)
-            self.assertIs(Mneme(":memory:", "t", luna=False, micro=False, embed=False, memory_language=mine).meaning.unify,
+            self.assertIs(Mneme(":memory:", "t", embed=False, memory_language=mine).meaning.unify,
                           mine)
-        self.assertIsNone(Mneme(":memory:", "t", luna=False, micro=False, embed=False, memory_language=None).meaning)
+        self.assertIsNone(Mneme(":memory:", "t", embed=False, memory_language=None).meaning)
 
     def test_notes_from_before_the_term_index_are_still_found(self):
         path = os.path.join(tempfile.mkdtemp(), "old.db")
-        m = Mneme(path, "t", luna=False, micro=False, embed=False, memory_language=None)
+        m = Mneme(path, "t", embed=False, memory_language=None)
         m.remember("u", "Has a cat named Mochi", kind="fact")
         m.recall("u", "cat")
         m.store.close()
         db = sqlite3.connect(path)  # as an earlier build left it: terms cached, no index
         db.executescript("delete from note_terms; delete from meta where key = 'terms_indexed';")
         db.close()
-        m = Mneme(path, "t", luna=False, micro=False, embed=False, memory_language=None)
+        m = Mneme(path, "t", embed=False, memory_language=None)
         self.assertEqual([r.note.text for r in m.recall("u", "Mochi", important=0, recent=0).chosen],
                          ["Has a cat named Mochi"])
         self.assertEqual(check(m.store), [])
@@ -963,7 +926,7 @@ class RefactorReviewTests(unittest.TestCase):
             if system.startswith("From the exchange below"):  # (the same model also judges)
                 seen.append(user)
             return "[]"
-        m = Mneme(":memory:", "t", luna=False, micro=False, embed=False, memory_language=None, complete=writer)
+        m = Mneme(":memory:", "t", embed=False, memory_language=None, complete=writer)
         m.observe("u", (pair for pair in [("Leo", "I play cello"), ("bot", "nice")]), user_name="Leo", mood=False)
         self.assertEqual(seen, ["Leo: I play cello\nbot: nice"])
 
@@ -1007,7 +970,7 @@ class FloorReviewTests(unittest.TestCase):
 
         def embed(texts):
             return geometric(poison=calibrate.TOPICS[3][1] if poisoned["on"] else None)(texts)
-        m = Mneme(":memory:", "t", luna=False, micro=False, memory_language=None, embed=Embeddings(embed, name="g"))
+        m = Mneme(":memory:", "t", memory_language=None, embed=Embeddings(embed, name="g"))
         m.remember("u", "note 1", kind="fact")
         asyncio.run(m.arecall("u", "x"))
         self.assertIsNone(calibrate.read(m.store, "g"))
@@ -1017,14 +980,14 @@ class FloorReviewTests(unittest.TestCase):
         self.assertTrue(0.05 <= m.meaning.floor <= 0.9)
 
     def test_the_sets_floor_is_kept_within_bounds(self):
-        m = Mneme(":memory:", "t", luna=False, micro=False, memory_language=None,
+        m = Mneme(":memory:", "t", memory_language=None,
                   embed=Embeddings(geometric(alike_topics=2.4), name="g"))  # unrelated pairs 0.85 alike
         m.remember("u", "note 1", kind="fact")
         asyncio.run(m.arecall("u", "x"))
         self.assertEqual(m.meaning.floor, 0.9)
 
     def test_a_floor_of_one_does_not_break_recall(self):
-        m = Mneme(":memory:", "t", luna=False, micro=False, memory_language=None,
+        m = Mneme(":memory:", "t", memory_language=None,
                   embed=Embeddings(geometric(), name="g", floor=1.0))
         m.remember("u", "note 1", kind="fact")
         asyncio.run(m.arecall("u", "note 1"))
@@ -1035,7 +998,7 @@ class FloorReviewTests(unittest.TestCase):
 
             async def embed(self, texts):
                 return geometric(scale=5.0)(texts)
-        m = Mneme(":memory:", "t", luna=False, micro=False, memory_language=None, embed=Loud())
+        m = Mneme(":memory:", "t", memory_language=None, embed=Loud())
         m.remember("u", "note 1", kind="fact")
         found = asyncio.run(m.arecall("u", "unrelated words"))
         stored = unpack(m.store.row("select vector from vectors")["vector"])
@@ -1045,7 +1008,7 @@ class FloorReviewTests(unittest.TestCase):
     def test_vectors_that_are_not_finite_or_of_another_length_are_left_out(self):
         def embed(texts):
             return [[float("nan"), 1.0] if "bad" in text else [1.0, 0.0] for text in texts]
-        m = Mneme(":memory:", "t", luna=False, micro=False, memory_language=None,
+        m = Mneme(":memory:", "t", memory_language=None,
                   embed=Embeddings(embed, name="e", floor=0.3))
         m.remember("u", "a bad note", kind="fact")
         m.remember("u", "a good note", kind="fact")
@@ -1059,14 +1022,14 @@ class FloorReviewTests(unittest.TestCase):
         def embed(texts):  # the older half of the notes 0.2 alike, the newer half 0.5
             return [geometric(alike_notes=1.0 if text.startswith("note ") and int(text.split()[1]) >= 500
                               else 0.5)([text])[0] for text in texts]
-        m = Mneme(":memory:", "t", luna=False, micro=False, memory_language=None, embed=Embeddings(embed, name="g"))
+        m = Mneme(":memory:", "t", memory_language=None, embed=Embeddings(embed, name="g"))
         for n in range(1000):
             m.remember("u", f"note {n}", kind="fact")
         asyncio.run(m.arecall("u", "x"))
         self.assertGreater(m.report()["meaning"]["floor"]["file"]["background"], 0.25)  # not the older notes alone
 
     def test_a_file_with_too_few_vectors_is_tried_again_later_and_keeps_its_label(self):
-        m = Mneme(":memory:", "t", luna=False, micro=False, memory_language=None,
+        m = Mneme(":memory:", "t", memory_language=None,
                   embed=Embeddings(geometric(), name="g"))
         for n in range(250):
             m.remember("u", f"note {n}", kind="fact")
@@ -1092,7 +1055,7 @@ class RelationsReviewTests(unittest.TestCase):
         m.relate("mum", "family", closeness=65)
         m.relate("amy", "friend", closeness=90)
         roles = (Role("family", floor=70, ceiling=100, start=80), Role("friend", floor=20, ceiling=80, start=50))
-        later = Mneme(":memory:", "t", luna=False, micro=False, embed=False, memory_language=None, roles=roles)
+        later = Mneme(":memory:", "t", embed=False, memory_language=None, roles=roles)
         later.store, later.relations.store = m.store, m.store
         self.assertEqual({r.subject: r.closeness for r in later.relations.all()}, {"mum": 70.0, "amy": 80.0})
         later.relate("mum", "family")  # saying it again raises nothing
@@ -1151,10 +1114,10 @@ class ConfigReviewTests(unittest.TestCase):
 
     def test_a_companion_with_a_config_does_not_read_the_file_again(self):
         path = os.path.join(tempfile.mkdtemp(), "m.db")
-        plain_file = Mneme(path, "t", luna=False, micro=False, embed=False, memory_language=None)
+        plain_file = Mneme(path, "t", embed=False, memory_language=None)
         plain_file.close()
         for given in ("/no/such/file.toml", {"voice": {"pitch": 1}}):
-            m = Mneme(path, "t", luna=False, micro=False, embed=False, memory_language=None, config=given)
+            m = Mneme(path, "t", embed=False, memory_language=None, config=given)
             m.close()
 
     def test_texts_that_end_in_quotes_survive_the_round_trip(self):
@@ -1193,8 +1156,8 @@ class ConfigReviewTests(unittest.TestCase):
             m.config.load_defaults(["mood.baseline"])  # 70 would fall under the floor
         self.assertEqual(m.config.get("mood.baseline"), 85)
         path = os.path.join(tempfile.mkdtemp(), "m.db")
-        a = Mneme(path, "t", luna=False, micro=False, embed=False, memory_language=None)
-        b = Mneme(path, "t", luna=False, micro=False, embed=False, memory_language=None)  # opened before a's change
+        a = Mneme(path, "t", embed=False, memory_language=None)
+        b = Mneme(path, "t", embed=False, memory_language=None)  # opened before a's change
         a.config.apply({"mood": {"floor": 60, "baseline": 65}})
         with self.assertRaises(ValueError):
             b.config.set("mood.baseline", 50)  # checked against the file, not what b read at opening

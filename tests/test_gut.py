@@ -94,11 +94,6 @@ class Parts(unittest.TestCase):
         self.assertEqual(G.vector('sure {"sad": 1} ok')["sad"], 1.0)
         self.assertIsNone(G.vector('{"sad": "x"}'))
 
-    def test_what_came_before_the_message(self):
-        item = lambda direction, text, name="": Item(direction, text, name)
-        items = [item("in", "a"), item("out", "b", "Her"), item("out", "c", "Other"), item("in", "now"), item("out", "reply", "Her")]
-        self.assertEqual(G.earlier(items, "now", "Her"), [{"role": "user", "content": "a"}, {"role": "assistant", "content": "b"},
-                                                          {"role": "user", "content": "c"}])
 
 
 class Kept(unittest.TestCase):
@@ -233,7 +228,7 @@ class Turns(unittest.IsolatedAsyncioTestCase):
         vote = next(messages for kind, messages in self.model.asked if kind == "vote")
         self.assertIn("Notes about them.", vote[-1]["content"])
         self.assertEqual(next(messages for kind, messages in self.model.asked if kind == "read")[1]["content"], turn.said)
-        self.assertEqual((await turn.learn([], "Oh, a coworker."))["feel"], {"sweet": .2, "jealous": .8})
+        self.assertEqual((await turn.learn("Oh, a coworker."))["feel"], {"sweet": .2, "jealous": .8})
         self.assertEqual(self.gut.report()["lessons"], 1)
         note = next(messages for kind, messages in self.model.asked if kind == "note")
         self.assertIn("Right now you feel", note[0]["content"])  # the line stays in view of her note
@@ -253,7 +248,7 @@ class Turns(unittest.IsolatedAsyncioTestCase):
         turn = self.turn()
         self.assertIn("mostly jealous", await turn.feel([], "", 85, 3))
         self.model.hold["read"].set()
-        self.assertIsNotNone(await turn.learn([], "reply"))
+        self.assertIsNotNone(await turn.learn("reply"))
         self.assertEqual(self.gut.report()["lessons"], 1)
 
     async def test_no_note_no_lesson(self):
@@ -261,7 +256,7 @@ class Turns(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(ANSWERS.__setitem__, "note", ANSWERS_NOTE)
         turn = self.turn()
         await turn.feel([], "", 85, 3)
-        self.assertIsNone(await turn.learn([], "reply"))
+        self.assertIsNone(await turn.learn("reply"))
         self.assertEqual(sum(kind == "note" for kind, _ in self.model.asked), 2)
         self.assertEqual(self.gut.report()["lessons"], 0)
 
@@ -285,7 +280,7 @@ class Growing(unittest.IsolatedAsyncioTestCase):
     async def say(self, closeness=85, subject="discord:1", prompt="You are her."):
         turn = G.Turn(self.gut, self.model, prompt, "她好烦", subject)
         await turn.feel([], "", closeness, 3)
-        await turn.learn([], "reply")
+        await turn.learn("reply")
         return turn
 
     def days(self, count, start=0):

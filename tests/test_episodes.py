@@ -41,7 +41,7 @@ class Clock:
 
 def companion(clock=None, embed=None, path=":memory:"):
     clock = clock or Clock()
-    m = Mneme(path, "t", luna=False, micro=False, meaning_micro=False, memory_language=None, zone=UTC, clock=clock,
+    m = Mneme(path, "t", meaning_micro=False, memory_language=None, zone=UTC, clock=clock,
               embed=embed if embed is not None else False)
     return m, clock
 
@@ -124,12 +124,9 @@ class LookTests(unittest.TestCase):
                                                                       "we planned a trip to Shanghai"])
         self.assertEqual(self.episodes.look("u", "nothing in common"), [])
 
-    def test_a_look_keeps_to_its_budget_and_leaves_out_what_the_host_shows(self):
+    def test_a_look_keeps_to_its_budget(self):
         one = len(self.episodes.shown(self.episodes.get(1))) + 2
         self.assertEqual(len(self.episodes.look("u", "Mochi Shanghai cello", budget=one)), 1)
-        newest = self.episodes.look("u", "bakery cello", skip=2, conversation="dm")
-        self.assertEqual(newest, [])  # the two newest exchanges of "dm" are still on the host's screen
-        self.assertEqual(len(self.episodes.look("u", "bakery cello", skip=2, conversation="elsewhere")), 2)
 
     def test_the_block_names_the_person_and_asks_for_the_check(self):
         block = self.m.look("u", "Mochi", user_name="Leo")
@@ -230,14 +227,14 @@ class CutTests(unittest.TestCase):
     def test_with_nothing_to_show_a_model_that_can_search_is_told_it_can(self):
         self.assertEqual(self.m.episodes.render([]), "")
         self.assertIn("search for it", self.m.episodes.render([], search=True))
-        prompt = asyncio.run(self.m.aprompt("u", "hello", said=6000, search=True))
+        prompt = asyncio.run(self.m.aprompt("someone new", "hello", said=6000, search=True))
         self.assertIn("Nothing said before came to mind", prompt)
         self.assertNotIn("Nothing said before", asyncio.run(self.m.aprompt("u", "hello", said=6000)))
 
     def test_the_bar_is_a_setting(self):
         self.assertEqual(self.m.said_cut, (0.08, 0.16))
-        low = Mneme(":memory:", "t", config={"memory": {"said_cut": -1, "said_cut_faded": -1}}, luna=False,
-                    micro=False, embed=embedder(), meaning_micro=False, memory_language=None)
+        low = Mneme(":memory:", "t", config={"memory": {"said_cut": -1, "said_cut_faded": -1}}, 
+                    embed=embedder(), meaning_micro=False, memory_language=None)
         asyncio.run(low.episodes.akeep("u", [("Leo", "my cat and the exam")]))
         self.assertEqual(len(asyncio.run(low.episodes.alook("u", "hello", cut=low.said_cut))), 1)
 
@@ -444,19 +441,6 @@ class EdgeTests(unittest.TestCase):
             await asyncio.sleep(1)
         with mock.patch.object(m.meaning, "query", slow):
             self.assertIs(asyncio.run(m.episodes._found("hello", wait=0.01)), before)
-
-    def test_a_conversation_is_named_by_a_string_in_a_look_too(self):
-        m, _ = companion()
-        with self.assertRaises(TypeError):
-            m.episodes.look("u", "Mochi", skip=3, conversation=None)
-
-    def test_skip_finds_a_conversation_by_the_name_it_was_kept_under(self):
-        m, clock = companion()
-        for said in ("my cat Mochi", "Mochi sleeps", "Mochi again"):
-            clock.now += 60
-            m.episodes.keep("u", [("Leo", said)], conversation="general  chat " + "x" * 300)
-        found = m.episodes.look("u", "Mochi", skip=3, conversation="general  chat " + "x" * 300)
-        self.assertEqual(found, [])
 
     def test_names_are_not_search_words(self):
         m, _ = companion()

@@ -247,6 +247,7 @@ def _placeholders(key: str, value: str, allowed: set[str]) -> None:
                          f"(it may use {offer})")
 
 
+MOST = 10 ** 12  # tokens a surface may be set to: as many as someone wants to pay for
 RULES = {
     "companion.name": _text(80), "companion.display_language": lambda key, value: _language(key, value),
     "companion.memory_language": _text(40, empty=True), "companion.zone": _zone,
@@ -255,13 +256,12 @@ RULES = {
     "memory.semantic_window": _number(10, 1_000_000, integer=True),
     "memory.said_days": _number(0.01, 100_000), "memory.said_budget": _number(0, 200_000, integer=True),
     "memory.said_cut": _number(-1, 1), "memory.said_cut_faded": _number(-1, 1),
-    "memory.surface_days": _number(1, 100_000, integer=True), "memory.surface_floor": _number(0, 100_000_000, integer=True),
-    "memory.surface_cap": _number(1000, 100_000_000, integer=True),
-    "memory.surface_window": _number(1000, 100_000_000, integer=True),
+    "memory.surface_days": _number(1, 100_000, integer=True), "memory.surface_floor": _number(0, MOST, integer=True),
+    "memory.surface_cap": _number(1000, MOST, integer=True), "memory.surface_window": _number(1000, MOST, integer=True),
     "mood.baseline": _number(0, 100), "mood.floor": _number(0, 100), "mood.ceiling": _number(0, 100),
     "mood.mood_half_life_h": _number(0.01, 100_000), "mood.emotion_half_life_min": _number(0.01, 1_000_000),
     "mood.step": _number(0, 50), "mood.gain": _number(0, 100), "mood.threshold": _number(0, 1),
-    "mood.thresholds": _numbers(0, 1), "mood.tell": _one_of("event", "mood", "off"), "mood.weights": _numbers(0, 10),
+    "mood.tell": _one_of("event", "mood", "off"), "mood.weights": _numbers(0, 10),
     "mood.skip": _words,
     "relations.growth": _number(0, 100), "relations.fade_days": _number(0, 1_000_000),
     "roles": _roles, "emotions": _emotions,

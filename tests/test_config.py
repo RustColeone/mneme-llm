@@ -14,11 +14,6 @@ from mneme_llm.config import DEFAULTS, Config, check, load, to_toml
 from mneme_llm.prompts import PROMPTS
 from tests.invariants import check as sound
 
-try:  # the micro model is removable; its signature test is skipped where it was removed
-    from mneme_llm.decide.micro import signature
-except ImportError:
-    signature = None
-
 COMPANION = """
 [companion]
 name = "大肥鱼"
@@ -26,7 +21,7 @@ display_language = "zh"
 zone = "UTC+8"
 
 [mood]
-thresholds = {luna = 0.4}
+weights = {user = 0.4}
 
 [[roles]]
 key = "teacher"
@@ -58,7 +53,7 @@ def write(text: str) -> str:
 
 
 def mneme(path=":memory:", **options):
-    options = {"luna": False, "micro": False, "embed": False, **options}
+    options = {"embed": False, **options}
     return Mneme(path, "t", **options)
 
 
@@ -82,7 +77,7 @@ class SeedTests(unittest.TestCase):
         m = mneme(config=write(COMPANION), memory_language=None)
         self.assertEqual((m.companion_name, m.display_language), ("大肥鱼", "zh"))
         self.assertEqual(m.memory.zone.utcoffset(None), timedelta(hours=8))
-        self.assertEqual(m.mood.settings.thresholds, {"luna": 0.4})
+        self.assertEqual(m.mood.settings.weights, {"user": 0.4})
         self.assertEqual(m.mood.settings.threshold, 0.6)  # what the file leaves out is the default
         m.remember("u", "养了一只猫", kind="fact")
         self.assertTrue(m.prompt("u", "猫").startswith("关于u的笔记：\n- 养了一只猫"))
@@ -203,13 +198,6 @@ class UseTests(unittest.TestCase):
         m.reflect("u", user_name="Leo", complete=Recorder("Kind."))
         self.assertEqual(m.memory.profile("u"), "Kind.")
 
-    @unittest.skipIf(signature is None, "the micro model was removed")
-    def test_a_new_question_wording_is_a_new_micro_model(self):
-        before = mneme().mood.questions()[0]
-        after = mneme(config={"prompts": {"mood_change": "How did the assistant's mood move?"}}).mood.questions()[0]
-        self.assertNotEqual(signature(before), signature(after))
-        self.assertEqual(after.instructions, "How did the assistant's mood move?")
-
     def test_feelings_and_a_language_of_the_companions_own(self):
         m = mneme(config={"companion": {"display_language": "ja"},
                           "emotions": [{"key": "happy"}, {"key": "proud", "names": {"ja": "誇らしい"}}],
@@ -275,13 +263,13 @@ class CommandTests(unittest.TestCase):
         self.assertIn('name = "大肥鱼"', self.run_cli("--config", companion, "config", "show", "companion")[1])
         self.assertIn("companion.name: file", self.run_cli("config", "show", "--origins")[1])
         self.run_cli("config", "set", "mood.threshold", "0.5")
-        self.run_cli("config", "set", "mood.thresholds", "{luna = 0.3}")
+        self.run_cli("config", "set", "mood.weights", "{user = 0.3}")
         self.run_cli("config", "set", "companion.name", "Fei Yu")
         prompt = write("Impression of {user}:\n{notes}\n")
         self.run_cli("config", "set", "prompts.reflect", "--file", prompt)
         shown = tomllib.loads(self.run_cli("config", "show")[1])
-        self.assertEqual((shown["mood"]["threshold"], shown["mood"]["thresholds"], shown["companion"]["name"],
-                          shown["prompts"]["reflect"]), (0.5, {"luna": 0.3}, "Fei Yu", "Impression of {user}:\n{notes}"))
+        self.assertEqual((shown["mood"]["threshold"], shown["mood"]["weights"], shown["companion"]["name"],
+                          shown["prompts"]["reflect"]), (0.5, {"user": 0.3}, "Fei Yu", "Impression of {user}:\n{notes}"))
         self.assertEqual(self.run_cli("config", "set", "mood.threshold", "9")[0], 2)
         self.assertEqual(self.run_cli("config", "apply", write('[mood]\nstep = 3\n'))[1], "applied 1 keys\n")
         self.assertEqual(self.run_cli("config", "defaults", "mood.step")[1], "loaded 1 defaults\n")
@@ -290,7 +278,7 @@ class CommandTests(unittest.TestCase):
                                       "check")[0], 2)
 
     def test_import_with_config(self):
-        m = Mneme(self.path, "default", luna=False, embed=False, config={"companion": {"name": "Fei"}})
+        m = Mneme(self.path, "default", embed=False, config={"companion": {"name": "Fei"}})
         export = os.path.join(tempfile.mkdtemp(), "e.json")
         with open(export, "w", encoding="utf-8") as handle:
             json.dump(m.export_data(), handle)

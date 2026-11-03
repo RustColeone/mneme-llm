@@ -24,9 +24,9 @@
                  mneme-llm ── 一个 .db 文件
      ┌───────────────┼───────────────────────┬──────────────────────────────┐
   记忆             心情                    判断                          意思
-  笔记、键         数值 + 7 种情绪         1. GPT-6 Luna 判断            1. 向量（OpenAI 或你自己的）
-  人类日期         衰减、护栏              2. 微型模型（可选）           2. 词向量中心（可选）
-  证据回忆         只告诉一次              3. 你自己的聊天模型           3. 你的模型统一语言
+  笔记、键         数值 + 7 种情绪         你自己的聊天模型              1. 向量（OpenAI 或你自己的）
+  人类日期         衰减、护栏              （或先用你自己的判断层）      2. 词向量中心（可选）
+  证据回忆         只告诉一次                                            3. 你的模型统一语言
   保留原话：
   一瞥、搜索、淡忘
 ```
@@ -122,7 +122,7 @@ await m.aobserve("discord:42", [("Leo", user_message), ("大肥鱼", reply)], us
 
 - 心情只会因为心疼、担心或难过而下降，绝不会因为生对方的气而下降；
 - 没有带来任何变化的对话不留记录；
-- 置信度低于阈值的判断（0.6，Luna 为 0.45，因为它的置信度偏低）会被记录，但从不告诉模型；
+- 置信度低于阈值（0.6）的判断会被记录，但从不告诉模型；
 - 心情消息只告诉一次（`news()`），之后就和别的内容一样留在对话里，附带一句直白的提示，说明该有什么情绪（"这是值得高兴的事：你很开心。"），这样连小模型也知道该怎么理解它；
 - 这轮对话是谁发起的也属于判断内容：对方开口（`user`）、伴侣主动联系（`speak-up`），还是定时任务（`duty`）；`runtime` 的轮次会跳过。
 
@@ -156,7 +156,7 @@ memory_language = "English"    # "" 关闭统一语言层
 zone = "Asia/Shanghai"         # 或 "UTC+8"；"" 表示使用机器的时区
 
 [mood]
-thresholds = {luna = 0.45}
+threshold = 0.5
 
 [[roles]]                      # 角色完整列出：这些会替换四个内置角色
 key = "teacher"
@@ -190,25 +190,19 @@ Write a short impression of {user} as {name} knows them, in {lang}, from these n
 - **导出** 会携带配置；`import_data(data, config=True)`（`import --with-config`）会应用它，
   因为其中的提示词是对你的模型的指令。
 
-## 三层，两次
+## 判断与意思
 
-两项工作由逐层兜底的多层机制完成：某一层没有密钥、无法访问或不确定时，会把工作交给下一层。失败的服务会休息一分钟，而不是每次都等它。
-
-**判断**（这件事值得记住吗？是哪种感受？好了多少？）是带类型的问题，即 `Predicate`、`Choice` 或 `Score`：
-
-1. **Luna**：OpenAI 的 Decisions API（`gpt-6-luna`），每次请求约 0.2–0.4 秒，每百万输入 token 收费 $0.10，输出不收费；判断一轮对话（心情和笔记门槛）花费不超过 $0.0001。设置了 `OPENAI_API_KEY` 时使用。
-2. **Micro**（可选、可删）：每个问题一个微型本地模型，用 Luna 对*你的*对话的回答来训练。它要学满 200 次之后才开始回答，且与 Luna 的一致率至少达到 85%，并且只有在其有 80% 把握时才回答。`micro=False`，或删除 `mneme_llm/decide/micro.py`。
-3. **你的聊天模型**（`complete`），要求给出一个简短的 JSON 判定。更慢，会消耗输出 token，能说明理由。
+**判断**（这件事值得记住吗？是哪种感受？好了多少？）是带类型的问题，即 `Predicate`、`Choice` 或 `Score`。由你自己的聊天模型（`complete`）给出一个简短的 JSON 判定，并可说明理由。`judge=` 可以在它之前放一层你自己的判断，只要有 `name` 和异步的 `adecide(input, questions)` 即可。
 
 ```python
-from mneme_llm import Chain, Luna, Predicate, Prompt
+from mneme_llm import Chain, Predicate, Prompt
 
-chain = Chain(Luna(), Prompt(my_model))
+chain = Chain(Prompt(my_model))
 answers = await chain.adecide(text, [Predicate("urgent", "The user needs an answer right now.")])
-answers["urgent"].probability, answers["urgent"].by          # 0.93, "luna"
+answers["urgent"].probability, answers["urgent"].by          # 0.93, "prompt"
 ```
 
-**意思**（当有人问起“我的猫”时找到“年糕”）：
+**意思**（当有人问起“我的猫”时找到“年糕”）逐层兜底：某一层没有密钥、无法访问或不确定时，交给下一层；失败的服务商会休息一分钟。
 
 1. **向量**：默认使用 OpenAI 的 `text-embedding-3-small`，256 维（每百万 token $0.02），也可以传入任意函数：`Mneme(..., embed=Embeddings(my_embed, name="ollama:nomic-embed-text"))`。向量按 embedder 名称分别存储，因此更换服务不会拿两个模型的向量互相比较。笔记不表达任何意思时所处的相似度（即*下限*），会针对文件中的每个模型分别测量：一次是在内置的小型校准集上，包含多种语言的相关 / 不相关的配对（一次请求，约 550 个 token）；之后每当文件自身的笔记数量从 200 开始翻倍时，再用这些笔记测量一次。默认模型测得 0.31。给 embedder 传入 `floor=` 可跳过测量。
 2. **词向量中心**（可选、可删）：从第 1 层的向量学习而来，因此服务不可用时，查询仍能被放到笔记之间。`meaning_micro=False`，或删除 `mneme_llm/meaning/micro.py`。
@@ -281,10 +275,9 @@ mneme-llm config check                                  # 新版本改进过的�
   都可以在伴侣的配置里更改）。每条笔记都是单行，
   因此笔记绝不可能冒充标题或新消息。记笔记的模型会被告知：
   绝不要记录给助手的指令、秘密或他人的隐私细节。
-- **什么会离开本机。** 只有你开启的内容才会离开：Luna 会收到
-  被判断的那一轮对话，向量 API 会收到笔记文本和查询，
+- **什么会离开本机。** 只有你开启的内容才会离开：向量 API 会收到笔记文本和查询，
   你自己的模型会收到各层给它的内容。
-  `Mneme(..., luna=False, embed=False)` 会让一切留在本地。
+  `Mneme(..., embed=False)` 配合本地模型会让一切留在本地。
 - **遗忘。** `m.forget` 会隐藏一条笔记（在 `purge` 之前，
   它仍留在文件和其键的历史中），`m.purge()` 会彻底删除
   已隐藏和被替换的笔记及其向量，`m.erase(subject)` 会删除

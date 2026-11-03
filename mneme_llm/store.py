@@ -60,10 +60,6 @@ create table if not exists mood_events (
     source text not null, judge text not null
 );
 create index if not exists mood_events_subject on mood_events(space, subject, at);
-create table if not exists micro_models (
-    question text primary key, kind text not null, labels text not null, weights text not null,
-    examples integer not null, updated_at real not null
-);
 create table if not exists vectors (
     memory_id integer not null, embedder text not null, vector blob not null, taught text,
     primary key (memory_id, embedder)

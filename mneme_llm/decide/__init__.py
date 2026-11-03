@@ -1,14 +1,12 @@
-"""Small judgements (yes/no, pick one, rate on a scale) answered by the best tier that can, falling through.
+"""Small judgements (yes/no, pick one, rate on a scale) answered by the first tier that can, falling through.
 
-    chain = Chain(Luna(), Micro(store), Prompt(complete))
+    chain = Chain(my_tier, Prompt(complete))
     answers = await chain.adecide(text, [Predicate("remember", "The user shared something worth remembering.")])
     answers["remember"].probability            # or chain.decide(…) without an event loop
 
-Tiers are tried in order. A tier may answer some questions and abstain on the rest (the micro model abstains
-until it has learned a question well), or fail outright (no key, network down); whatever is left goes to the
-next tier. A tier with a `learn` method learns from every answer a tier above it gave, which is how the micro
-model is trained: by watching Luna. Leave any tier out and the rest still work. A tier is anything with a `name`
-and an async `adecide(input, questions)`; a Chain is one too, so chains nest.
+Tiers are tried in order. A tier may answer some questions and abstain on the rest, or fail outright (no key, network
+down); whatever is left goes to the next tier. `Prompt` asks your own chat model. A tier is anything with a `name` and
+an async `adecide(input, questions)`; a Chain is one too, so chains nest.
 """
 
 from __future__ import annotations
@@ -151,8 +149,7 @@ class Chain:
         """Answers for every question some tier could answer (a question no tier answers is left out)."""
         pending = list(questions)
         answers: dict[str, Answer] = {}
-        teachers: list[tuple[int, Answer, Question]] = []
-        for rank, tier in enumerate(self.tiers):
+        for tier in self.tiers:
             if not pending:
                 break
             stats = self.stats.setdefault(tier.name, TierStats())
@@ -172,28 +169,12 @@ class Chain:
                 else:
                     stats.answered += 1
                     answers[question.name] = answer
-                    teachers.append((rank, answer, question))
             pending = remaining
-        for rank, answer, question in teachers:
-            for tier in self.tiers[rank + 1:]:
-                learn = getattr(tier, "learn", None)
-                if learn is not None:
-                    try:
-                        learn(input, question, answer)
-                    except Exception:  # learning is a bonus; never let it break a decision
-                        log.exception("decider %s could not learn", tier.name)
         return answers
 
     def decide(self, input: str, questions: Iterable[Question]) -> dict[str, Answer]:
         """`adecide` for code without an event loop."""
         return run(self.adecide(input, questions))
-
-    def learn(self, input: str, question: Question, answer: Answer) -> None:
-        """As a tier of another chain: an answer from above teaches every tier of this one that learns."""
-        for tier in self.tiers:
-            learn = getattr(tier, "learn", None)
-            if learn is not None:
-                learn(input, question, answer)
 
     def report(self) -> dict:
         report = {name: vars(stats).copy() for name, stats in self.stats.items()}
@@ -214,8 +195,7 @@ def fit(text: str, limit: int) -> str:
     return text[:head] + "\n[…]\n" + text[-tail:] if tail > 0 else text[:max(0, limit)]
 
 
-from .luna import Luna  # noqa: E402  (the tiers use the types above)
-from .prompt import Prompt  # noqa: E402
+from .prompt import Prompt  # noqa: E402  (it uses the types above)
 
-__all__ = ["Answer", "Chain", "Choice", "Decider", "Luna", "Predicate", "Prompt", "Question", "Score",
+__all__ = ["Answer", "Chain", "Choice", "Decider", "Predicate", "Prompt", "Question", "Score",
            "Unavailable", "fit", "normalized", "run"]

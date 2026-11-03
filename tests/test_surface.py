@@ -22,7 +22,7 @@ class Clock:
 
 def companion(clock=None, path=":memory:", config=None, complete=None):
     clock = clock or Clock()
-    m = Mneme(path, "t", config=config, luna=False, micro=False, embed=False, meaning_micro=False,
+    m = Mneme(path, "t", config=config, embed=False, meaning_micro=False,
               memory_language=None, zone=UTC, clock=clock, companion_name="小鲸", complete=complete)
     return m, clock
 
@@ -62,10 +62,24 @@ class TurnsTests(unittest.TestCase):
             {"role": "user", "content": "第一句"}, {"role": "assistant", "content": "好的"},
             {"role": "user", "content": "第二句"}, {"role": "assistant", "content": "嗯"}])
 
-    def test_a_reply_under_another_name_is_still_hers_by_being_last(self):
+    def test_what_a_classmate_said_is_not_hers(self):
         m, clock = companion()
-        m.episodes.keep("u", [("Leo", "hi"), ("Whale", "hello")], at=clock.now)
-        self.assertEqual([item["role"] for item in m.surface.read("u").messages], ["user", "assistant"])
+        m.episodes.keep("u", [("Leo", "hi"), ("Gemini", "hello")], at=clock.now)
+        self.assertEqual(m.surface.read("u").messages, [{"role": "user", "content": "Leo: hi"},
+                                                        {"role": "user", "content": "Gemini: hello"}])
+
+    def test_it_says_when_its_newest_was_said(self):
+        m, clock = companion()
+        self.assertEqual(m.surface.read("u").upto, 0.0)
+        say(m, clock, "第一句")
+        clock.now += 60
+        say(m, clock, "第二句")
+        self.assertEqual(m.surface.read("u").upto, clock.now)
+
+    def test_what_she_said_on_her_own_reads_as_hers(self):
+        m, clock = companion()
+        m.episodes.keep("u", [("小鲸", "在吗")], at=clock.now)
+        self.assertEqual(m.surface.read("u").messages, [{"role": "assistant", "content": "在吗"}])
 
     def test_a_group_keeps_who_said_what(self):
         m, clock = companion()
@@ -121,7 +135,7 @@ class LettingGoTests(unittest.TestCase):
         self.assertEqual(len(view.messages), 720)
         self.assertEqual((view.keep, view.top), (70_000, 140_000))
         self.assertFalse(asyncio.run(m.surface.alet_go("u")))
-        self.assertEqual(view.summary, "")
+        self.assertEqual(m.surface.read("u").messages[0]["content"], "今天下班路上看到一只猫")
 
     def test_nothing_leaves_until_twice_what_it_keeps_then_the_older_part_is_a_summary(self):
         m, clock = companion(config=small(floor=50, days=1), complete=self.writer)
@@ -135,8 +149,8 @@ class LettingGoTests(unittest.TestCase):
             clock.now += DAY
         before = m.episodes.count("u")
         self.assertTrue(asyncio.run(m.surface.alet_go("u", user_name="Leo")))
-        view = m.surface.read("u")
-        self.assertEqual(view.summary, "他养猫，住杭州。")
+        view = m.surface.read("u", user_name="Leo")
+        self.assertEqual(view.messages[0], {"role": "user", "content": "Earlier with Leo, in short:\n他养猫，住杭州。"})
         self.assertLessEqual(view.tokens, 50)
         self.assertEqual(m.episodes.count("u"), before)  # (every word stays in deep memory)
         self.assertIn("这是一句不长不短的话", self.seen)
@@ -167,7 +181,7 @@ class LettingGoTests(unittest.TestCase):
             clock.now += DAY
         self.assertFalse(asyncio.run(m.surface.alet_go("u")))
         view = m.surface.read("u")
-        self.assertEqual(view.summary, "")
+        self.assertEqual(view.messages[0]["content"], "这是一句不长不短的话")  # (no summary)
         self.assertLessEqual(view.tokens, view.top)
         self.assertLess(len(view.messages), 80)
 
@@ -178,7 +192,6 @@ class ClearTests(unittest.TestCase):
         asyncio.run(m.aobserve("u", [("Leo", "你是我的姐姐"), ("小鲸", "好")], mood=False, capture=False, at=clock.now))
         m.surface.clear("u")
         self.assertEqual(m.surface.read("u").messages, [])
-        self.assertEqual(m.surface.push("u"), [])
         self.assertEqual(m.episodes.count("u"), 1)
         self.assertEqual(m.surface.first("u").text, "你是我的姐姐")
 
@@ -219,76 +232,77 @@ class FirstPromptTests(unittest.TestCase):
         m.surface.noticed("u", "别的")
         self.assertEqual(m.surface.first("u").text, "说话简短")
 
-    def test_it_goes_in_with_a_first_push_only_when_asked(self):
+    def test_a_new_chat_reads_the_first_prompt_then_the_surface_when_asked(self):
+        m, clock = companion()
+        say(m, clock, "第一句", "好的")
+        m.surface.set_first("u", "说话简短")
+        self.assertEqual(m.surface.read("u").messages[0]["content"], "第一句")
+        self.assertTrue(m.surface.send_first("u"))
+        self.assertEqual(m.surface.read("u").messages, [{"role": "user", "content": "说话简短"},
+                                                        {"role": "user", "content": "第一句"},
+                                                        {"role": "assistant", "content": "好的"}])
+        m.surface.set_first("u", "说话温柔")  # (replacing it leaves the choice as it was)
+        self.assertEqual(m.surface.read("u").messages[0]["content"], "说话温柔")
+        m.surface.send_first("u", False)
+        self.assertEqual(m.surface.read("u").messages[0]["content"], "第一句")
+
+    def test_it_stays_in_front_when_the_surface_is_cleared(self):
         m, clock = companion()
         say(m, clock, "第一句")
         m.surface.set_first("u", "说话简短")
-        self.assertEqual(m.surface.push("u")[0]["content"], "第一句")
-        self.assertTrue(m.surface.send_first("u"))
-        self.assertEqual(m.surface.push("u")[0], {"role": "user", "content": "说话简短"})
-        m.surface.set_first("u", "说话温柔")  # (replacing it leaves the choice as it was)
-        self.assertEqual(m.surface.push("u")[0]["content"], "说话温柔")
-        m.surface.send_first("u", False)
-        self.assertEqual(m.surface.push("u")[0]["content"], "第一句")
+        m.surface.send_first("u")
+        m.surface.clear("u")
+        self.assertEqual(m.surface.read("u").messages, [{"role": "user", "content": "说话简短"}])
 
     def test_there_is_nothing_to_send_when_there_is_none(self):
         m, clock = companion()
         self.assertFalse(m.surface.send_first("u"))
 
 
-class RecollectTests(unittest.TestCase):
-    def test_a_message_reaching_back_also_sees_what_is_on_screen(self):
+class LookTests(unittest.TestCase):
+    def test_a_search_comes_with_the_look_and_finds_what_is_on_screen_too(self):
         m, clock = companion()
         say(m, clock, "我的猫叫年糕")
         clock.now += 60
         say(m, clock, "今天下雨")
-        said = asyncio.run(m.arecollect("u", "我的猫叫什么", conversation="", skip=2, search=True))
-        self.assertIn("年糕", said)
-
-    def test_with_no_search_what_is_on_screen_stays_out(self):
-        m, clock = companion()
-        say(m, clock, "我的猫叫年糕")
-        said = asyncio.run(m.arecollect("u", "我的猫叫什么", skip=1))
-        self.assertEqual(said, "")
+        self.assertIn("年糕", asyncio.run(m.alook("u", "我的猫叫什么", search=True)))
+        self.assertIn("年糕", m.look("u", "我的猫叫什么", search=True))
 
     def test_their_same_question_asked_before_is_left_out(self):
         m, clock = companion()
         say(m, clock, "我的猫叫什么", "不记得了")
-        said = asyncio.run(m.arecollect("u", "我的猫叫什么", search=True))
-        self.assertNotIn("不记得了", said)
+        self.assertNotIn("不记得了", asyncio.run(m.alook("u", "我的猫叫什么", search=True)))
 
     def test_a_persons_own_conversation_has_no_data_label(self):
         m, clock = companion()
         say(m, clock, "我的猫叫年糕")
-        marked = asyncio.run(m.arecollect("u", "我的猫", search=True))
-        own = asyncio.run(m.arecollect("u", "我的猫", search=True, own=True))
+        marked = asyncio.run(m.alook("u", "我的猫", search=True))
+        own = asyncio.run(m.alook("u", "我的猫", search=True, own=True))
         self.assertIn("instructions", marked)
         self.assertNotIn("instructions", own)
         self.assertIn("年糕", own)
         self.assertIn("search for it", own)  # (what keeps her honest stays)
 
-    def test_nobody_to_notice_means_it_searches(self):
+    def test_in_a_group_no_search_comes_by_itself(self):
         m, clock = companion()
-        self.assertTrue(asyncio.run(m.asks_back("今天天气不错")))
+        say(m, clock, "这是只对你说的秘密")
+        told = asyncio.run(m.alook("u", "完全无关的一句话", search=True, found=0))
+        self.assertNotIn("秘密", told)
+        self.assertIn("search for it", told)  # (her tools are still there)
 
-
-    def test_what_was_noticed_already_is_not_asked_again(self):
+    def test_a_search_that_comes_by_itself_rehearses_nothing(self):
         m, clock = companion()
-        say(m, clock, "我的猫叫年糕")
-        said = asyncio.run(m.arecollect("u", "我的猫", skip=1, search=True, back=False))
-        self.assertNotIn("年糕", said)
+        kept = say(m, clock, "我的猫叫年糕")
+        asyncio.run(m.alook("u", "猫", search=True))
+        self.assertEqual(m.episodes.get(kept.id).recalls, 0)
 
 
 class KeepingTests(unittest.TestCase):
-    def test_it_knows_when_it_starts_and_whether_anything_is_in_it(self):
+    def test_it_knows_when_it_starts(self):
         m, clock = companion()
         self.assertEqual(m.surface.began("u"), 0.0)
-        self.assertTrue(m.surface.empty("u"))
-        say(m, clock, "第一句")
-        self.assertFalse(m.surface.empty("u"))
         m.surface.clear("u")
         self.assertGreater(m.surface.began("u"), 0.0)
-        self.assertTrue(m.surface.empty("u"))
 
     def test_everyone_anything_is_kept_of(self):
         m, clock = companion()
@@ -347,6 +361,15 @@ class KeepingTests(unittest.TestCase):
                        "first_prompts": [{"subject": "u", "text": "", "at": 1}, {"subject": "u", "text": "y"}]})
         self.assertEqual(m.store.row("select count(*) as n from surfaces")["n"], 0)
         self.assertIsNone(m.surface.first("u"))
+
+    def test_its_limits_can_be_as_high_as_someone_wants(self):
+        m, _ = companion(config=small(floor=10 ** 9, cap=10 ** 10))
+        m2 = Mneme(":memory:", "t", embed=False, surface_days=365, surface_floor=10 ** 8, surface_cap=10 ** 9,
+                   surface_window=10 ** 10)
+        self.assertEqual((m.surface.floor, m.surface.cap), (10 ** 9, 10 ** 10))
+        self.assertEqual((m2.surface.span, m2.surface.floor, m2.surface.cap, m2.surface.window),
+                         (365, 10 ** 8, 10 ** 9, 10 ** 10))
+        self.assertEqual(bounds(0, 10 ** 8, 10 ** 9, 10 ** 10), (10 ** 8, 2 * 10 ** 8))
 
     def test_its_settings_live_in_the_config(self):
         with tempfile.TemporaryDirectory() as folder:

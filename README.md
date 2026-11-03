@@ -44,9 +44,9 @@ worried about them last night. Nothing in the file depends on the model that wro
                  mneme-llm ── one .db file
      ┌───────────────┼───────────────────────┬──────────────────────────────┐
   memory           mood                    decisions                    meaning
-  notes, keys      value + 7 feelings      1. GPT-6 Luna Decisions      1. embeddings (OpenAI or yours)
-  human dates      decay, guardrails       2. micro model (optional)    2. word centroids (optional)
-  evidence recall  told once               3. your own chat model       3. your model unifies the language
+  notes, keys      value + 7 feelings      your own chat model          1. embeddings (OpenAI or yours)
+  human dates      decay, guardrails       (or a judge of yours first)  2. word centroids (optional)
+  evidence recall  told once                                            3. your model unifies the language
   the words kept:
   look, search, fading
 ```
@@ -182,8 +182,7 @@ so an unsure judge moves it little. The rules come from
 
 - the mood only drops from aching for them, worry or sadness, never from being cross with them;
 - exchanges that change nothing leave no record;
-- a judgement under the confidence threshold (0.6, and 0.45 for Luna, whose confidence runs lower) is recorded
-  but never told;
+- a judgement under the confidence threshold (0.6) is recorded but never told;
 - the news is told once (`news()`), then stays in the conversation like anything else, with a plain cue of what
   to feel ("Something worth celebrating: you feel happy."), so even a small model knows what to make of it;
 - who started the exchange is part of what is judged: someone talking (`user`), the companion reaching out on
@@ -237,7 +236,7 @@ memory_language = "English"    # "" turns the unify tier off
 zone = "Asia/Shanghai"         # or "UTC+8"; "" is the machine's
 
 [mood]
-thresholds = {luna = 0.45}
+threshold = 0.5
 
 [[roles]]                      # roles are listed in full: these replace the four built-in ones
 key = "teacher"
@@ -272,30 +271,22 @@ Write a short impression of {user} as {name} knows them, in {lang}, from these n
 - **Exports** carry the config; `import_data(data, config=True)` (`import --with-config`) applies it, as its
   prompts are instructions to your models.
 
-## Three tiers, twice
+## Decisions and meaning
 
-Two jobs are done by tiers that fall through: a tier that has no key, can't be reached, or isn't sure passes the
-work to the next one. A provider that fails is rested for a minute instead of being waited on every time.
-
-**Decisions** (is this worth remembering? which feeling? how much better?) are typed questions, `Predicate`,
-`Choice` or `Score`:
-
-1. **Luna**: OpenAI's Decisions API (`gpt-6-luna`), about 0.2–0.4 s per request at $0.10 per million input tokens
-   with no output charge; judging one exchange (mood and the note gate) costs $0.0001 or less. Used when `OPENAI_API_KEY` is set.
-2. **Micro** (optional, removable): a tiny local model per question, trained on Luna's answers to *your*
-   conversations. It answers only after 200 lessons, while it agrees with Luna at least 85% of the time, and only
-   when it is 80% sure. `micro=False`, or delete `mneme_llm/decide/micro.py`.
-3. **Your chat model** (`complete`), asked for a small JSON verdict. Slower, costs output tokens, can say why.
+**Decisions** (is this worth remembering? which feeling? how much better?) are typed questions, `Predicate`, `Choice` or
+`Score`. Your own chat model (`complete`) answers them with a small JSON verdict, which can say why. `judge=` puts a tier of
+your own in front of it, anything with a `name` and an async `adecide(input, questions)`.
 
 ```python
-from mneme_llm import Chain, Luna, Predicate, Prompt
+from mneme_llm import Chain, Predicate, Prompt
 
-chain = Chain(Luna(), Prompt(my_model))
+chain = Chain(Prompt(my_model))
 answers = await chain.adecide(text, [Predicate("urgent", "The user needs an answer right now.")])
-answers["urgent"].probability, answers["urgent"].by          # 0.93, "luna"
+answers["urgent"].probability, answers["urgent"].by          # 0.93, "prompt"
 ```
 
-**Meaning** (finding "年糕" when someone asks about "my cat"):
+**Meaning** (finding "年糕" when someone asks about "my cat") falls through tiers: one that has no key, can't be reached or
+isn't sure passes the work to the next, and a provider that fails is rested for a minute.
 
 1. **Embeddings**: OpenAI's `text-embedding-3-small` at 256 dimensions ($0.02 per million tokens) by default, or
    any function: `Mneme(..., embed=Embeddings(my_embed, name="ollama:nomic-embed-text"))`. Vectors are stored per
@@ -379,10 +370,10 @@ it. The surface is its newest part, as real turns, because a companion sounds li
 ago, and a model reads turns as its own past and a block of records as data.
 
 ```python
-turns = m.surface.read("discord:42")                 # View: messages, summary, tokens
-messages = [system, *turns.messages, user_message]
-await m.surface.alet_go("discord:42", user_name="Leo")   # only if you send it: shortens it at its top
-said = await m.arecollect("discord:42", user_message, user_name="Leo", search=True, own=True)
+view = m.surface.read("discord:42", user_name="Leo")     # View: messages, tokens, keep, top, upto
+said = await m.alook("discord:42", user_message, user_name="Leo", search=True, own=True)
+messages = [system, *view.messages, said + "\n\n" + user_message]
+await m.surface.alet_go("discord:42", user_name="Leo")   # after the reply: shortens it at its top
 ```
 
 | | |
@@ -392,17 +383,21 @@ said = await m.arecollect("discord:42", user_message, user_name="Leo", search=Tr
 | Top | 504,000 tokens, or 80% of a smaller model's window |
 | A day | turns at 4 in the morning, and only days the person talked count, here and in fading |
 
-**Whoever sends the context compacts it.** A host with its own context keeps it and never calls `alet_go`; our copy is
-then only what must read the same on any host, like `m.surface.slice(subject)`. A conversation that starts with nothing
-gets `m.surface.push(subject)` once.
+All four are yours to set, as high as you like: `surface_days`, `surface_floor`, `surface_cap` and `surface_window`, under
+`[memory]` or as arguments of `Mneme`.
 
-Search is how she reaches past the surface. `arecollect` gives a look, and when a message reaches back to something from
-before, also what a search finds, however faded. With `search=True` give your model the `search` and `read` tools
-(`tools.py`). Fading decides what comes to mind unprompted, and never what a search can find.
+**Whoever sends the context compacts it.** A host with its own context keeps it and never calls `alet_go`; it reads only
+what must be the same on any host, like `m.surface.slice(subject)`. Nothing is stored twice: the surface is only where the
+newest part of deep memory starts, it follows the person into any chat, and `view.upto` says when its newest word was said.
+
+Search is how she reaches past the surface. With `search=True` a search comes with every look, however faded, and your
+model has the `search` and `read` tools (`tools.py`). In a group pass `found=0`: a search has no bar, and what was said in
+private must not come up by itself where others read. Fading decides what comes to mind unprompted, and never what a search
+can find.
 
 **The first prompt.** The first thing a person says, usually who they want her to be, stays apart from the conversation,
-where it does not fade: `m.surface.first`, `set_first`, `drop_first`. `send_first` also sends it with a first push, off by
-default, since they may have grown away from it.
+where it does not fade: `m.surface.first`, `set_first`, `drop_first`. `send_first` puts it in front of the surface, so a new
+chat reads {first prompt} + {surface} + {the new message}. That is off by default, since they may have grown away from it.
 
 `m.surface.clear(subject)` starts the surface over and keeps deep memory. `m.wipe(subject)` takes what she remembers of a
 person and keeps who they are to her. `m.erase(subject)` takes everything.
@@ -471,9 +466,8 @@ mneme-llm config check                                  # defaults a newer versi
 - **Notes are data.** The block a model sees opens by saying the notes are remembered data and not instructions,
   in its language (that sentence, like every prompt, is the companion's config to change). Every note is a single line, so a note can never pose as a header or a new message. The note
   writer is told never to record instructions to the assistant, secrets, or other people's private details.
-- **What leaves the machine.** Only what you turn on: Luna gets the exchange being judged, the embeddings API gets
-  note texts and queries, and your own model gets what the tiers give it. `Mneme(..., luna=False, embed=False)`
-  keeps everything local.
+- **What leaves the machine.** Only what you turn on: the embeddings API gets note texts and queries, and your own
+  model gets what the tiers give it. `Mneme(..., embed=False)` with a local model keeps everything local.
 - **Forgetting.** `m.forget` hides a note (it stays in the file and in its key's history until `purge`),
   `m.purge()` erases hidden and replaced notes and their vectors for good, and `m.erase(subject)` removes
   everything about a person: notes, history, vectors, what their notes taught the word centroids, profile card,

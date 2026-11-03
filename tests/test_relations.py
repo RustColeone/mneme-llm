@@ -30,7 +30,7 @@ async def judge(system, user):  # every exchange: a little better, and happy
 
 
 def mneme(clock=None, **options):
-    return Mneme(":memory:", "t", luna=False, micro=False, embed=False, memory_language=None,
+    return Mneme(":memory:", "t", embed=False, memory_language=None,
                  clock=clock or Clock(), **options)
 
 

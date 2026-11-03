@@ -22,7 +22,7 @@ class Clock:
 
 
 def mneme(path=":memory:", clock=None, **options):
-    return Mneme(path, "t", luna=False, micro=False, embed=False, memory_language=None,
+    return Mneme(path, "t", embed=False, memory_language=None,
                  clock=clock or (lambda: NOON), **options)
 
 

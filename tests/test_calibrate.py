@@ -39,7 +39,7 @@ def model(alike: float = 0.5, calls: list | None = None):
 
 
 def mneme(embed, path=":memory:"):
-    return Mneme(path, "t", luna=False, micro=False, memory_language=None, embed=embed)
+    return Mneme(path, "t", memory_language=None, embed=embed)
 
 
 def recall(m, query="anything"):

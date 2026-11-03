@@ -42,7 +42,7 @@ def embed(texts):  # deterministic: one direction per word, so similar notes are
 
 
 def open_memory(path=":memory:", **options):
-    options = {"luna": False, "micro": False, "memory_language": None, "embed": Embeddings(embed, name="toy:8"),
+    options = {"memory_language": None, "embed": Embeddings(embed, name="toy:8"),
                **options}
     return Mneme(path, "t", **options)
 
@@ -353,7 +353,7 @@ class CrashTests(unittest.TestCase):
         m.remember("u", "Kept before the crash", kind="fact")
         m.close()
         code = ("import sys, time\nfrom mneme_llm import Mneme\n"
-                "m = Mneme(sys.argv[1], 't', luna=False, micro=False, embed=False, memory_language=None)\n"
+                "m = Mneme(sys.argv[1], 't', embed=False, memory_language=None)\n"
                 "with m.store.transaction():\n"
                 "    for index in range(2000):\n"
                 "        m.memory.keep('u', f'half written {index}')\n"

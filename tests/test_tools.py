@@ -6,8 +6,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 
-from tests.tiers import needs_decide_micro
 from mneme_llm import Mneme
 from mneme_llm.mcp import serve
 from mneme_llm.tools import Toolbox, specs
@@ -16,7 +16,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def plain(**options):
-    return Mneme(":memory:", "t", luna=False, micro=False, **options)
+    return Mneme(":memory:", "t", **options)
 
 
 class SpecTests(unittest.TestCase):
@@ -55,7 +55,7 @@ class ToolboxTests(unittest.TestCase):
         self.assertTrue(Toolbox(plain()).call("mood", {}).startswith("Error: no subject"))
 
     def test_the_quota_is_explained(self):
-        m = Mneme(":memory:", "t", luna=False, micro=False, daily_quota=1)
+        m = Mneme(":memory:", "t", daily_quota=1)
         box = Toolbox(m, "u")
         box.call("remember", {"text": "one", "kind": "episode"})
         self.assertIn("limit", box.call("remember", {"text": "two", "kind": "episode"}))
@@ -143,12 +143,12 @@ class FacadeTests(unittest.TestCase):
         self.assertEqual(m.decider.report()["prompt"]["answered"], 2)
         self.assertEqual(len(asked), 1)
 
-    @needs_decide_micro
-    def test_the_micro_model_is_optional(self):
-        self.assertIsNone(plain().micro)
-        self.assertEqual([t.name for t in Mneme(":memory:", luna=False).decider.tiers], ["micro"])
-        with_all = Mneme(":memory:", complete=lambda s, u: "{}")
-        self.assertEqual([t.name for t in with_all.decider.tiers], ["luna", "micro", "prompt"])
+    def test_a_judge_of_your_own_comes_before_your_model(self):
+        tier = SimpleNamespace(name="mine")
+        self.assertEqual(plain().decider.tiers, [])
+        m = Mneme(":memory:", judge=tier, complete=lambda system, user: "", embed=False)
+        self.assertEqual([t.name for t in m.decider.tiers], ["mine", "prompt"])
+
 
 
 class CliTests(unittest.TestCase):

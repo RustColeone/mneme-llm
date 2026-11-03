@@ -93,19 +93,6 @@ class MoodTests(unittest.TestCase):
         m.apply("u", delta=-3, emotions={"worried": 40}, reason="Leo发烧了", confidence=0.9)
         self.assertIn("这让你放心不下：你在担心对方。", m.news("u"))
 
-    def test_lunas_changes_have_a_threshold_of_their_own(self):
-        from mneme_llm.decide import Answer
-        m, _ = mood()
-
-        def answers(by, confidence):
-            return {"feeling": Answer("feeling", "choice", {"happy": 0.9, "none": 0.1}, confidence, by),
-                    "mood_change": Answer("mood_change", "score", {"1": 1.0}, 0.9, "prompt")}
-        m.apply_answers("u", answers("luna", 0.5), "Leo: I passed!", user_name="Leo")
-        self.assertIsNotNone(m.news("u"))  # 0.5 is enough for Luna (0.45)...
-        m.apply_answers("u", answers("prompt", 0.5), "Leo: I passed again!", user_name="Leo")
-        self.assertIsNone(m.news("u"))  # ...but not for a chat model's own report (0.6)
-        self.assertEqual(m.timeline("u", 1)[0].judge, "prompt")
-
     def test_news_is_told_once_and_only_when_confident(self):
         m, _ = mood(threshold=0.6)
         m.apply("u", delta=4, emotions={"happy": 30}, reason="被夸了", confidence=0.9)

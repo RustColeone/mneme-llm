@@ -415,27 +415,17 @@ class Episodes(Speaks, Resolves):
         return self._kept({"at": episode.at, "recalled_at": episode.recalled_at, "stability": episode.stability}, now,
                           self.talking_days(episode.subject))
 
-    def look(self, subject: str, query: str, *, budget: int = 6000, conversation: str = "", skip: int = 0,
-             cut: tuple[float, float] | None = (CUT, CUT_FADED), shorten: bool = False,
-             found=None) -> list[Episode]:
+    def look(self, subject: str, query: str, *, budget: int = 6000, cut: tuple[float, float] | None = (CUT, CUT_FADED),
+             shorten: bool = False, found=None) -> list[Episode]:
         """What comes to mind for `query` (words only; `alook` adds meaning): the best matches within `budget`
-        characters as `render` shows them, in the order they were said. The newest `skip` exchanges of
-        `conversation` are left out (the host still shows them). With the query's vector from the embedder, an
+        characters as `render` shows them, in the order they were said. With the query's vector from the embedder, an
         exchange must clear a bar: its cosine with the query at least the embedder's floor as the bundled set placed
         it (the similarity under which a text says nothing about a query, `Meaning.set_floor`) plus `cut[0]` when
         fresh, plus `cut[1]` when fully faded, in between by its retention. One under its bar is left out however much budget is left, so a look
         may be short, or empty (`cut=None`: no bar; with words alone there is none). With `shorten`, a faded exchange is shown in part: each line within SHOWN_LINE·(FLOOR + (1 − FLOOR)·R)
         characters (its opening and its end; `read` shows it whole)."""
         subject, query = self.who(subject), self._query(query)
-        if not isinstance(conversation, str):
-            raise TypeError(f"a conversation is named by a string, not {type(conversation).__name__}")
-        conversation = texts.clip(conversation, 200)  # (as `keep` keeps it)
-        left_out: set[int] = set()
-        if skip > 0:
-            left_out = {row["id"] for row in self.store.rows(
-                "select id from episodes where space = ? and subject = ? and conversation = ? order by at desc, id "
-                "desc limit ?", (self.space, subject, conversation, int(skip)))}
-        ranked = [id for id in self._ranked(subject, query, found, cut=cut) if id not in left_out][:SCANNED]
+        ranked = self._ranked(subject, query, found, cut=cut)[:SCANNED]
         chosen, used, now = [], 0, self.clock()
         for episode in self._get_many(ranked):
             if shorten:

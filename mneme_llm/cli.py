@@ -131,9 +131,6 @@ def main(argv: list[str] | None = None) -> int:
     tools = commands.add_parser("tools", help="print the tool definitions for a model API")
     tools.add_argument("--style", default="openai", choices=("openai", "responses", "anthropic", "gemini", "mcp"))
 
-    micro = commands.add_parser("micro", help="what the micro decision model has learned")
-    micro.add_argument("--reset", action="store_true", help="forget it all (it relearns from Luna)")
-
     serve = commands.add_parser("mcp", help="serve the tools over MCP (stdio)")
     serve.add_argument("--subject", help="bind every call to this person")
 
@@ -154,7 +151,7 @@ def main(argv: list[str] | None = None) -> int:
         space = args.into or str(args.data.get("space") or args.space)
     meaning = args.command == "mcp" or getattr(args, "meaning", False)
     try:
-        m = Mneme(args.db, space, config=args.config, display_language=args.display_language or STORED, luna=False,
+        m = Mneme(args.db, space, config=args.config, display_language=args.display_language or STORED, 
                   embed=meaning, memory_language=None)
     except (ValueError, OSError) as error:  # a config file that is missing, or has a wrong key or value
         print(error, file=sys.stderr)
@@ -279,19 +276,6 @@ def _run(m: Mneme, args) -> int:
         except (ValueError, OSError) as error:
             print(error, file=sys.stderr)
             return 2
-    elif args.command == "micro":
-        try:
-            from .decide.micro import Micro
-        except ImportError:
-            print("(the micro model is not installed)")
-            return 0
-        if args.reset:
-            Micro(m.store).reset()
-        rows = Micro.saved(m.store)
-        for row in rows:
-            print(f"{row['question']}: {row['examples']} lessons, saved {stamp(row['updated_at'], memory.zone)}")
-        if not rows:
-            print("(nothing learned yet)")
     elif args.command == "mcp":
         from .mcp import serve
         serve(m, args.subject)
@@ -332,7 +316,7 @@ def _config(config, args) -> int:
 
 
 def _toml_value(text: str, *, text_key: bool = False):
-    """A value as TOML reads it (0.5, true, "text", {luna = 0.4}), or else the text itself. For a key that holds
+    """A value as TOML reads it (0.5, true, "text", {user = 1.0}), or else the text itself. For a key that holds
     text, a value is text unless it is quoted ("42" and 42 are both the text 42)."""
     try:
         value = tomllib.loads(f"value = {text}")["value"]

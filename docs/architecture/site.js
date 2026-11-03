@@ -49,11 +49,7 @@ window.SITE = (() => {
       file("meaning/ledger.py", "ledger", "what notes taught the centroids");
     }, { kind: "capabilities" });
     const decide = chart.group("decide/ · the mood, and what is worth keeping", () => {
-      const luna = file("decide/luna.py", "1 · Luna", "OpenAI's Decisions API");
-      const micro = file("decide/micro.py", "2 · micro", "removable: local models learned from Luna");
-      const prompt = file("decide/prompt.py", "3 · your model", "asked for JSON");
-      chart.edge(luna, micro, { label: "else" });
-      chart.edge(micro, prompt, { label: "else" });
+      file("decide/prompt.py", "your model", "asked for JSON");
     }, { kind: "watchers" });
     const store = file("store.py", "Store", "one SQLite file · schema 1 · transactions", "store");
     const shared = chart.group("Shared by all", () => {
@@ -99,7 +95,7 @@ window.SITE = (() => {
       "sit on Mneme. Each kind of row has one owner that writes it, and every write looks up the person a subject " +
       "stands for inside its own transaction."));
     pane.push(make("h3", "", "Removable tiers"));
-    pane.push(make("div", "doc", "decide/micro.py, meaning/micro.py and meaning/unify.py can each be deleted and " +
+    pane.push(make("div", "doc", "meaning/micro.py and meaning/unify.py can each be deleted and " +
       "everything else works (tests/test_removable.py, and a CI job runs the whole suite without them)."));
     return pane;
   }
@@ -127,7 +123,7 @@ window.SITE = (() => {
       chain([
         step("Mneme.aobserve", "once the reply is out", "__init__.py", "Mneme.aobserve"),
         step("Episodes.keep", "the exchange word for word (no model call)", "episodes.py", "Episodes.keep"),
-        step("Chain.adecide", "one request: mood change, feeling, worth keeping? Luna → micro → your model", "decide/__init__.py", "Chain.adecide"),
+        step("Chain.adecide", "one request to your model: mood change, feeling, worth keeping?", "decide/__init__.py", "Chain.adecide"),
         step("Mood.apply_answers", "a delta and feelings, scaled by closeness; a timeline event", "mood.py", "Mood.apply_answers"),
         step("Relations.seen", "a day of contact: closeness grows once a day", "relations.py", "Relations.seen"),
         step("Mneme._capture", "worth it? the note writer (your model)", "__init__.py", "Mneme._capture"),
@@ -158,14 +154,13 @@ window.SITE = (() => {
         "closer it must be, so small talk usually brings nothing), within a budget of characters, under a header " +
         "asking the model to check it is about the same person and the same thing."],
       ["After the reply", "aobserve(subject, exchange, source, user_name) first keeps the exchange word for word (when " +
-        "the person started it), then asks one decision request (Luna, then the " +
-        "local micro models once they have learned, then your model): how much the mood changes, which feeling, and " +
+        "the person started it), then asks your model one decision request: how much the mood changes, which feeling, and " +
         "whether anything is worth remembering. The mood moves by how close the person is; an exchange the person " +
         "started is a day of contact; and when it is worth it, the note writer (your model) writes notes, kept under " +
         "the rules of writing (one live note per key, the newest; no text twice; a daily quota for automatic notes). " +
         "Last, the exchange gets its vector, and rehearses the earlier exchanges it is about: they fade slower."],
       ["What it costs", "Beyond the reply itself: one embeddings request before it (for the query; notes are embedded " +
-        "once), one Luna request and one embeddings request (the exchange) after it, and a note-writer call only when " +
+        "once), one request to your model and one embeddings request (the exchange) after it, and a note-writer call only when " +
         "there is something to write."],
       ["One person, several accounts", "link(subject, person) makes an account another subject of a person: every " +
         "call with either means them, and what was kept under the account joins the person."],

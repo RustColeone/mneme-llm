@@ -25,7 +25,7 @@ from . import dates, exchange as exchanges, providers
 from .aliases import Aliases
 from .capture import WORTH_NAME, notes_in, reflect_prompt, worth, writer_prompt
 from .config import STORED, Config
-from .decide import Answer, Chain, Choice, Luna, Predicate, Prompt, Score, fit
+from .decide import Answer, Chain, Choice, Predicate, Prompt, Score, fit
 from .episodes import Episode, Episodes
 from .gut import Gut, Turn
 from .i18n import Words, say
@@ -38,8 +38,8 @@ from .relations import Relations, Relationship, Role
 from .store import SCHEMA_VERSION, Store
 from .surface import First, Surface, View
 
-__version__ = "0.3.0"
-RECALL_FOUND = 5  # exchanges a search adds to a look when a message reaches back
+__version__ = "0.4.0"
+SEARCHED = 5  # exchanges a search adds to a look
 
 
 def _optional(module: str, name: str):
@@ -75,9 +75,7 @@ class Mneme:
     complete       your own chat model, `complete(system, user) -> str` (sync or async). It is the last tier of
                    decisions and of meaning, and it writes notes (`observe`, `capture`) and the profile card
                    (`reflect`). It can be a fixed, cheap model whatever model your conversation uses.
-    luna, micro    decision tiers 1 and 2: True uses GPT-6 Luna's Decisions API when OPENAI_API_KEY is set (it
-                   falls through without one) and keeps the local micro model; False leaves either out; or pass
-                   a tier of your own.
+    judge          a decision tier of your own, tried before `complete` (`decide/__init__.py`)
     embed          meaning tier 1: True uses OpenAI embeddings when OPENAI_API_KEY is set; or pass any embedder
                    (`Embeddings(fn, name=...)` for your own function); False leaves it out.
     meaning_micro  meaning tier 2: word centroids learned from tier 1 (False leaves it out).
@@ -85,14 +83,17 @@ class Mneme:
                    of your own; None turns it off.
     roles          what people can be to the companion (`relate`): creator, family, friend, acquaintance, and any
                    `Role` of your own.
+    surface_days, surface_floor, surface_cap, surface_window
+                   how much of the conversation stays as real turns (`surface.py`): set them as high as you like
     """
     WRITER_INPUT = 12000  # characters of an exchange the note writer reads: its opening and its newest words
 
     def __init__(self, path: str = "mneme.db", space: str = "default", *, config=None,
                  display_language: str = STORED, companion_name: str = STORED, zone: tzinfo | None = STORED,
-                 complete=None, luna=True, micro=True, embed=True, meaning_micro=True, memory_language=STORED,
+                 complete=None, judge=None, embed=True, meaning_micro=True, memory_language=STORED,
                  mood: MoodSettings = STORED, roles: tuple[Role, ...] = STORED, half_life_days: float = STORED,
-                 daily_quota: int = STORED, clock: Callable[[], float] = time.time):
+                 daily_quota: int = STORED, surface_days: int = STORED, surface_floor: int = STORED,
+                 surface_cap: int = STORED, surface_window: int = STORED, clock: Callable[[], float] = time.time):
         self.store = Store(path)
         try:
             ledger.repair(self.store)  # centroids changed by something that kept no account start over
@@ -111,10 +112,7 @@ class Mneme:
         self.companion_name = stored(companion_name, "companion.name")
         zone = own.zone() if zone is STORED else zone
         words = Words(stored(display_language, "companion.display_language"), own.messages())
-        self._tiers = [Luna() if luna is True else luna] if luna else []
-        Micro = _optional("decide.micro", "Micro") if micro is True else None
-        self.micro = (Micro(self.store) if Micro is not None else None) if micro is True else micro or None
-        self._tiers += [self.micro] if self.micro is not None else []
+        self._tiers = [judge] if judge else []
         self.decider = self._chain(complete)
         self.meaning = self._meaning(embed, meaning_micro, memory_language, complete)
         self.people = People(self.store, space, clock=clock)
@@ -133,9 +131,11 @@ class Mneme:
         self.aliases = Aliases(self.store, space, display_language=words, people=self.people, clock=clock)
         self.episodes = Episodes(self.store, space, days=own.get("memory.said_days"), zone=zone,
                                  display_language=words, meaning=self.meaning, people=self.people, clock=clock)
-        self.surface = Surface(self.store, space, self.episodes, days=own.get("memory.surface_days"),
-                               floor=own.get("memory.surface_floor"), cap=own.get("memory.surface_cap"),
-                               window=own.get("memory.surface_window"), companion_name=self.companion_name,
+        self.surface = Surface(self.store, space, self.episodes, days=stored(surface_days, "memory.surface_days"),
+                               floor=stored(surface_floor, "memory.surface_floor"),
+                               cap=stored(surface_cap, "memory.surface_cap"),
+                               window=stored(surface_window, "memory.surface_window"),
+                               companion_name=self.companion_name,
                                display_language=words, prompts=self.prompts, people=self.people, complete=complete,
                                clock=clock)
         self.said_budget = own.get("memory.said_budget")
@@ -285,26 +285,25 @@ class Mneme:
 
     def prompt(self, subject: str, query: str = "", *, user_name: str | None = None, mark: bool = True, limit: int = 6,
                budget: int = 800, important: int = 2, recent: int = 1, header: str | None = None, said: int = 0,
-               conversation: str = "", skip: int = 0, search: bool = False) -> str:
+               search: bool = False, own: bool = False) -> str:
         """What to add to the system prompt this turn (word matching only): who the person is to the companion and
         what they call it, notes for `query`, with `said` (a budget of characters) what was said before that
         bears on it (`look`), and the mood's news, told once. `user_name` is how they are named; the notes' options
         are as in `Memory.context`, the rest as in `look`."""
         notes = self.memory.context(subject, query, user_name=user_name, limit=limit, budget=budget,
                                     important=important, recent=recent, header=header)
-        words = self.look(subject, query, user_name=user_name, budget=said, conversation=conversation, skip=skip,
-                          search=search) if said else ""
+        words = self.look(subject, query, user_name=user_name, budget=said, search=search, own=own) if said else ""
         return self._prompt(subject, user_name, notes, words, mark)
 
     async def aprompt(self, subject: str, query: str = "", *, user_name: str | None = None, mark: bool = True,
                       limit: int = 6, budget: int = 800, important: int = 2, recent: int = 1,
-                      header: str | None = None, complete=None, said: int = 0, conversation: str = "", skip: int = 0,
-                      search: bool = False) -> str:
+                      header: str | None = None, complete=None, said: int = 0, search: bool = False,
+                      own: bool = False) -> str:
         """`prompt` with the meaning tiers."""
         notes = await self.memory.acontext(subject, query, user_name=user_name, limit=limit, budget=budget,
                                            important=important, recent=recent, header=header, complete=complete)
-        words = await self.alook(subject, query, user_name=user_name, budget=said, conversation=conversation,
-                                 skip=skip, search=search) if said else ""
+        words = await self.alook(subject, query, user_name=user_name, budget=said, search=search,
+                                 own=own) if said else ""
         return self._prompt(subject, user_name, notes, words, mark)
 
     def _prompt(self, subject: str, user_name: str | None, notes: str, said: str, mark: bool) -> str:
@@ -313,56 +312,39 @@ class Mneme:
         return "\n\n".join(part for part in parts if part)
 
     def look(self, subject: str, query: str = "", *, user_name: str | None = None, budget: int | None = None,
-             conversation: str = "", skip: int = 0, search: bool = False) -> str:
-        """What was said before that bears on `query` (word matching only), ready for a prompt: the best matches
-        word for word within `budget` characters (`memory.said_budget`, 6,000, when not given), under a header that
-        asks for the person check. With meaning (`alook`), only what is close enough comes, and the more an exchange
-        has faded, the closer it must be (`memory.said_cut`, `memory.said_cut_faded`): often nothing. The newest
-        `skip` exchanges of `conversation` are left out (you still show them). `search`: your model has the search
-        tool (`tools.py`), and is told to search before it says it does not remember, even when nothing came to
-        mind. "" when nothing bears on it and there is no search."""
-        found = self.episodes.look(subject, query, budget=self._said(budget), conversation=conversation, skip=skip,
-                                   cut=self.said_cut)
-        return self.episodes.render(found, user_name=user_name, search=search)
+             search: bool = False, own: bool = False, found: int = SEARCHED) -> str:
+        """What was said before that bears on `query` (word matching only), ready for a prompt: the best matches word
+        for word within `budget` characters (`memory.said_budget`, 6,000, when not given), under a header that asks for
+        the person check. With meaning (`alook`), only what is close enough comes, and the more an exchange has faded,
+        the closer it must be (`memory.said_cut`, `memory.said_cut_faded`): often nothing.
+
+        `search`: your model has the search tool (`tools.py`). Then a search comes with the look, `found` exchanges by
+        relevance alone however faded, and the model is told to search before it says it does not remember. So a
+        question about something old finds it, with nothing to decide whether it was one, and what the conversation
+        still shows is found too, as a block that left it out reads as if she has forgotten it. In a group give
+        `found=0`: a search has no bar, and what was said in private must not come up by itself where others read.
+
+        `own`: this is the person's own conversation with the companion, what they said to it in the first place, so no
+        data label. Their same question asked before is left out: all it holds is what she said then, and an "I don't
+        remember" found again is said again. "" when nothing bears on it and there is no search."""
+        came = self.episodes.look(subject, query, budget=self._said(budget), cut=self.said_cut)
+        if search and found:
+            came += self.episodes.search(subject, query, limit=found, seen={item.id for item in came}, refresh=False)
+        return self._came_back(came, query, user_name, search, own)
 
     async def alook(self, subject: str, query: str = "", *, user_name: str | None = None, budget: int | None = None,
-                    conversation: str = "", skip: int = 0, search: bool = False) -> str:
+                    search: bool = False, own: bool = False, found: int = SEARCHED) -> str:
         """`look` with meaning (the query's embedding, when it comes within a few seconds)."""
-        found = await self.episodes.alook(subject, query, budget=self._said(budget), conversation=conversation,
-                                          skip=skip, cut=self.said_cut)
-        return self.episodes.render(found, user_name=user_name, search=search)
+        came = await self.episodes.alook(subject, query, budget=self._said(budget), cut=self.said_cut)
+        if search and found:
+            came += await self.episodes.asearch(subject, query, limit=found, seen={item.id for item in came},
+                                                refresh=False)
+        return self._came_back(came, query, user_name, search, own)
 
-    async def asks_back(self, query: str) -> bool:
-        """Whether a message reaches back to something from before. With nobody to tell, or no answer, it does: a
-        search costs little, and without one she makes things up."""
-        if not self.decider.tiers:
-            return True
-        question = Predicate("recall", self.prompts["asks_back"])
-        try:
-            found = (await self.decider.adecide(query, [question])).get("recall")
-        except Exception:
-            return True
-        return found is None or found.probability >= 0.5
-
-    async def arecollect(self, subject: str, query: str, *, user_name: str | None = None, budget: int | None = None,
-                         conversation: str = "", skip: int = 0, search: bool = False, own: bool = False,
-                         found: int = RECALL_FOUND, back: bool | None = None) -> str:
-        """What comes back for a message, ready for a prompt: the look, and when the message reaches back (`asks_back`,
-        with `search` on) also what a search finds, however faded. Then the look covers what the host still shows too,
-        as a block that leaves that out reads like she has forgotten it. Their same question asked before is left
-        out: all it holds is what she said then, and an "I don't remember" found again is said again. `own`: the
-        person's own conversation with her, so no data label; in a group, what others said keeps it. `back`: `asks_back`
-        when you asked it already."""
-        back = (await self.asks_back(query) if search else False) if back is None else back
-        looked = await self.episodes.alook(subject, query, budget=self._said(budget), conversation=conversation,
-                                           skip=0 if back else skip, cut=self.said_cut)
-        kept = list(looked)
-        if back:
-            shown = {item.id for item in kept}
-            kept += (await self.episodes.asearch(subject, query, limit=found + 3, seen=shown))[:found]
+    def _came_back(self, came: list[Episode], query: str, user_name: str | None, search: bool, own: bool) -> str:
         same = "".join(query.split())
-        kept = sorted((item for item in kept if "".join(item.lines[0][1].split()) != same), key=lambda item: item.at)
-        return self.episodes.render(kept, user_name=user_name, search=search, own=own)
+        came = sorted((item for item in came if "".join(item.lines[0][1].split()) != same), key=lambda item: item.at)
+        return self.episodes.render(came, user_name=user_name, search=search, own=own)
 
     def _said(self, budget: int | None) -> int:
         return self.said_budget if budget is None else max(0, int(budget))
@@ -537,9 +519,6 @@ class Mneme:
         return added
 
     def close(self) -> None:
-        flush = getattr(self.micro, "flush", None)  # (a host's own tier may keep nothing)
-        if flush is not None:
-            flush()
         self.store.close()
 
     def __enter__(self) -> "Mneme":
@@ -550,6 +529,6 @@ class Mneme:
 
 
 __all__ = ["Aliases", "Answer", "Chain", "Choice", "Config", "Embeddings", "Emotion", "Episode", "Episodes", "First", "Gut", "KINDS",
-           "Luna", "Meaning", "Memory", "Mneme", "Mood", "MoodEvent", "MoodSettings", "Note", "Observation",
+           "Meaning", "Memory", "Mneme", "Mood", "MoodEvent", "MoodSettings", "Note", "Observation",
            "OpenAIEmbeddings", "People", "Predicate", "Prompt", "Recall", "Relations", "Relationship", "Role", "STORED",
            "Score", "Store", "Surface", "Turn", "Unavailable", "View", "__version__"]
