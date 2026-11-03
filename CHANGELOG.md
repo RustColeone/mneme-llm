@@ -19,23 +19,55 @@ before 1.0, a minor version may change the Python API, and this file says how.
 - **One side at a time, for a month at least.** She stays in a side, then her sides are drawn again by weight: what people
   asked for, half gone in three months, plus any number set by hand. `Gut.holding` says which, `Gut.weight` how much.
 
-- **The surface: what was said lately, as real turns.** `Mneme.surface` (`surface.py`) is a window on the newest part of
-  Episodes, not a second store: `read` gives chat messages, `slice` the newest few, `push` what goes into a new
-  conversation that starts with nothing. It keeps what the last 30 talking days hold, never less than 70,000 tokens; nothing
-  leaves until it holds twice that, and then `alet_go` turns the older part into a summary, with every word still in
-  Episodes. 504,000 tokens is the top, or 80% of a smaller model's window. A host with a context of its own keeps it and
-  compacts it: whoever sends the context compacts it. `memory.surface_days`, `surface_floor`, `surface_cap`,
+- **The surface: what was said lately, as real turns.** `Mneme.surface` (`surface.py`) is the newest part of Episodes,
+  not a second store: the exchanges after one id. `read` gives chat messages, `slice` the newest few. It keeps what the
+  last 30 talking days hold, never less than 70,000 tokens; nothing leaves until it holds twice that, and then `alet_go`
+  turns the older part into a summary, with every word still in Episodes. 504,000 tokens is the top, or 80% of a smaller
+  model's window. Whoever sends the context compacts it. `memory.surface_days`, `surface_floor`, `surface_cap`,
   `surface_window`.
-- **Fading counts talking days.** An exchange's retention counts the days the person talked, each turning at 4 in the
-  morning, not time: nobody forgets by being away or by sleeping. The bar of a look and every rehearsal follow.
 - **A person's first prompt.** The first thing they say is kept apart from the conversation, where it does not fade.
-  `Surface.set_first`, `first` and `drop_first` let them see and change it; `send_first` sends it with a first push, off
-  by default, since they may have grown away from it.
-- **`arecollect`: a look and a search as one call.** When a message reaches back to something from before (`asks_back`), a
-  search comes with the look, and the look also covers what the host still shows, so she never says she can't find
-  what she can see. With no decider, `asks_back` is yes. `own=True` leaves out the data label for a person's own
-  conversation. On two simulated chats in Mandarin, 3k of turns with this matched the whole chat on direct questions.
+  `Surface.set_first`, `first` and `drop_first` let them see and change it; `send_first` puts it in front of the surface,
+  off by default, since they may have grown away from it.
+- **`Mneme.look` and `alook` bring a search with them.** With `search=True`, `found` exchanges by relevance alone come
+  with the look, however faded, from one ranking, rehearsing nothing. `own=True` leaves out the data label for a person's
+  own conversation.
 - **`Mneme.wipe`.** What she remembers of a person gone, and who they are to her kept.
+- **Talking days.** Fading, the surface, closeness and the daily quota of notes all count days the person talked, turning
+  at 4 in the morning: nobody forgets by being away or by sleeping. An exchange is rehearsed once a talking day at most
+  (ten searches in an evening took S from 30 to 1,730).
+
+### Upgrading to 0.4.0
+
+**Your file.** The schema is now 2, and a file of schema 1 is refused until you make it current. Stop what uses it, back
+it up, and run this once; it works in one transaction per file, says what it did, and is safe to run twice:
+
+    python -m mneme_llm.migrate companion.db
+
+It gives every exchange its talking day (in the zone of `companion.zone`) and tokens, rebuilds surfaces, drops what nothing
+reads, and deletes config keys no version knows. The search indexes are rebuilt at the first search. Exports are schema 2
+too: `surfaces` rows carry `cleared_at`, and those of an earlier build are not read.
+
+**Your code.** Backward compatibility was not kept. What goes, and what to do instead:
+
+- `Mneme(meaning_micro=)` and word centroids: meaning is embeddings, then unify. `Mneme(judge=)` no longer falls through to
+  `complete`: the judge answers in its place, and one that fails gives no answers, is logged, and is counted in
+  `m.report()["decisions"]`. `m.decider` is gone.
+- `Chain`, `Decider`, `TierStats` and `Question`: call `Prompt(complete).adecide(text, questions)`. `mneme_llm.decide` is one
+  module. `Answer` has no `type`: it is `Answer(name, probabilities, confidence, by, reason)`. `fit` is in `mneme_llm.text`.
+- `Mood.judge`, `ajudge` and `decider`: judge, then `Mood.apply_answers`, or call `aobserve`.
+- `surface.read`, `slice` and `alet_go` no longer take `conversation=`: the surface follows the person into any chat.
+  `Surface.let_go` is gone: `await alet_go`. `Surface.noticed` takes the exchange's lines.
+- `surface.began` is when it was last cleared or shortened, and a surface starts at an id, so an exchange kept with an `at`
+  from before a clear is on it.
+- `Episodes.look(shorten=)`, `Episodes.render(header=)`, `Episodes.newest` (`Episodes.after(subject, 0, tokens)`),
+  `Episodes.day_of` (`dates.talking_day`), `People.subjects`, `Toolbox.display_language`, `capture.WORTH` (`WORTH_NAME`),
+  `text.script` (`text.scripts`), `People(clock=)`.
+- `Mneme.look` and `alook` keep their arguments; `Episodes.look(more=)` is how a search comes with a look.
+
+**What behaves differently.** Dropping a first prompt keeps it dropped: the next message does not take its place, and
+`erase` clears that. A companion who spoke first is not a person's first prompt. `read` and `slice` always hold the newest
+exchange, even alone over the budget. Linking two people with surfaces keeps the lower start, and both summaries.
+`mneme-llm subjects` lists everyone anything is kept of, and `Memory.subjects` includes people with only hidden notes.
 
 ## 0.3.0 (2026-10-29)
 

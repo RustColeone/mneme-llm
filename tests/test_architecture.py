@@ -1,6 +1,6 @@
 """The browsable architecture page (docs/architecture) is made from the code by tools/architecture.py, so it must match
 the code: every Python file, class and function, with its source. (Skipped where it cannot be made: outside a git
-checkout, as in an unpacked sdist, or with files deleted from the checkout, as CI's run without the removable tiers.)"""
+checkout, as in an unpacked sdist, or with files deleted from the checkout, as CI's run without the removable tier.)"""
 
 import ast
 import json

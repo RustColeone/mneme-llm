@@ -817,7 +817,7 @@ Raspberry Pi 5 with numpy, one person with 5,000 notes and 20,000 exchanges: `ar
 
 ## 16. Tests
 
-`python3 -m unittest discover -s tests -t .` runs @TESTS@ tests in about thirty-five seconds on a Raspberry Pi 5, with no
+`python3 -m unittest discover -s tests -t .` runs 395 tests in about thirty-five seconds on a Raspberry Pi 5, with no
 network and no keys. CI runs them on Python 3.11–3.14 (Linux) and 3.13 on Windows and macOS; runs them again with the
 removable tier deleted (its own tests are then skipped, everything else must pass); runs the stress tests at five times
 their size (`MNEME_STRESS=heavy`); then builds the package, runs `twine check --strict` and installs the wheel.

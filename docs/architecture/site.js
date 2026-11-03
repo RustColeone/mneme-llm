@@ -32,6 +32,7 @@ window.SITE = (() => {
       parts.episodes = file("episodes.py", "Episodes", "what was said, word for word · the look · search · fading", "class");
       parts.mood = file("mood.py", "Mood", "value and feelings · fading · told once", "class");
       chart.group("and", () => {
+        file("surface.py", "Surface", "the newest of what was said, as real turns · the first prompt", "class");
         file("relations.py", "Relations", "who each person is to it · closeness", "class");
         file("aliases.py", "Aliases", "what each person calls it", "class");
         file("people.py", "People", "one person under several accounts", "class");
@@ -48,6 +49,8 @@ window.SITE = (() => {
     }, { kind: "capabilities" });
     const decide = file("decide.py", "decide.py", "the mood, and what is worth keeping: your model, asked for JSON");
     const store = file("store.py", "Store", "one SQLite file · schema 2 · transactions", "store");
+    const migrate = file("migrate.py", "migrate.py", "an older file made current, once, by hand");
+    file("gut.py", "gut.py", "what stays when memory is wiped: a file of its own, imports nothing else");
     const shared = chart.group("Shared by all", () => {
       for (const [name, sub] of [["providers.py", "calling out: sync or async, JSON"], ["text.py", "words, scripts, clipping"],
                                  ["dates.py", "human dates"], ["i18n.py", "every sentence, English and Chinese"],
@@ -67,6 +70,7 @@ window.SITE = (() => {
     chart.edge(parts.mood, decide, { label: "judged" });
     chart.edge(owners, store, { label: "rows" });
     chart.edge(meaning, store, { dashed: true, label: "vectors" });
+    chart.edge(migrate, store, { dashed: true, label: "schema 1 to 2" });
     chart.edge(owners, shared, { dashed: true, arrow: "none" });
     return chart;
   }
@@ -85,11 +89,12 @@ window.SITE = (() => {
                         ["The file format (FORMAT.md)", github("docs/FORMAT.md")],
                         ["What changed (CHANGELOG.md)", github("CHANGELOG.md")]]));
     pane.push(make("h3", "", "Layers"));
-    pane.push(make("div", "doc", "Dependencies point one way: text, dates, i18n, prompts, providers, exchange and the " +
-      "store import nothing above them; decide and meaning build on providers; memory and episodes use meaning and the store; the " +
-      "mood uses decide's types; Mneme wires the parts together and makes the calls to models; tools, MCP and the CLI " +
-      "sit on Mneme. Each kind of row has one owner that writes it, and every write looks up the person a subject " +
-      "stands for inside its own transaction."));
+    pane.push(make("div", "doc", "Dependencies point one way: text, dates, i18n, prompts, providers and exchange import " +
+      "nothing above them, and the store only text; decide and meaning build on providers; memory and episodes use " +
+      "meaning and the store; the surface asks Episodes for everything about exchanges; the mood uses decide's types; " +
+      "Mneme wires the parts together and makes the calls to models; tools, MCP and the CLI sit on Mneme. Each kind of " +
+      "row has one owner that writes it, and every write looks up the person a subject stands for inside its own " +
+      "transaction."));
     pane.push(make("h3", "", "A removable tier"));
     pane.push(make("div", "doc", "meaning/unify.py can be deleted and everything else works " +
       "(tests/test_removable.py, and a CI job runs the whole suite without it)."));
@@ -121,7 +126,8 @@ window.SITE = (() => {
         step("Episodes.keep", "the exchange word for word (no model call)", "episodes.py", "Episodes.keep"),
         step("Mneme._decide", "one request to your model: mood change, feeling, worth keeping?", "__init__.py", "Mneme._decide"),
         step("Mood.apply_answers", "a delta and feelings, scaled by closeness; a timeline event", "mood.py", "Mood.apply_answers"),
-        step("Relations.seen", "a day of contact: closeness grows once a day", "relations.py", "Relations.seen"),
+        step("Relations.seen", "a day of contact: closeness grows once a talking day", "relations.py", "Relations.seen"),
+        step("Surface.noticed", "the first thing they ever said, kept apart", "surface.py", "Surface.noticed"),
         step("Mneme._capture", "worth it? the note writer (your model)", "__init__.py", "Mneme._capture"),
         step("Memory.keep", "the rules of writing: one live note per key, a daily quota", "memory.py", "Memory.keep"),
         step("Episodes.prepare", "its vector; it rehearses the earlier exchanges it is about", "episodes.py", "Episodes.prepare"),
@@ -158,6 +164,9 @@ window.SITE = (() => {
       ["What it costs", "Beyond the reply itself: one embeddings request before it (for the query; notes are embedded " +
         "once), one request to your model and one embeddings request (the exchange) after it, and a note-writer call only when " +
         "there is something to write."],
+      ["What was said lately", "A host that sends the conversation from the file puts m.surface.read(subject).messages " +
+        "in front of the new message, and calls alet_go after the reply. The surface is no second store: it is the " +
+        "exchanges after one id, and only where the newest part of deep memory starts."],
       ["One person, several accounts", "link(subject, person) makes an account another subject of a person: every " +
         "call with either means them, and what was kept under the account joins the person."],
     ];
