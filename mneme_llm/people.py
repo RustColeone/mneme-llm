@@ -16,16 +16,14 @@ Links are kept one step deep: a subject always points at a person's own subject,
 from __future__ import annotations
 
 import contextlib
-import time
-from typing import Callable
 
 from . import text as texts
 from .store import Store
 
 
 class People:
-    def __init__(self, store: Store, space: str, *, clock: Callable[[], float] = time.time):
-        self.store, self.space, self.clock = store, space, clock
+    def __init__(self, store: Store, space: str):
+        self.store, self.space = store, space
 
     # ---- reading -------------------------------------------------------------------------------------
     def of(self, subject: str) -> str:
@@ -60,11 +58,10 @@ class People:
             other = self.of(subject)
             if other != subject:
                 raise ValueError(f"{subject} is linked to {other}; unlink it first")
-            now = self.clock()
-            self.store.execute("update people set person = ?, updated_at = ? where space = ? and person = ?",
-                               (person, now, self.space, subject))
-            self.store.execute("insert into people (space, subject, person, updated_at) values (?, ?, ?, ?)",
-                               (self.space, subject, person, now))
+            self.store.execute("update people set person = ? where space = ? and person = ?",
+                               (person, self.space, subject))
+            self.store.execute("insert into people (space, subject, person) values (?, ?, ?)",
+                               (self.space, subject, person))
         return person, True
 
     def unlink(self, subject: str) -> bool:

@@ -1,13 +1,12 @@
 import json
 import os
-import sqlite3
-import tempfile
 import unittest
 
 from mneme_llm import Mneme
 from tests import tiers
 from mneme_llm.capture import WORTH_NAME
 from mneme_llm.decide import Answer
+from mneme_llm.text import version
 from mneme_llm.tools import Toolbox
 
 
@@ -115,30 +114,26 @@ class ChineseToolTests(unittest.TestCase):
 
 
 class FileTests(unittest.TestCase):
-    def test_a_file_from_an_earlier_build_gains_the_new_columns(self):
-        path = os.path.join(tempfile.mkdtemp(), "old.db")
-        db = sqlite3.connect(path)
-        db.execute("create table memories (id integer primary key, space text not null, subject text not null, key "
-                   "text, kind text not null, text text not null, importance integer not null, feeling real not null "
-                   "default 0, happened_at real not null, created_at real not null, recalled_at real, recalls integer"
-                   " not null default 0, superseded_by integer, deleted_at real, source text)")
-        db.execute("insert into memories (space, subject, kind, text, importance, happened_at, created_at) values "
-                   "('t', 'u', 'fact', 'Has a cat', 3, 0, 0)")
-        db.commit()
-        db.close()
-        m = Mneme(path, "t", embed=False, memory_language=None)
-        self.assertEqual([r.note.text for r in m.recall("u", "cat").chosen], ["Has a cat"])
-        m.close()
-
-    def test_cached_terms_are_rebuilt_when_the_tokenizer_changes(self):
+    def test_every_term_index_is_rebuilt_when_the_tokenizer_changes(self):
         m = Mneme(":memory:", "t", embed=False, memory_language=None)
         m.remember("u", "Has a cat", kind="fact")
-        m.recall("u", "cat")
-        self.assertIsNotNone(m.store.row("select terms from memories")["terms"])
+        kept = m.episodes.keep("u", [("Leo", "my kitten Mochi")])
+        for table in ("note_terms", "episode_terms"):
+            m.store.execute(f"delete from {table}")  # as if another tokenizer had made them
+        m.store.execute("update episodes set size = 0")
         m.store.set_meta("terms_version", "0")
-        m.recall("u", "cat")
-        from mneme_llm.text import version
+        self.assertEqual([r.note.text for r in m.recall("u", "cat", important=0, recent=0).chosen], ["Has a cat"])
         self.assertEqual(m.store.meta("terms_version"), version())
+        self.assertEqual([e.id for e in m.episodes.search("u", "Mochi")], [kept.id])
+        self.assertEqual(m.store.row("select size from episodes")["size"], 2)
+        self.assertFalse(m.store.reindex())  # once
+
+    def test_an_exchanges_index_is_rebuilt_at_a_search_too(self):
+        m = Mneme(":memory:", "t", embed=False, memory_language=None)
+        kept = m.episodes.keep("u", [("Leo", "my kitten Mochi")])
+        m.store.execute("delete from episode_terms")
+        m.store.set_meta("terms_version", "0")
+        self.assertEqual([e.id for e in m.episodes.search("u", "Mochi")], [kept.id])
 
     def test_the_package_declares_its_types(self):
         import mneme_llm

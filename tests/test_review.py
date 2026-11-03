@@ -21,7 +21,7 @@ from mneme_llm.decide import Choice, Prompt, Score
 from mneme_llm.mcp import serve
 from mneme_llm.meaning import pack, unpack
 from tests.invariants import check
-from mneme_llm.store import Store
+from mneme_llm.store import SCHEMA_VERSION, Store
 from mneme_llm.text import fit
 from mneme_llm.tools import Toolbox
 
@@ -230,7 +230,7 @@ class TransactionTests(unittest.TestCase):
         thread = threading.Thread(target=lambda: got.append(store.meta("schema_version")))
         thread.start()
         thread.join(2)
-        self.assertEqual(got, ["1"])
+        self.assertEqual(got, [str(SCHEMA_VERSION)])
 
 
 class FileTests(unittest.TestCase):
@@ -238,7 +238,7 @@ class FileTests(unittest.TestCase):
         path = os.path.join(tempfile.mkdtemp(), "new.db")
         db = sqlite3.connect(path)
         db.execute("create table meta (key text primary key, value text not null)")
-        db.execute("insert into meta values ('schema_version', '2')")
+        db.execute("insert into meta values ('schema_version', ?)", (str(SCHEMA_VERSION + 1),))
         db.commit()
         db.close()
         with self.assertRaises(RuntimeError):
@@ -338,7 +338,6 @@ class RecallCostTests(unittest.TestCase):
         with m.store.transaction():
             for index in range(3000):
                 m.memory.remember("u", f"trip number {index} to the exam hall", importance=2)
-        m.recall("u", "exam trip")  # builds the terms cache
         started = time.time()
         m.recall("u", "exam trip")
         self.assertLess(time.time() - started, 2.0)
@@ -409,7 +408,6 @@ class ScriptTests(unittest.TestCase):
         m = plain()
         first = m.remember("u", "Wohnt in der Straße", kind="fact")
         self.assertEqual(m.memory.keep("u", "WOHNT IN DER STRASSE", kind="fact")[0], "known")
-        m.store.execute("update memories set folded = null")  # a file written before the folded text was kept
         self.assertEqual(m.memory.keep("u", "wohnt in der strasse", kind="fact")[1].id, first.id)
         self.assertEqual([r.note.id for r in m.recall("u", "STRASSE", important=0, recent=0).chosen], [first.id])
 
@@ -530,17 +528,6 @@ class GlossBudgetTests(unittest.TestCase):
         self.assertEqual(len(asked), before)  # and never asked again
 
 
-class TermsCacheTests(unittest.TestCase):
-    def test_a_stale_read_never_caches_terms_over_a_new_gloss(self):
-        m = plain()
-        m.remember("u", "周五有考试", kind="plan")
-        (stale,) = m.memory.notes("u")
-        m.store.execute("update memories set gloss = 'Exam on Friday', terms = null")  # another writer, meanwhile
-        m.memory._index([stale])
-        self.assertIsNone(m.store.row("select terms from memories")["terms"])
-        self.assertEqual(len(m.recall("u", "exam", important=0, recent=0).chosen), 1)
-
-
 class MoreScriptTests(unittest.TestCase):
     def test_joiners_stay_inside_words_and_turkish_i_folds(self):
         from mneme_llm.text import terms
@@ -639,17 +626,6 @@ class FourthPassTests(unittest.TestCase):
 # ---- the review of the refactor ---------------------------------------------------------------------------------
 
 class RefactorReviewTests(unittest.TestCase):
-    def test_an_import_hides_nothing_of_notes_written_before_the_folded_text(self):
-        m = plain()
-        for text in ("Has a cat named Mochi", "Likes hiking", "Plays cello"):
-            m.remember("u", text, kind="fact")
-        m.remember("u", "Lives in Shanghai", kind="fact", key="user.city")
-        m.store.execute("update memories set folded = null")  # as the earlier build wrote them
-        source = plain()
-        source.remember("u", "Likes oolong tea", kind="preference")
-        m.import_data(source.export_data())
-        self.assertEqual(len(m.memory.notes("u")), 5)
-
     @needs_unify
     def test_no_chat_model_marks_no_note_and_a_later_model_glosses_it(self):
         m = Mneme(":memory:", "t", embed=False)
@@ -753,21 +729,6 @@ class RefactorReviewTests(unittest.TestCase):
             self.assertIs(Mneme(":memory:", "t", embed=False, memory_language=mine).meaning.unify,
                           mine)
         self.assertIsNone(Mneme(":memory:", "t", embed=False, memory_language=None).meaning)
-
-    def test_notes_from_before_the_term_index_are_still_found(self):
-        path = os.path.join(tempfile.mkdtemp(), "old.db")
-        m = Mneme(path, "t", embed=False, memory_language=None)
-        m.remember("u", "Has a cat named Mochi", kind="fact")
-        m.recall("u", "cat")
-        m.store.close()
-        db = sqlite3.connect(path)  # as an earlier build left it: terms cached, no index
-        db.executescript("delete from note_terms; delete from meta where key = 'terms_indexed';")
-        db.close()
-        m = Mneme(path, "t", embed=False, memory_language=None)
-        self.assertEqual([r.note.text for r in m.recall("u", "Mochi", important=0, recent=0).chosen],
-                         ["Has a cat named Mochi"])
-        self.assertEqual(check(m.store), [])
-        m.store.close()
 
     def test_importing_an_export_twice_keeps_one_timeline(self):
         m = plain()

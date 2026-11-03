@@ -1,12 +1,12 @@
 import asyncio
 import math
-import sqlite3
 import tempfile
 import unittest
 from datetime import datetime, timezone
 from unittest import mock
 
 from mneme_llm import Embeddings, Mneme, episodes as episodes_module
+from mneme_llm.dates import talking_day
 from mneme_llm.episodes import Episodes, lines_of, threshold
 from mneme_llm.meaning import FLOOR, Found
 from mneme_llm.store import Store
@@ -167,8 +167,8 @@ class FadingTests(unittest.TestCase):
         clock.now += 60 * DAY
         self.assertAlmostEqual(m.episodes.retention(m.episodes.get(old.id)), math.exp(-3 / 30))
         late = datetime(2026, 3, 1, 23, tzinfo=UTC).timestamp()
-        self.assertEqual(m.episodes.day_of(late + 4 * 3600), m.episodes.day_of(late))  # 3 a.m. is still the day before
-        self.assertEqual(m.episodes.day_of(late + 5 * 3600), m.episodes.day_of(late) + 1)  # and 4 a.m. is not
+        self.assertEqual(talking_day(late + 4 * 3600, UTC), talking_day(late, UTC))  # 3 a.m. is still the day before
+        self.assertEqual(talking_day(late + 5 * 3600, UTC), talking_day(late, UTC) + 1)  # and 4 a.m. is not
 
     def test_the_same_day_fades_nothing(self):
         m, clock = companion()
@@ -364,7 +364,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(m.episodes.count("discord:1"), 2)
         self.assertEqual(len(m.episodes.search("web:leo", "Mochi exam")), 2)
         m.episodes.keep("web:leo", [("Leo", "a third")])
-        self.assertEqual(m.episodes.newest("discord:1", 1)[0].subject, "discord:1")
+        self.assertEqual(m.episodes.after("web:leo", 0, 1)[0].subject, "discord:1")
 
     def test_export_and_import_carry_them_held_to_the_rules(self):
         m, clock = companion()
@@ -377,22 +377,11 @@ class LifecycleTests(unittest.TestCase):
         other, _ = companion()
         other.import_data(data)
         self.assertEqual(other.episodes.count("u"), 1)
-        copy = other.episodes.newest("u")[0]
+        copy = other.episodes.after("u", 0)[0]
         self.assertEqual((copy.conversation, copy.recalls, copy.stability), ("dm", 1, 45.0))
         self.assertEqual(len(other.episodes.search("u", "Mochi")), 1)
         other.import_data(data)  # the same export again: nothing twice
         self.assertEqual(other.episodes.count("u"), 1)
-
-    def test_a_file_from_an_earlier_build_gains_the_tables(self):
-        path = tempfile.mkdtemp() + "/old.db"
-        db = sqlite3.connect(path)
-        db.executescript("create table meta (key text primary key, value text not null);"
-                         "insert into meta values ('schema_version', '1');")
-        db.close()
-        m, _ = companion(path=path)
-        m.episodes.keep("u", [("Leo", "hello")])
-        self.assertEqual(m.episodes.count(), 1)
-        m.close()
 
     def test_vectors_another_process_added_are_read(self):
         path = tempfile.mkdtemp() + "/shared.db"

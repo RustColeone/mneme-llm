@@ -101,8 +101,6 @@ def act(m: Mneme, rng: random.Random) -> None:
                 rng.choice([m.relations.remove, m.erase])(subject)
         elif roll < 0.95:
             m.memory.context(subject, sentence(rng))
-        elif roll < 0.96:  # notes as an earlier build left them, before the folded text was kept
-            m.store.execute("update memories set folded = null where id % 3 = 0")
         elif roll < 0.97:  # one person under two accounts, and apart again (a link to someone else fails)
             if rng.random() < 0.7:
                 m.link(subject, rng.choice(SUBJECTS))
@@ -286,7 +284,6 @@ class ScaleTests(unittest.TestCase):
                 m.memory.keep("u", f"day {index} we talked about tea, exams and the cat {index % 97}",
                               importance=1 + index % 3)
         self.assertLessEqual(len(m.memory.notes("u")), m.memory.max_notes)
-        m.recall("u", "tea")  # fills the terms cache
         started = time.perf_counter()
         for query in ("tea exams", "cat 42", "考试", ""):
             m.memory.context("u", query)
@@ -300,7 +297,7 @@ class ScaleTests(unittest.TestCase):
         m.memory.max_notes = 10 ** 6
         count, rng, now = 20_000 * SCALE, random.Random(5), time.time()
         words = "tea cat exam friday hangzhou cello hiking coffee sister work deadline paper train rain".split()
-        with m.store.transaction():  # an old file's notes, written straight into the table to be quick
+        with m.store.transaction():  # written straight into the table to be quick, and indexed once below
             for index in range(count):
                 text = " ".join(rng.choice(words) for _ in range(5)) + f" day {index}"
                 m.store.execute("insert into memories (space, subject, kind, text, importance, feeling, happened_at, "
@@ -309,7 +306,8 @@ class ScaleTests(unittest.TestCase):
                                  now - index * 600, text.casefold()))
             m.store.execute("update memories set text = 'Adopted a cat named Mochi long ago', folded = 'adopted a cat "
                             "named mochi long ago' where id = 1")
-        m.recall("u", "tea")  # indexes the old notes, once
+            m.store.set_meta("terms_version", "")
+        m.recall("u", "tea")  # the index made again, once
         m.remember("u", "Started learning the cello", kind="episode")  # indexed as it is written
         started = time.perf_counter()
         found = m.recall("u", "Mochi", important=0, recent=0)

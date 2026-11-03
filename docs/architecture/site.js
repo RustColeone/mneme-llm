@@ -47,7 +47,7 @@ window.SITE = (() => {
       file("meaning/vectors.py", "vectors", "as the file keeps them · many at once");
     }, { kind: "capabilities" });
     const decide = file("decide.py", "decide.py", "the mood, and what is worth keeping: your model, asked for JSON");
-    const store = file("store.py", "Store", "one SQLite file · schema 1 · transactions", "store");
+    const store = file("store.py", "Store", "one SQLite file · schema 2 · transactions", "store");
     const shared = chart.group("Shared by all", () => {
       for (const [name, sub] of [["providers.py", "calling out: sync or async, JSON"], ["text.py", "words, scripts, clipping"],
                                  ["dates.py", "human dates"], ["i18n.py", "every sentence, English and Chinese"],

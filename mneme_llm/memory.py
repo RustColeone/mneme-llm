@@ -150,6 +150,7 @@ class Memory(Speaks, Resolves):
         self.semantic_window = semantic_window  # the most notes meaning is searched among (words reach them all)
         self.words = Words.of(display_language)
         self.zone, self.meaning, self.clock = zone, meaning, clock
+        store.index("note_terms", self._reindex)
 
     # ---- writing ---------------------------------------------------------------------------------
     def remember(self, subject: str, text: str, **options) -> Note | None:
@@ -197,16 +198,16 @@ class Memory(Speaks, Resolves):
         replaces the key's older value."""
         self.store.execute("update memories set importance = max(importance, ?), gloss = coalesce(gloss, ?) "
                            "where id = ?", (fields["importance"], fields["gloss"], note.id))
-        if fields["gloss"] and not note.gloss:  # new words to find it by
-            self._unindex([note.id])
         if fields["key"] is None or note.key == fields["key"]:
+            if fields["gloss"] and not note.gloss:  # new words to find it by
+                self._index([self.get(note.id)])
             return "known", self.get(note.id)
-        self._unindex([note.id])  # its key's parts are search terms too
         self.store.execute("update memories set key = ?, kind = ?, happened_at = ?, feeling = ? where "
                            "id = ?", (fields["key"], fields["kind"] or note.kind,
                                       note.happened_at if fields["happened_at"] is None else fields["happened_at"],
                                       fields["feeling"] or note.feeling, note.id))
         replaced = self._supersede(subject, fields["key"], note.id)
+        self._index([self.get(note.id)])  # its key's parts are search terms too
         return ("replaced" if replaced else "kept"), self.get(note.id)
 
     def _insert(self, subject: str, row: dict) -> int:
@@ -245,7 +246,7 @@ class Memory(Speaks, Resolves):
                 sql, parameters = sql + " and subject = ?", (self.space, self.who(subject))
             ids = [row["id"] for row in self.store.rows(sql.replace("delete from", "select id from", 1), parameters)]
             drop(self.store, ids)
-            self._unindex(ids)
+            self.store.rows_in("delete from note_terms where memory_id in ({})", ids)
             count = self.store.execute(sql, parameters).rowcount
         return count
 
@@ -316,9 +317,9 @@ class Memory(Speaks, Resolves):
         return sorted(notes, key=lambda note: (-ahead(note), note.id))
 
     def subjects(self) -> list[str]:
-        rows = self.store.rows("select distinct subject from memories where space = ? and deleted_at is null "
-                               "order by subject", (self.space,))
-        return [row["subject"] for row in rows]
+        """Everyone a note is kept of, hidden ones too: they stay until `purge`."""
+        return [row["subject"] for row in self.store.rows("select distinct subject from memories where space = ? "
+                                                          "order by subject", (self.space,))]
 
     def freshness(self, note: Note, now: float | None = None) -> float:
         """1.0 for lasting kinds; otherwise halves every `half_life_days` since it happened or was last recalled."""
@@ -397,7 +398,7 @@ class Memory(Speaks, Resolves):
         """One recall: evidence from the term index (never a scan of every note), closeness from the meaning tier,
         then the budget. It costs time in proportion to the notes that share a word with the query."""
         now = self.clock()
-        self._index_subject(subject)
+        self.store.reindex()
         live = "space = ? and subject = ? and deleted_at is null and superseded_by is null"
         count = self.store.row(f"select count(*) as n from memories where {live}", (self.space, subject))["n"]
         query_terms = texts.terms(query + (" " + found.words if found.words else ""))
@@ -567,49 +568,26 @@ class Memory(Speaks, Resolves):
                  "skipped": json.loads(row["skipped"])} for row in rows]
 
     # ---- inside --------------------------------------------------------------------------------------
-    def _index_subject(self, subject: str) -> None:
-        """Every live note of the subject in the term index (`note_terms`), with its terms cached in `terms`: notes
-        not indexed yet are indexed now (all of them after a change of tokenizer: turning jieba on, a new
-        release)."""
-        if self.store.meta("terms_version") != texts.version():
-            with self.store.transaction():
-                self.store.execute("update memories set terms = null")
-                self.store.execute("delete from note_terms")
-                self.store.set_meta("terms_version", texts.version())
-        if self.store.meta("terms_indexed") is None:  # a file from before the index: terms cached, no rows
-            with self.store.transaction():
-                self.store.execute("update memories set terms = null where terms is not null and id not in (select "
-                                   "memory_id from note_terms)")
-                self.store.set_meta("terms_indexed", "1")
-        rows = self.store.rows("select * from memories where space = ? and subject = ? and terms is null and "
-                               "deleted_at is null and superseded_by is null", (self.space, subject))
-        if rows:
-            self._index([Note.of(row) for row in rows])
+    def _reindex(self) -> None:
+        """Every live note of the file in the term index again (`Store.reindex`)."""
+        self.store.execute("delete from note_terms")
+        self._index([Note.of(row) for row in self.store.rows("select * from memories where deleted_at is null and "
+                                                             "superseded_by is null")])
 
     def _index(self, notes: list[Note]) -> None:
-        """Index these notes by their search terms (text, key parts and gloss). Only a note still as it was read
-        is indexed: another writer may have set its gloss or key since, and it will be indexed afresh."""
+        """These notes in the term index, by their search terms (text, key parts and gloss), in place of what it had of
+        them; under the note's subject as it is now (a link may have moved it since it was read)."""
         with self.store.transaction():
             for note in notes:
-                terms = texts.terms(" ".join([note.text, (note.key or "").replace(".", " "), note.gloss or ""]))
-                if self.store.execute("update memories set terms = ? where id = ? and terms is null and key is ? and "
-                                      "gloss is ?", (" ".join(terms), note.id, note.key, note.gloss)).rowcount:
-                    self.store.execute("delete from note_terms where memory_id = ?", (note.id,))
-                    for term in terms:  # under the note's subject as it is now (a link may have moved it since)
-                        self.store.execute("insert or ignore into note_terms (space, subject, term, memory_id) select "
-                                           "space, subject, ?, id from memories where id = ?", (term, note.id))
-
-    def _unindex(self, ids) -> None:
-        """Take notes out of the term index (their words changed, or they are going); they are indexed again when
-        next needed."""
-        ids = list(ids)
-        self.store.rows_in("delete from note_terms where memory_id in ({})", ids)
-        self.store.rows_in("update memories set terms = null where id in ({})", ids)
+                self.store.execute("delete from note_terms where memory_id = ?", (note.id,))
+                for term in texts.terms(" ".join([note.text, (note.key or "").replace(".", " "), note.gloss or ""])):
+                    self.store.execute("insert or ignore into note_terms (space, subject, term, memory_id) select "
+                                       "space, subject, ?, id from memories where id = ?", (term, note.id))
 
     # ---- moving between files ----------------------------------------------------------------------
     def export_rows(self) -> dict:
-        """This space's notes and profile cards as plain rows (without the caches: terms and folded text)."""
-        memories = [{key: value for key, value in dict(row).items() if key not in ("terms", "folded")}
+        """This space's notes and profile cards as plain rows (without the case-folded text, made again on import)."""
+        memories = [{key: value for key, value in dict(row).items() if key != "folded"}
                     for row in self.store.rows("select * from memories where space = ? order by id", (self.space,))]
         profiles = [dict(row) for row in self.store.rows("select * from profiles where space = ? order by rowid",
                                                           (self.space,))]
@@ -619,7 +597,7 @@ class Memory(Speaks, Resolves):
         """Add exported notes and profile cards to this space, held to the rules of writing (`clean`): ids are
         renumbered and links between notes follow; then each subject keeps one live note per key (the newest)
         and no live text twice. Returns how many notes were added."""
-        renumbered, links, subjects, added, now = {}, [], set(), 0, self.clock()
+        renumbered, links, subjects, added, now = {}, [], set(), [], self.clock()
         with self.store.transaction():
             for original in memories:
                 row = self.clean(original) if isinstance(original, dict) else None
@@ -627,7 +605,7 @@ class Memory(Speaks, Resolves):
                     continue
                 new = self._insert(row.pop("subject"), row)
                 subjects.add(original["subject"])
-                added += 1
+                added.append(new)
                 if isinstance(original.get("id"), (int, str)):
                     renumbered[original["id"]] = new
                 if original.get("superseded_by") is not None:  # one that is no id points nowhere
@@ -638,13 +616,13 @@ class Memory(Speaks, Resolves):
                                    (renumbered.get(successor, -1), new))
             for subject in subjects:
                 self._settle(subject, now)
-                self._index_subject(subject)
+            self._index(self._get_many(added))
             for row in profiles:
                 if isinstance(row, dict) and isinstance(row.get("subject"), str) and row["subject"].strip() and \
                         isinstance(row.get("text"), str):
                     at = dates.seconds(row.get("updated_at"))
                     self._put_profile(row["subject"], row["text"], now if at is None else at)
-        return added
+        return len(added)
 
     @staticmethod
     def clean(row: dict) -> dict | None:
@@ -675,7 +653,6 @@ class Memory(Speaks, Resolves):
     def _settle(self, subject: str, now: float) -> None:
         """After an import, the rules writing keeps: one live note per key (the newest wins, the others become its
         history) and no live text twice (a copy with a key is kept over one without, then the oldest)."""
-        self._fill_folded(subject)
         rows = self.store.rows("select id, key, folded from memories where space = ? and subject = ? and deleted_at "
                                "is null and superseded_by is null order by created_at, id", (self.space, subject))
         newest = {row["key"]: row["id"] for row in rows if row["key"] is not None}
@@ -694,13 +671,13 @@ class Memory(Speaks, Resolves):
 
     def write_glosses(self, glosses: dict[int, str], *, replace: bool = False) -> None:
         """Glosses the unify tier wrote, by note id: kept unless the note got one meanwhile (or, with `replace`,
-        over the one it has); its cached terms then change."""
+        over the one it has); its search terms then change."""
         only_new = "" if replace else " and gloss is null"
         with self.store.transaction():
             for id, gloss in glosses.items():
                 if self.store.execute(f"update memories set gloss = ? where id = ? and space = ?{only_new}",
                                       (texts.clip(gloss, MAX_TEXT) or None, id, self.space)).rowcount:
-                    self._unindex([id])
+                    self._index([self.get(id)])
 
     @staticmethod
     def _query(query) -> str:
@@ -711,14 +688,7 @@ class Memory(Speaks, Resolves):
     def _same_text(self, subject: str, text: str) -> list[Note]:
         """Live notes with the same words, whatever the letters' case in any alphabet ("Straße" is "STRASSE"): by
         the case-folded text kept beside each note."""
-        self._fill_folded(subject)
         return self._live_where(subject, "folded = ?", (texts.fold(text),))
-
-    def _fill_folded(self, subject: str) -> None:
-        """The case-folded text of notes written before it was kept beside them; any comparison of texts needs it."""
-        for row in self.store.rows("select id, text from memories where space = ? and subject = ? and folded is null",
-                                   (self.space, subject)):
-            self.store.execute("update memories set folded = ? where id = ?", (texts.fold(row["text"]), row["id"]))
 
     def _live_where(self, subject: str, extra: str = "", parameters: tuple = ()) -> list[Note]:
         sql = ("select * from memories where space = ? and subject = ? and deleted_at is null and superseded_by is "

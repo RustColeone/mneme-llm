@@ -153,7 +153,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         m = Mneme(args.db, space, config=args.config, display_language=args.display_language or STORED, 
                   embed=meaning, memory_language=None)
-    except (ValueError, OSError) as error:  # a config file that is missing, or has a wrong key or value
+    except (ValueError, OSError, RuntimeError) as error:  # a config file with a wrong key, a file of another schema
         print(error, file=sys.stderr)
         return 2
     if (m.store.meta("terms_version") or "").endswith("+jieba") and not texts.use_jieba():
@@ -197,13 +197,12 @@ def _run(m: Mneme, args) -> int:
         print(f"forgot {memory.forget(args.subject, id=args.id, key=args.key)}")
     elif args.command == "erase":
         if not args.yes:
-            print("this deletes every note, the profile, the mood, the role, the alias and the links of the subject; "
-                  "add --yes",
-                  file=sys.stderr)
+            print("this deletes every note, every exchange, the surface, the first prompt, the profile, the mood, the "
+                  "role, the alias and the links of the subject; add --yes", file=sys.stderr)
             return 2
         print(f"erased {m.erase(args.subject)} notes")
     elif args.command == "subjects":
-        print("\n".join(memory.subjects()))
+        print("\n".join(m.everyone()))
     elif args.command == "recalls":
         for entry in memory.recalls(args.subject, args.limit):
             chosen = ", ".join(f"#{id} ({why})" for id, why in entry["chosen"])

@@ -1,9 +1,9 @@
-"""The database: one SQLite file holding everything mneme-llm keeps, versioned so later releases can migrate it.
+"""The database: one SQLite file holding everything mneme-llm keeps, with the version of its schema.
 
 Every row belongs to a `space` (whose memory it is: an app or a character, "whale_chan") and most to a `subject`
-(who it is about: "discord:1234"). This module is the file alone: its tables, migrations, locking and
-transactions. The rules of what goes in them belong to the modules that own each table (memory, episodes, mood,
-meaning, relations, aliases, people, config).
+(who it is about: "discord:1234"). This module is the file alone: its tables, locking and transactions. The rules of
+what goes in them belong to the modules that own each table (memory, episodes, surface, mood, meaning, relations,
+aliases, people, config). A file of an earlier schema is refused here, and made current by `migrate.py`.
 """
 
 from __future__ import annotations
@@ -13,9 +13,11 @@ import sqlite3
 import threading
 import time
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
-SCHEMA_VERSION = 1
+from . import text as texts
+
+SCHEMA_VERSION = 2
 SCHEMA = """
 create table if not exists meta (key text primary key, value text not null);
 create table if not exists memories (
@@ -35,11 +37,13 @@ create table if not exists memories (
     deleted_at real,
     source text,
     gloss text,
-    terms text,
-    folded text
+    folded text not null
 );
 create index if not exists memories_live on memories(space, subject, deleted_at, superseded_by);
 create index if not exists memories_key on memories(space, subject, key);
+create index if not exists memories_folded on memories(space, subject, folded);
+create index if not exists memories_newest on memories(space, subject, id);
+create index if not exists memories_important on memories(space, subject, importance, id);
 create table if not exists recalls (
     id integer primary key, space text not null, subject text not null, at real not null, query text not null,
     chosen text not null, skipped text not null
@@ -61,12 +65,8 @@ create table if not exists mood_events (
 );
 create index if not exists mood_events_subject on mood_events(space, subject, at);
 create table if not exists vectors (
-    memory_id integer not null, embedder text not null, vector blob not null, taught text,
+    memory_id integer not null, embedder text not null, vector blob not null,
     primary key (memory_id, embedder)
-);
-create table if not exists meaning_terms (
-    embedder text not null, term text not null, count integer not null, vector blob not null,
-    primary key (embedder, term)
 );
 create table if not exists note_terms (
     space text not null, subject text not null, term text not null, memory_id integer not null,
@@ -87,25 +87,28 @@ create table if not exists aliases (
     primary key (space, subject)
 );
 create table if not exists people (
-    space text not null, subject text not null, person text not null, updated_at real not null,
+    space text not null, subject text not null, person text not null,
     primary key (space, subject)
 );
 create index if not exists people_person on people(space, person);
 create table if not exists episodes (
-    id integer primary key,
+    id integer primary key autoincrement,
     space text not null,
     subject text not null,
     at real not null,
+    day integer not null,
     conversation text not null default '',
     lines text not null,
     size integer not null,
+    tokens real not null,
     stability real not null,
     recalled_at real,
-    recalls integer not null default 0,
-    terms text
+    recalls integer not null default 0
 );
 create index if not exists episodes_subject on episodes(space, subject, at);
 create index if not exists episodes_conversation on episodes(space, subject, conversation, at);
+create index if not exists episodes_day on episodes(space, subject, day);
+create index if not exists episodes_newest on episodes(space, subject, id);
 create table if not exists episode_terms (
     space text not null, subject text not null, term text not null, episode_id integer not null,
     primary key (space, subject, term, episode_id)
@@ -116,7 +119,8 @@ create table if not exists episode_vectors (
     primary key (episode_id, embedder)
 );
 create table if not exists surfaces (
-    space text not null, subject text not null, since real not null, summary text not null, updated_at real not null,
+    space text not null, subject text not null, start_id integer not null, cleared_at real not null,
+    summary text not null,
     primary key (space, subject)
 );
 create table if not exists first_prompts (
@@ -129,15 +133,13 @@ create table if not exists episode_spread (
 );
 """
 IN_LIST = 400  # values in one `in (...)`: SQLite takes 999 parameters in all on older builds
-# Columns added after a table first shipped, so files made by earlier builds gain them on open.
-ADDED_COLUMNS = {"memories": {"gloss": "text", "terms": "text", "folded": "text"}, "vectors": {"taught": "text"}}
-# Indexes on added columns, made once the columns exist.
-ADDED_INDEXES = ("create index if not exists memories_folded on memories(space, subject, folded)",
-                 # recall's picks (pinned, important, newest) read a few notes in order, not a whole history
-                 "create index if not exists memories_newest on memories(space, subject, id)",
-                 "create index if not exists memories_important on memories(space, subject, importance, id)",
-                 "create index if not exists vectors_untaught on vectors(embedder) where taught is null")
 
+
+def create(db: sqlite3.Connection) -> None:
+    """Every table and index of the schema that the file does not have yet."""
+    for statement in SCHEMA.split(";"):
+        if statement.strip():
+            db.execute(statement)
 
 
 class Store:
@@ -152,36 +154,32 @@ class Store:
         self._db.row_factory = sqlite3.Row
         self._lock = threading.RLock()
         self._depth = 0  # open transactions on this connection (nested ones are savepoints)
+        self._indexes: dict[str, Callable[[], None]] = {}  # what rebuilds each term index
         with self._lock:
             try:
-                self._migrate()
+                self._open()
                 if str(path) != ":memory:":
                     self._wal()
             except BaseException:
                 self._db.close()
                 raise
 
-    def _migrate(self) -> None:
-        """Make the file current: refuse a newer one before changing anything, create what is missing and add the
-        columns of later builds. Under the write lock, so two processes opening one file at once take turns."""
+    def _open(self) -> None:
+        """A new file gets the schema; one of another schema is refused before anything changes. Under the write lock,
+        so two processes opening one file at once take turns."""
         self._db.execute("begin immediate")
         try:
             found = self._version()
-            if found is not None and found > SCHEMA_VERSION:
+            if found is None:
+                create(self._db)
+                self.set_meta("schema_version", str(SCHEMA_VERSION))
+                self.set_meta("terms_version", texts.version())
+            elif found > SCHEMA_VERSION:
                 raise RuntimeError(f"{self.path} was written by a newer mneme-llm (schema {found}); upgrade "
                                    "mneme-llm to read it")
-            for statement in SCHEMA.split(";"):
-                if statement.strip():
-                    self._db.execute(statement)
-            for table, columns in ADDED_COLUMNS.items():
-                have = {row["name"] for row in self._db.execute(f"pragma table_info({table})")}
-                for name, kind in columns.items():
-                    if name not in have:
-                        self._db.execute(f"alter table {table} add column {name} {kind}")
-            for statement in ADDED_INDEXES:
-                self._db.execute(statement)
-            if found is None:
-                self.set_meta("schema_version", str(SCHEMA_VERSION))
+            elif found < SCHEMA_VERSION:
+                raise RuntimeError(f"{self.path} has schema {found}, this mneme-llm reads schema {SCHEMA_VERSION}: run "
+                                   f"`python -m mneme_llm.migrate {self.path}`")
             self._db.execute("commit")
         except BaseException:
             if self._db.in_transaction:  # (SQLite may have rolled it back itself, on a full disk say)
@@ -244,6 +242,24 @@ class Store:
         front (`begin immediate`), so another process writing the same file is waited for rather than failing
         midway; a transaction inside another is a savepoint of it."""
         return _Transaction(self)
+
+    def index(self, name: str, rebuild: Callable[[], None]) -> None:
+        """`rebuild()` makes the term index `name` again from what it indexes (`reindex` calls it)."""
+        self._indexes[name] = rebuild
+
+    def reindex(self) -> bool:
+        """Every term index made again when the tokenizer has changed since it was made (`terms_version`: jieba turned
+        on or off, a new release); whether it was. Whoever reads an index asks this first."""
+        wanted = texts.version()
+        if self.meta("terms_version") == wanted:
+            return False
+        with self.transaction():
+            if self.meta("terms_version") == wanted:  # (another writer, while this one waited for the lock)
+                return False
+            for rebuild in self._indexes.values():
+                rebuild()
+            self.set_meta("terms_version", wanted)
+        return True
 
     def meta(self, key: str) -> str | None:
         found = self.row("select value from meta where key = ?", (key,))

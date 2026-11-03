@@ -115,7 +115,7 @@ class Mneme:
         self.judge = judge
         self.decisions = {"answered": 0, "abstained": 0, "failed": 0, "last_error": ""}
         self.meaning = self._meaning(embed, memory_language, complete)
-        self.people = People(self.store, space, clock=clock)
+        self.people = People(self.store, space)
         self.memory = Memory(self.store, space, half_life_days=stored(half_life_days, "memory.half_life_days"),
                              daily_quota=stored(daily_quota, "memory.daily_quota"),
                              max_notes=own.get("memory.max_notes"), semantic_window=own.get("memory.semantic_window"),
@@ -148,7 +148,7 @@ class Mneme:
 
     @display_language.setter
     def display_language(self, language: str) -> None:
-        for part in (self.memory, self.mood, self.relations, self.aliases, self.episodes):
+        for part in (self.memory, self.mood, self.relations, self.aliases, self.episodes, self.surface):
             part.display_language = language
 
     def _meaning(self, embed, memory_language, complete) -> Meaning | None:
@@ -221,7 +221,7 @@ class Mneme:
         return self.people.of(subject)
 
     def _join(self, old: str, new: str) -> None:
-        for part in (self.memory, self.mood, self.relations, self.aliases, self.episodes, self.surface):
+        for part in (self.memory, self.mood, self.relations, self.aliases, self.surface, self.episodes):
             part.join(old, new)
 
     def forget(self, subject: str, *, id: int | None = None, key: str | None = None) -> int:
@@ -249,11 +249,7 @@ class Mneme:
 
     def everyone(self) -> list[str]:
         """Everyone anything is kept of, in order."""
-        found: set[str] = set()
-        for table in ("episodes", "memories", "surfaces", "first_prompts"):
-            found |= {row["subject"] for row in self.store.rows(f"select distinct subject from {table} where space = ?",
-                                                                (self.space,))}
-        return sorted(found)
+        return sorted({*self.memory.subjects(), *self.episodes.subjects(), *self.surface.subjects()})
 
     def wipe(self, subject: str) -> int:
         """What she remembers of a person gone for good: notes, profile card, every exchange, the surface and their
@@ -359,8 +355,8 @@ class Mneme:
                                          weight=self.relations.weight(subject)) if judge_mood else None)
         if source == "user":
             self.relations.seen(subject)
-            if keep and lines:
-                self.surface.noticed(subject, lines[0][1])
+            if keep:
+                self.surface.noticed(subject, lines)
         notes, worth, error = [], answers.get(WORTH_NAME), ""
         if keep_notes:
             try:
@@ -441,7 +437,7 @@ class Mneme:
             return None
         system = reflect_prompt(user_name, self.companion_name, say(self.memory.words, "reflect.language"), notes,
                                 prompts=self.prompts)
-        card = (await providers.ask(complete or self.complete, system, "Write the impression now.")).strip()
+        card = (await providers.ask(complete or self.complete, system, self.prompts["reflect_now"])).strip()
         if card:
             self.memory.set_profile(subject, card)
         return card or None

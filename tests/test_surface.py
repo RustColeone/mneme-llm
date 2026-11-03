@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 
-from mneme_llm import Mneme, surface as surface_module
+from mneme_llm import Mneme, episodes as episodes_module
 from mneme_llm.surface import bounds
 from mneme_llm.text import tokens
 
@@ -31,8 +31,8 @@ def small(floor=100, cap=100_000, days=2):
     return {"memory": {"surface_floor": floor, "surface_cap": cap, "surface_days": days}}
 
 
-def say(m, clock, said, reply="好", subject="u", conversation=""):
-    return m.episodes.keep(subject, [("Leo", said), ("小鲸", reply)], at=clock.now, conversation=conversation)
+def say(m, clock, said, reply="好", subject="u"):
+    return m.episodes.keep(subject, [("Leo", said), ("小鲸", reply)], at=clock.now)
 
 
 class BoundsTests(unittest.TestCase):
@@ -94,13 +94,55 @@ class TurnsTests(unittest.TestCase):
         m.episodes.forget("u", kept.id)
         self.assertEqual(m.surface.read("u").messages, [])
 
-    def test_it_can_be_one_conversation_only(self):
+    def test_it_follows_the_person_into_any_chat(self):
         m, clock = companion()
-        say(m, clock, "这边", conversation="a")
-        say(m, clock, "那边", conversation="b")
-        self.assertEqual(len(m.surface.read("u").messages), 4)
-        self.assertEqual(m.surface.read("u", conversation="a").messages[0]["content"], "这边")
-        self.assertEqual(len(m.surface.read("u", conversation="a").messages), 2)
+        m.episodes.keep("u", [("Leo", "这边")], at=clock.now, conversation="a")
+        m.episodes.keep("u", [("Leo", "那边")], at=clock.now, conversation="b")
+        self.assertEqual(len(m.surface.read("u").messages), 2)
+
+    def test_a_chat_message_stored_by_its_role_is_hers(self):
+        m, clock = companion()
+        m.episodes.keep("u", [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "你好"}], at=clock.now)
+        self.assertEqual(m.surface.read("u").messages, [{"role": "user", "content": "hi"},
+                                                        {"role": "assistant", "content": "你好"}])
+
+    def test_turns_read_in_the_order_they_were_said_whatever_order_they_were_kept(self):
+        m, clock = companion()
+        m.episodes.keep("u", [("Leo", "后说的")], at=clock.now + 60)
+        m.episodes.keep("u", [("Leo", "先说的")], at=clock.now)
+        view = m.surface.read("u")
+        self.assertEqual([message["content"] for message in view.messages], ["先说的", "后说的"])
+        self.assertEqual(view.upto, clock.now + 60)
+
+    def test_the_newest_exchange_is_always_there_even_alone_over_the_budget(self):
+        m, clock = companion(config=small(floor=10, cap=1000, days=1))
+        say(m, clock, "第一句")
+        huge = say(m, clock, "很长" * 2000)
+        self.assertGreater(huge.tokens, 1000)
+        self.assertEqual(m.surface.slice("u", tokens=10)[0]["content"], "很长" * 2000)
+        self.assertEqual(m.surface.read("u").messages[0]["content"], "很长" * 2000)
+        self.assertEqual(m.surface.read("u").tokens, int(huge.tokens))
+
+    def test_days_of_zero_means_one(self):
+        m = Mneme(":memory:", "t", embed=False, surface_days=0)
+        self.assertEqual(m.surface.span, 1)
+        m.episodes.keep("u", [("Leo", "hi")])
+        self.assertEqual(len(m.surface.read("u").messages), 1)
+
+    def test_a_small_slice_reads_only_what_it_needs(self):
+        m, clock = companion()
+        for number in range(500):
+            say(m, clock, f"第{number}句")
+        read = []
+        rows = m.store.rows
+        m.store.rows = lambda sql, values=(): read.append(sql) or rows(sql, values)
+        self.assertEqual(len(m.surface.slice("u", tokens=30)) % 2, 0)
+        self.assertEqual(sum("from episodes" in sql and "order by id desc" in sql for sql in read), 1)
+
+    def test_its_language_follows_the_companion(self):
+        m, clock = companion(complete=None)
+        m.display_language = "zh"
+        self.assertEqual(m.surface.display_language, "zh")
 
     def test_a_linked_account_reads_the_same_surface(self):
         m, clock = companion()
@@ -139,7 +181,7 @@ class LettingGoTests(unittest.TestCase):
 
     def test_nothing_leaves_until_twice_what_it_keeps_then_the_older_part_is_a_summary(self):
         m, clock = companion(config=small(floor=50, days=1), complete=self.writer)
-        cost = tokens("Leo: 这是一句不长不短的话\n小鲸: 好的") + surface_module.EXCHANGE
+        cost = tokens("Leo: 这是一句不长不短的话\n小鲸: 好的") + episodes_module.EXCHANGE
         for number in range(int(100 / cost) - 1):
             say(m, clock, "这是一句不长不短的话", "好的")
             clock.now += DAY
@@ -186,6 +228,43 @@ class LettingGoTests(unittest.TestCase):
         self.assertLess(len(view.messages), 80)
 
 
+    def race(self, change):
+        """`alet_go`, with `change(m)` made while the model writes the summary."""
+        m, clock = None, None
+
+        async def writer(system, user):
+            change(m)
+            return "他养猫。"
+        m, clock = companion(config=small(floor=20, days=1), complete=writer)
+        for number in range(40):
+            say(m, clock, "这是一句不长不短的话", "好的")
+            clock.now += DAY
+        before = m.surface.began("u")
+        return m, asyncio.run(m.surface.alet_go("u")), before
+
+    def test_an_erase_while_the_model_writes_is_respected(self):
+        m, done, _ = self.race(lambda m: m.erase("u"))
+        self.assertFalse(done)
+        self.assertEqual(m.store.rows("select * from surfaces"), [])
+
+    def test_a_clear_while_the_model_writes_is_respected(self):
+        m, done, _ = self.race(lambda m: m.surface.clear("u"))
+        self.assertFalse(done)
+        self.assertEqual(m.surface.read("u").messages, [])
+
+    def test_a_link_while_the_model_writes_is_respected(self):
+        m, done, before = self.race(lambda m: m.link("u", "discord:1"))
+        self.assertFalse(done)
+        self.assertEqual(m.surface.began("discord:1"), before)
+
+    def test_new_exchanges_while_the_model_writes_stay(self):
+        def more(m):
+            m.episodes.keep("u", [("Leo", "写总结的时候说的")], at=m.memory.clock())
+        m, done, _ = self.race(more)
+        self.assertTrue(done)
+        self.assertEqual(m.surface.read("u").messages[-1]["content"], "写总结的时候说的")
+
+
 class ClearTests(unittest.TestCase):
     def test_clearing_leaves_deep_memory_and_the_first_prompt(self):
         m, clock = companion()
@@ -194,6 +273,23 @@ class ClearTests(unittest.TestCase):
         self.assertEqual(m.surface.read("u").messages, [])
         self.assertEqual(m.episodes.count("u"), 1)
         self.assertEqual(m.surface.first("u").text, "你是我的姐姐")
+
+    def test_an_exchange_kept_after_a_clear_is_in_it_whenever_it_was_said(self):
+        m, clock = companion()
+        say(m, clock, "第一句")
+        clock.now += 3600
+        m.surface.clear("u")
+        m.episodes.keep("u", [("Leo", "清空之前说的，之后才记下")], at=clock.now - 60)
+        self.assertEqual([message["content"] for message in m.surface.read("u").messages], ["清空之前说的，之后才记下"])
+
+    def test_a_forgotten_exchanges_id_never_comes_back(self):
+        m, clock = companion()
+        kept = say(m, clock, "第一句")
+        m.surface.clear("u")
+        m.episodes.forget("u", kept.id)
+        new = say(m, clock, "第二句")
+        self.assertGreater(new.id, kept.id)
+        self.assertEqual(m.surface.read("u").messages[0]["content"], "第二句")
 
     def test_what_comes_after_is_in_it_again(self):
         m, clock = companion()
@@ -225,11 +321,40 @@ class FirstPromptTests(unittest.TestCase):
         self.assertIsNone(m.surface.first("u"))
         self.assertFalse(m.surface.drop_first("u"))
 
+    def test_dropping_it_is_for_good_until_they_set_one(self):
+        m, clock = companion()
+        asyncio.run(m.aobserve("u", [("Leo", "你是我的姐姐")], mood=False, capture=False, at=clock.now))
+        m.surface.send_first("u")
+        self.assertTrue(m.surface.drop_first("u"))
+        asyncio.run(m.aobserve("u", [("Leo", "今天好累")], mood=False, capture=False, at=clock.now))
+        self.assertIsNone(m.surface.first("u"))
+        self.assertFalse(m.surface.send_first("u"))
+        self.assertEqual(m.surface.read("u").messages[0]["content"], "你是我的姐姐")  # (only the copy went)
+        self.assertEqual(m.surface.set_first("u", "说话简短").send, False)  # (a new one starts unsent)
+        m.surface.drop_first("u")
+        m.erase("u")
+        asyncio.run(m.aobserve("u", [("Leo", "重新开始")], mood=False, capture=False, at=clock.now))
+        self.assertEqual(m.surface.first("u").text, "重新开始")
+
+    def test_a_dropped_first_prompt_stays_dropped_in_another_file(self):
+        m, clock = companion()
+        m.surface.set_first("u", "说话简短")
+        m.surface.drop_first("u")
+        other, _ = companion()
+        other.import_data(m.export_data())
+        other.surface.noticed("u", [("Leo", "你好")])
+        self.assertIsNone(other.surface.first("u"))
+
+    def test_a_companion_who_spoke_first_is_no_first_prompt(self):
+        m, clock = companion()
+        asyncio.run(m.aobserve("u", [("小鲸", "在吗"), ("Leo", "你是我的姐姐")], mood=False, capture=False, at=clock.now))
+        self.assertEqual(m.surface.first("u").text, "你是我的姐姐")
+
     def test_setting_it_beats_what_was_copied_and_stays(self):
         m, clock = companion()
-        m.surface.noticed("u", "你好")
+        m.surface.noticed("u", [("Leo", "你好")])
         m.surface.set_first("u", "说话简短")
-        m.surface.noticed("u", "别的")
+        m.surface.noticed("u", [("Leo", "别的")])
         self.assertEqual(m.surface.first("u").text, "说话简短")
 
     def test_a_new_chat_reads_the_first_prompt_then_the_surface_when_asked(self):
@@ -298,11 +423,11 @@ class LookTests(unittest.TestCase):
 
 
 class KeepingTests(unittest.TestCase):
-    def test_it_knows_when_it_starts(self):
+    def test_it_knows_when_it_was_cleared(self):
         m, clock = companion()
         self.assertEqual(m.surface.began("u"), 0.0)
         m.surface.clear("u")
-        self.assertGreater(m.surface.began("u"), 0.0)
+        self.assertGreaterEqual(m.surface.began("u"), clock.now)
 
     def test_everyone_anything_is_kept_of(self):
         m, clock = companion()
@@ -344,20 +469,69 @@ class KeepingTests(unittest.TestCase):
         rows = m.store.rows("select subject from first_prompts")
         self.assertEqual([row["subject"] for row in rows], ["u"])
 
+    def test_a_join_keeps_the_lower_start_and_both_summaries(self):
+        m, clock = companion()
+        say(m, clock, "甲一", subject="a")
+        m.surface._put("a", m.episodes.latest("a")[0], clock.now, "甲的总结")
+        say(m, clock, "乙一", subject="b")
+        say(m, clock, "乙二", subject="b")
+        m.surface._put("b", m.episodes.latest("b")[0], clock.now, "乙的总结")
+        say(m, clock, "乙三", subject="b")
+        m.link("a", "b")
+        view = m.surface.read("b", user_name="Leo")
+        self.assertIn("甲的总结", view.messages[0]["content"])
+        self.assertIn("乙的总结", view.messages[0]["content"])
+        self.assertEqual([message["content"] for message in view.messages[1:] if message["role"] == "user"],
+                         ["乙一", "乙二", "乙三"])
+
+    def test_a_join_with_someone_who_has_no_surface_starts_from_all_of_it(self):
+        m, clock = companion()
+        say(m, clock, "甲一", subject="a")
+        m.surface.clear("a")
+        say(m, clock, "乙一", subject="b")
+        m.link("a", "b")
+        self.assertEqual(len(m.surface.read("b").messages), 4)
+        self.assertEqual(m.store.rows("select * from surfaces"), [])
+
+    def test_a_link_of_an_empty_account_leaves_the_surface_as_it_is(self):
+        m, clock = companion()
+        say(m, clock, "第一句")
+        m.surface.clear("u")
+        m.link("web:leo", "u")
+        self.assertEqual(m.surface.read("u").messages, [])
+        m.import_data(m.export_data())  # (each import joins every link again)
+        self.assertEqual(m.surface.read("u").messages, [])
+
     def test_export_and_import_carry_them(self):
         m, clock = companion()
         m.surface.set_first("u", "说话简短")
         m.surface.send_first("u")
+        say(m, clock, "第一句")
+        clock.now += 60
         m.surface.clear("u")
+        clock.now += 60
+        say(m, clock, "第二句")
         data = m.export_data()
         other, _ = companion()
+        say(other, clock, "别的人说的", subject="someone")  # (ids differ from the export's)
         other.import_data(data)
         self.assertEqual(other.surface.first("u"), m.surface.first("u"))
-        self.assertEqual(other.store.row("select count(*) as n from surfaces")["n"], 1)
+        self.assertEqual(other.surface.read("u").messages, m.surface.read("u").messages)
+        self.assertEqual(other.surface.began("u"), m.surface.began("u"))
+
+    def test_an_import_joins_a_surface_that_is_here_once(self):
+        m, clock = companion()
+        say(m, clock, "第一句")
+        m.surface._put("u", 1, clock.now + 1, "总结")
+        data = m.export_data()
+        for _ in range(2):
+            m.import_data(data)
+        self.assertEqual(m.store.rows("select summary from surfaces")[0]["summary"], "总结")
 
     def test_a_bad_export_is_held_to_the_rules(self):
         m, clock = companion()
-        m.import_data({"surfaces": [{"subject": "", "since": 1, "summary": "x"}, "no", {"subject": "u", "since": "x"}],
+        m.import_data({"surfaces": [{"subject": "", "cleared_at": 1, "summary": "x"}, "no",
+                                    {"subject": "u", "cleared_at": "x"}],
                        "first_prompts": [{"subject": "u", "text": "", "at": 1}, {"subject": "u", "text": "y"}]})
         self.assertEqual(m.store.row("select count(*) as n from surfaces")["n"], 0)
         self.assertIsNone(m.surface.first("u"))
@@ -379,17 +553,6 @@ class KeepingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             companion(config={"memory": {"surface_floor": -1}})
 
-    def test_a_file_from_before_opens_and_gains_the_tables(self):
-        with tempfile.TemporaryDirectory() as folder:
-            path = f"{folder}/old.db"
-            m, clock = companion(path=path)
-            say(m, clock, "第一句")
-            m.store.execute("drop table surfaces")
-            m.store.execute("drop table first_prompts")
-            m.close()
-            m, clock = companion(path=path)
-            self.assertEqual(len(m.surface.read("u").messages), 2)
-            m.close()
 
 
 if __name__ == "__main__":

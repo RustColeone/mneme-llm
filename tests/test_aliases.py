@@ -76,17 +76,6 @@ class AliasTests(unittest.TestCase):
         self.assertLessEqual(fresh.store.row("select updated_at from aliases where subject = 'cy'")[0], NOON)
         self.assertEqual(check(fresh.store), [])
 
-    def test_a_file_from_0_1_gains_the_table_on_open(self):
-        with tempfile.TemporaryDirectory() as folder:
-            path = os.path.join(folder, "old.db")
-            m = mneme(path)
-            m.store.execute("drop table aliases")
-            m.close()
-            m = mneme(path)
-            self.assertEqual(m.store.meta("schema_version"), "1")
-            m.alias("leo", "鲸酱")
-            m.close()
-
     def test_the_command_shows_sets_and_removes_it(self):
         with tempfile.TemporaryDirectory() as folder:
             path = os.path.join(folder, "c.db")

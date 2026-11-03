@@ -60,10 +60,13 @@ BATCH = 64            # exchanges embedded per request
 SCANNED = 200         # the best-ranked exchanges a look reads to fill its budget
 MATRICES = 16         # people whose vectors stay in memory (the most recently looked at)
 PREPARED = 256        # exchanges a prepare embeds at most (the rest the next time)
+STRONGEST_ID = 2 ** 63 - 1  # no exchange has an id at or past this
 CUT = 0.08            # a look's bar: an exchange this much closer to the query than the embedder's floor ...
 CUT_FADED = 0.16      # ... and, fully faded, this much (in between by its retention); a search has no bar
 FLOOR = 0.25          # a shortened look still shows this share of a fully faded exchange's lines
 STRONGEST = 1e6       # days: stability stops growing here
+EXCHANGE = 2.4        # tokens two messages cost beyond their words
+NEWEST = 64           # exchanges read at a time, the newest first
 
 
 @dataclass(frozen=True)
@@ -76,6 +79,8 @@ class Episode:
     stability: float                # S, in days
     recalled_at: float | None = None  # when it was last rehearsed
     recalls: int = 0
+    day: int = 0                    # its talking day (`dates.talking_day`)
+    tokens: float = 0.0             # about what a model counts in it (`cost`)
 
     @property
     def text(self) -> str:
@@ -85,7 +90,7 @@ class Episode:
     def of(cls, row) -> "Episode":
         lines = tuple((str(who), str(said)) for who, said in json.loads(row["lines"]))
         return cls(row["id"], row["subject"], row["at"], row["conversation"], lines, row["stability"],
-                   row["recalled_at"], row["recalls"])
+                   row["recalled_at"], row["recalls"], row["day"], row["tokens"])
 
 
 def lines_of(exchange) -> list[tuple[str, str]]:
@@ -98,6 +103,16 @@ def lines_of(exchange) -> list[tuple[str, str]]:
             continue
         kept.append((texts.clip(who, MAX_NAME), texts.fit(said, MAX_LINE)))
     return kept[:MAX_LINES]
+
+
+def cost(lines) -> float:
+    """About how many tokens an exchange comes to in a model's context."""
+    return texts.tokens(exchanges.text_of(lines)) + EXCHANGE
+
+
+def _terms(lines) -> list[str]:
+    """What an exchange is found by: what was said, not who said it (they are in every one)."""
+    return texts.terms(" ".join(said for _, said in lines))
 
 
 def spread_bin(value: float) -> int:
@@ -208,8 +223,7 @@ class Episodes(Speaks, Resolves):
         self.zone, self.meaning, self.clock = zone, meaning, clock
         self._matrices: OrderedDict[tuple[str, str], _Matrix] = OrderedDict()
         self._queries: OrderedDict[str, object] = OrderedDict()  # recent queries' vectors (a turn asks again)
-        self._talked: OrderedDict[str, tuple] = OrderedDict()  # people's talking days, with what they were read from
-        self._turning: dict[int, int] = {}  # a quarter of an hour's talking day
+        store.index("episode_terms", self._reindex)
 
     # ---- writing ---------------------------------------------------------------------------------
     def keep(self, subject: str, exchange, *, at: float | None = None, conversation: str = "") -> Episode | None:
@@ -238,18 +252,27 @@ class Episodes(Speaks, Resolves):
         return episode
 
     def _insert(self, subject: str, row: dict) -> int:
-        terms = texts.terms(" ".join(said for _, said in row["lines"]))  # (not who: they are in every one)
-        id = self.store.execute("insert into episodes (space, subject, at, conversation, lines, size, stability, "
-                                "recalled_at, recalls, terms) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                                (self.space, subject, row["at"], row["conversation"], dumps(row["lines"]),
-                                 len(terms), row["stability"], row["recalled_at"], row["recalls"],
-                                 " ".join(terms))).lastrowid
-        for table in ("episode_vectors", "episode_terms"):  # SQLite reuses a deleted row's id: nothing of it stays
-            self.store.execute(f"delete from {table} where episode_id = ?", (id,))
-        for term in terms:
-            self.store.execute("insert or ignore into episode_terms (space, subject, term, episode_id) values "
-                               "(?, ?, ?, ?)", (self.space, subject, term, id))
+        terms = _terms(row["lines"])
+        id = self.store.execute("insert into episodes (space, subject, at, day, conversation, lines, size, tokens, "
+                                "stability, recalled_at, recalls) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                (self.space, subject, row["at"], dates.talking_day(row["at"], self.zone),
+                                 row["conversation"], dumps(row["lines"]), len(terms), cost(row["lines"]),
+                                 row["stability"], row["recalled_at"], row["recalls"])).lastrowid
+        self._index(self.space, subject, id, terms)
         return id
+
+    def _index(self, space: str, subject: str, id: int, terms: list[str]) -> None:
+        for term in terms:
+            self.store.execute("insert into episode_terms (space, subject, term, episode_id) values (?, ?, ?, ?)",
+                               (space, subject, term, id))
+
+    def _reindex(self) -> None:
+        """Every exchange of the file in the term index again (`Store.reindex`)."""
+        self.store.execute("delete from episode_terms")
+        for row in self.store.rows("select id, space, subject, lines from episodes"):
+            terms = _terms(json.loads(row["lines"]))
+            self.store.execute("update episodes set size = ? where id = ?", (len(terms), row["id"]))
+            self._index(row["space"], row["subject"], row["id"], terms)
 
     async def prepare(self, subject: str, *, limit: int = PREPARED, first: Iterable[int] = ()) -> int:
         """Vectors for the person's exchanges that have none from this embedder yet: those in `first` (the ones
@@ -301,47 +324,34 @@ class Episodes(Speaks, Resolves):
         stamp = dates.local(episode.at, self.zone).strftime("%d %B %Y, %H:%M")
         return f"[{stamp}]\n{episode.text}"
 
-    def day_of(self, at: float) -> int:
-        """`dates.talking_day` for many moments: a day turns on a quarter of an hour in every zone."""
-        quarter = int(at // 900)
-        day = self._turning.get(quarter)
-        if day is None:
-            day = self._turning[quarter] = dates.talking_day(at, self.zone)
-        return day
-
     def talking_days(self, subject: str) -> list[int]:
         """The person's talking days, in order: the days an exchange of theirs was kept (`dates.talking_day`)."""
-        subject = self.who(subject)
-        mark = tuple(self.store.row("select count(*), max(at) from episodes where space = ? and subject = ?",
-                                    (self.space, subject)))
-        known = self._talked.get(subject)
-        if known is None or known[0] != mark:
-            found = sorted({self.day_of(row["at"]) for row in self.store.rows(
-                "select at from episodes where space = ? and subject = ?", (self.space, subject))})
-            known = self._talked[subject] = (mark, found)
-            while len(self._talked) > MATRICES:
-                self._talked.popitem(last=False)
-        self._talked.move_to_end(subject)
-        return known[1]
+        return [row["day"] for row in self.store.rows("select distinct day from episodes where space = ? and subject "
+                                                      "= ? order by day", (self.space, self.who(subject)))]
 
-    def _kept(self, row, now: float, days: list[int]) -> float:
-        """R of an exchange (or its row): t counts the talking days after its last day, up to today, which is one
+    def _kept(self, row, today: int, days: list[int]) -> float:
+        """R of an exchange (or its row): t counts the talking days after its last day, up to `today`, which is one
         because they are talking now."""
-        last = max(row["at"], row["recalled_at"] or 0.0)
-        since, today = self.day_of(last), self.day_of(now)
+        since = row["day"]
+        if row["recalled_at"] is not None and row["recalled_at"] > row["at"]:
+            since = dates.talking_day(row["recalled_at"], self.zone)
         passed = bisect.bisect_left(days, today) - bisect.bisect_right(days, since) + 1 if today > since else 0
         return math.exp(-passed / max(row["stability"], 1e-6))
 
     def _rehearse(self, ids: Iterable[int], now: float) -> None:
-        """Each exchange recalled at `now`: its stability grows, the more the further it had faded, and it is fresh."""
-        for row in self.store.rows_in("select id, subject, at, recalled_at, stability from episodes where id in ({})",
-                                      ids):
-            if row["recalled_at"] is not None and row["recalled_at"] >= now:
-                continue  # (one moment, one rehearsal: and a late vector's, from before it, counts nothing)
-            last = max(row["at"], row["recalled_at"] or 0.0)
-            kept = self._kept(row, now, self.talking_days(row["subject"]))
+        """Each exchange recalled at `now`, at most once a talking day: its stability grows, the more the further it had
+        faded, and it is fresh."""
+        today, talked = dates.talking_day(now, self.zone), {}
+        for row in self.store.rows_in("select id, subject, at, day, recalled_at, stability from episodes where id in "
+                                      "({})", ids):
+            if row["recalled_at"] is not None and dates.talking_day(row["recalled_at"], self.zone) >= today:
+                continue  # (and a late vector's, from before the last one, counts nothing)
+            if row["subject"] not in talked:
+                talked[row["subject"]] = self.talking_days(row["subject"])
+            kept = self._kept(row, today, talked[row["subject"]])
             self.store.execute("update episodes set stability = ?, recalled_at = ?, recalls = recalls + 1 where id = ?",
-                               (min(STRONGEST, row["stability"] * (1.5 + 3 * (1 - kept))), max(last, now), row["id"]))
+                               (min(STRONGEST, row["stability"] * (1.5 + 3 * (1 - kept))),
+                                max(row["at"], row["recalled_at"] or 0.0, now), row["id"]))
 
     def forget(self, subject: str, id: int) -> int:
         """An exchange gone for good, its words, index and vectors with it (1), or nothing of this person's by that
@@ -389,11 +399,48 @@ class Episodes(Speaks, Resolves):
         row = self.store.row("select * from episodes where id = ? and space = ?", (id, self.space))
         return Episode.of(row) if row else None
 
-    def newest(self, subject: str, limit: int = 20) -> list[Episode]:
-        """The person's latest exchanges, newest first."""
-        rows = self.store.rows("select * from episodes where space = ? and subject = ? order by at desc, id desc "
-                               "limit ?", (self.space, self.who(subject), limit))
-        return [Episode.of(row) for row in rows]
+    def after(self, subject: str, start_id: int, budget: float | None = None, *,
+              before: int = STRONGEST_ID) -> list[Episode]:
+        """The person's exchanges with an id after `start_id` (and before `before`), the newest first, whole, within
+        `budget` tokens when one is given, and always the newest, even alone over it. They are read a few at a time, so
+        a small budget reads little however much there is."""
+        subject, found, used = self.who(subject), [], 0.0
+        while True:
+            rows = self.store.rows("select * from episodes where space = ? and subject = ? and id > ? and id < ? order "
+                                   "by id desc limit ?", (self.space, subject, start_id, before, NEWEST))
+            for row in rows:
+                if budget is not None and found and used + row["tokens"] > budget:
+                    return found
+                found.append(Episode.of(row))
+                used += row["tokens"]
+            if len(rows) < NEWEST:
+                return found
+            before = rows[-1]["id"]
+
+    def tokens_after(self, subject: str, start_id: int, *, days: int | None = None) -> float:
+        """How many tokens the person's exchanges after `start_id` come to; with `days`, only those of their last so
+        many talking days."""
+        subject = self.who(subject)
+        edge = self.talking_days(subject)[-days:][:1] if days else []
+        return self.store.row("select coalesce(sum(tokens), 0) as n from episodes where space = ? and subject = ? and "
+                              "id > ? and day >= ?", (self.space, subject, start_id, edge[0] if edge else 0))["n"]
+
+    def latest(self, subject: str, before: float = dates.LATEST) -> tuple[int, float]:
+        """The highest id among the person's exchanges said before `before`, and the latest moment one was said (0, 0.0
+        with none)."""
+        row = self.store.row("select coalesce(max(id), 0) as id, coalesce(max(at), 0.0) as at from episodes where space "
+                             "= ? and subject = ? and at < ?", (self.space, self.who(subject), before))
+        return row["id"], row["at"]
+
+    def holds(self, subject: str) -> bool:
+        """Whether any exchange is kept under exactly this subject, linked or not."""
+        return self.store.row("select 1 from episodes where space = ? and subject = ? limit 1",
+                              (self.space, subject)) is not None
+
+    def subjects(self) -> list[str]:
+        """Everyone an exchange is kept of."""
+        return [row["subject"] for row in self.store.rows("select distinct subject from episodes where space = ? order "
+                                                          "by subject", (self.space,))]
 
     def count(self, subject: str | None = None) -> int:
         if subject is None:
@@ -404,7 +451,8 @@ class Episodes(Speaks, Resolves):
     def retention(self, episode: Episode, now: float | None = None) -> float:
         """How much of it is still remembered (R, from 1 when it was said or rehearsed down to 0)."""
         now = self.clock() if now is None else now
-        return self._kept({"at": episode.at, "recalled_at": episode.recalled_at, "stability": episode.stability}, now,
+        return self._kept({"at": episode.at, "day": episode.day, "recalled_at": episode.recalled_at,
+                           "stability": episode.stability}, dates.talking_day(now, self.zone),
                           self.talking_days(episode.subject))
 
     def look(self, subject: str, query: str, *, budget: int = 6000, cut: tuple[float, float] | None = (CUT, CUT_FADED),
@@ -499,7 +547,8 @@ class Episodes(Speaks, Resolves):
         """The person's exchanges for `query`, best first: BM25 over the search terms (each term once per exchange)
         and closeness to the query's vector, fused by reciprocal rank. With `cut` (see `look`), those under their
         bar are left out; fading changes nothing else."""
-        rows = self.store.rows("select id, at, recalled_at, stability, size from episodes where space = ? and "
+        self.store.reindex()
+        rows = self.store.rows("select id, at, day, recalled_at, stability, size from episodes where space = ? and "
                                "subject = ?", (self.space, subject))
         if not rows:
             return []
@@ -539,11 +588,11 @@ class Episodes(Speaks, Resolves):
             floor = self.meaning.set_floor
             lines = (floor + cut[0], floor + cut[1])
         if lines:
-            now, days = self.clock(), self.talking_days(subject)
+            today, days = dates.talking_day(self.clock(), self.zone), self.talking_days(subject)
             for row in rows:
                 id = row["id"]
                 if id in close:  # (one with no vector yet is not judged)
-                    kept = self._kept(row, now, days)
+                    kept = self._kept(row, today, days)
                     if close[id] < lines[0] + (1 - kept) * (lines[1] - lines[0]):
                         del fused[id]
         return sorted(fused, key=lambda id: (-fused[id], -id))

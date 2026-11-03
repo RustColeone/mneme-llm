@@ -9,6 +9,7 @@ from collections import Counter, defaultdict
 
 from mneme_llm import text as texts
 from mneme_llm.config import ORIGINS, check as check_setting
+from mneme_llm.episodes import cost
 from mneme_llm.relations import ROLES
 
 
@@ -34,7 +35,7 @@ def check(store) -> list[str]:
             problems.append(f"note #{row['id']} is not one clean line of at most 500 characters")
         if texts.blank(text):
             problems.append(f"note #{row['id']} has no text")
-        if row["folded"] is not None and row["folded"] != texts.fold(text):
+        if row["folded"] != texts.fold(text):
             problems.append(f"note #{row['id']} has a folded text that is not its own")
         if row["superseded_by"] is not None and row["superseded_by"] not in ids and row["superseded_by"] != -1:
             problems.append(f"note #{row['id']} points to a missing note")
@@ -51,19 +52,15 @@ def check(store) -> list[str]:
             if not twins:
                 problems.append(f"note #{row['id']} was hidden as a duplicate of nothing")
 
-    # The term index holds exactly the cached terms of each note, and nothing for a note without them.
+    # The term index holds exactly the terms of every live note, and names no note that is gone.
     indexed = defaultdict(set)
     for row in store.rows("select * from note_terms"):
         indexed[row["memory_id"]].add(row["term"])
-    by_id = {row["id"]: row for row in rows}
-    for id, terms in indexed.items():
-        row = by_id.get(id)
-        if row is None:
-            problems.append(f"the term index names missing note #{id}")
-        elif row["terms"] is None or set(row["terms"].split()) != terms:
-            problems.append(f"note #{id} is indexed by other terms than its own")
-    problems += [f"note #{row['id']} has terms but no index rows" for row in rows
-                 if row["terms"] and row["id"] not in indexed]
+    problems += [f"the term index names missing note #{id}" for id in indexed if id not in ids]
+    for row in live:
+        terms = texts.terms(" ".join([row["text"], (row["key"] or "").replace(".", " "), row["gloss"] or ""]))
+        if indexed.get(row["id"], set()) != set(terms):
+            problems.append(f"note #{row['id']} is indexed by other terms than its own")
 
     vectors = store.rows("select * from vectors")
     problems += [f"a vector of missing note #{row['memory_id']}" for row in vectors if row["memory_id"] not in ids]
@@ -94,9 +91,19 @@ def check(store) -> list[str]:
         if person == subject or (space, person) in links:
             problems.append(f"{subject} is linked to {person}, which is not a person's own subject")
         for table in ("memories", "profiles", "moods", "mood_events", "relationships", "aliases", "note_terms",
-                      "recalls"):
+                      "recalls", "episodes", "episode_terms", "surfaces", "first_prompts"):
             if store.row(f"select 1 from {table} where space = ? and subject = ?", (space, subject)) is not None:
                 problems.append(f"{table} keeps rows under {subject}, which is linked to {person}")
+
+    # Exchanges: their day is the talking day of when they were said, their tokens what they cost; a surface starts at
+    # an exchange that was kept.
+    top = store.row("select coalesce(max(id), 0) as id from episodes")["id"]
+    for row in store.rows("select id, day, tokens, lines from episodes"):
+        if not isinstance(row["day"], int) or row["tokens"] < cost(json.loads(row["lines"])) - 1e-6:
+            problems.append(f"exchange #{row['id']} has the wrong day or tokens")
+    for row in store.rows("select * from surfaces"):
+        if not 0 <= row["start_id"] <= top:
+            problems.append(f"the surface of {row['subject']} starts at #{row['start_id']}, past every exchange")
 
     # The config: every known key's value passes its rule, from a known origin.
     for row in store.rows("select * from config"):

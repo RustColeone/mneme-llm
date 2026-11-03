@@ -47,7 +47,6 @@ class LinkTests(unittest.TestCase):
         self.assertIn("a kind word", told)
         self.assertEqual(m.prompt("discord:42", "猫", user_name="Leo"), told.rsplit("\n\n", 1)[0])  # (told once)
         self.assertEqual(m.memory.subjects(), ["discord:42"])
-        self.assertEqual(m.people.subjects("web:leo"), ["discord:42", "web:leo"])
         self.assertEqual(check(m.store), [])
 
     def test_what_each_account_kept_is_joined(self):
@@ -146,8 +145,7 @@ class LinkTests(unittest.TestCase):
         m.link("web:leo", "discord:42")
         m.remember("web:leo", "喜欢乌龙茶")
         data = m.export_data()
-        self.assertEqual(data["people"], [{"space": "t", "subject": "web:leo", "person": "discord:42",
-                                           "updated_at": NOON}])
+        self.assertEqual(data["people"], [{"space": "t", "subject": "web:leo", "person": "discord:42"}])
         fresh = mneme()
         fresh.import_data(data)
         self.assertEqual(fresh.person("web:leo"), "discord:42")
@@ -161,18 +159,6 @@ class LinkTests(unittest.TestCase):
         self.assertEqual(sorted(note.text for note in fresh.memory.notes("discord:42")), ["下周三考物理", "喜欢乌龙茶"])
         self.assertEqual(fresh.person("web:leo"), "discord:42")  # this file's link stays
         self.assertEqual(check(fresh.store), [])
-
-    def test_a_file_without_the_table_gains_it_on_open(self):
-        with tempfile.TemporaryDirectory() as folder:
-            path = os.path.join(folder, "c.db")
-            mneme(path).close()
-            with contextlib.closing(sqlite3.connect(path)) as db:
-                db.execute("drop table people")
-                db.commit()
-            m = mneme(path)
-            m.link("web:leo", "discord:42")
-            self.assertEqual(m.person("web:leo"), "discord:42")
-            m.close()
 
     def test_the_command_links_and_lists(self):
         with tempfile.TemporaryDirectory() as folder:

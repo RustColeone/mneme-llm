@@ -98,6 +98,11 @@ def check(key: str, value: Any) -> Any:
         raise ValueError(f"{key}: {error}") from error
 
 
+def known(key: str) -> bool:
+    """Whether this version has such a setting."""
+    return _rule(key) is not None
+
+
 def _rule(key: str):
     if key.startswith("messages."):
         return _message if _message_parts(key) else None
