@@ -27,7 +27,6 @@ from dataclasses import dataclass
 from typing import Callable
 
 from . import dates, providers, text as texts
-from .decide import fit
 from .episodes import Episode
 from .i18n import Speaks, Words, fill, say
 from .people import People, Resolves
@@ -175,7 +174,7 @@ class Surface(Speaks, Resolves):
             return False
         if not summary:
             return False
-        self._put(subject, held[staying][0].at, fit(summary, SUMMARY))
+        self._put(subject, held[staying][0].at, texts.fit(summary, SUMMARY))
         return True
 
     def let_go(self, subject: str, **options) -> bool:
@@ -202,7 +201,7 @@ class Surface(Speaks, Resolves):
 
     def noticed(self, subject: str, said: str) -> None:
         """What a person said to the companion: the first time, a copy of it stays."""
-        text = fit(texts.clean(said).strip(), FIRST)
+        text = texts.fit(texts.clean(said).strip(), FIRST)
         if text:
             with self.writing(subject) as subject:
                 self.store.execute("insert or ignore into first_prompts (space, subject, text, at, by_command, send) "
@@ -210,7 +209,7 @@ class Surface(Speaks, Resolves):
 
     def set_first(self, subject: str, text: str) -> First:
         """The person's first prompt is `text` from now on, by their own word. Whether it is sent stays as it was."""
-        text = fit(texts.clean(texts.required(text, "a first prompt")).strip(), FIRST)
+        text = texts.fit(texts.clean(texts.required(text, "a first prompt")).strip(), FIRST)
         with self.writing(subject) as subject:
             self.store.execute("insert into first_prompts (space, subject, text, at, by_command, send) values (?, ?, "
                                "?, ?, 1, 0) on conflict(space, subject) do update set text = excluded.text, at = "
@@ -257,7 +256,7 @@ class Surface(Speaks, Resolves):
                 if isinstance(subject, str) and subject.strip() and isinstance(summary, str) and since is not None:
                     self.store.execute("insert or ignore into surfaces (space, subject, since, summary, updated_at) "
                                        "values (?, ?, ?, ?, ?)", (self.space, self.who(subject), since,
-                                                                  fit(texts.clean(summary), SUMMARY), self.clock()))
+                                                                  texts.fit(texts.clean(summary), SUMMARY), self.clock()))
             for row in firsts:
                 at = dates.seconds(row.get("at")) if isinstance(row, dict) else None
                 subject, text = (row.get("subject"), row.get("text")) if isinstance(row, dict) else (None, None)
@@ -265,5 +264,5 @@ class Surface(Speaks, Resolves):
                         and at is not None:
                     self.store.execute("insert or ignore into first_prompts (space, subject, text, at, by_command, "
                                        "send) values (?, ?, ?, ?, ?, ?)",
-                                       (self.space, self.who(subject), fit(texts.clean(text), FIRST), at,
+                                       (self.space, self.who(subject), texts.fit(texts.clean(text), FIRST), at,
                                         int(bool(row.get("by_command"))), int(bool(row.get("send")))))

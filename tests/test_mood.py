@@ -1,6 +1,8 @@
+import asyncio
 import unittest
 
-from mneme_llm.decide import Answer, Chain
+from mneme_llm import exchange as exchanges
+from mneme_llm.decide import Answer
 from mneme_llm.mood import Mood, MoodSettings
 from mneme_llm.store import Store
 
@@ -15,7 +17,7 @@ class Clock:
 
 
 class Judge:
-    """A decision tier that returns a fixed mood verdict and records what it was asked."""
+    """A judge that returns a fixed mood verdict and records what it was asked."""
 
     name = "judge"
 
@@ -26,17 +28,23 @@ class Judge:
         self.asked.append((input, {q.name: q for q in questions}))
         found = {}
         if self.change is not None:
-            found["mood_change"] = Answer("mood_change", "score", self.change, max(self.change.values()), self.name,
+            found["mood_change"] = Answer("mood_change", self.change, max(self.change.values()), self.name,
                                           self.reason)
         if self.feeling is not None:
-            found["feeling"] = Answer("feeling", "choice", self.feeling, max(self.feeling.values()), self.name)
+            found["feeling"] = Answer("feeling", self.feeling, max(self.feeling.values()), self.name)
         return found
 
 
-def mood(judge=None, **settings):
+def mood(**settings):
     clock = Clock()
-    return Mood(Store(":memory:"), "t", decider=Chain(judge) if judge else None, settings=MoodSettings(**settings),
-                companion_name="大肥鱼", clock=clock), clock
+    return Mood(Store(":memory:"), "t", settings=MoodSettings(**settings), companion_name="大肥鱼", clock=clock), clock
+
+
+def judged(m, judge, exchange, *, source="user", user_name="Leo"):
+    """What `Mneme.aobserve` does with an exchange and a judge."""
+    framed = exchanges.frame(exchange, source=source, user_name=user_name, companion_name=m.companion_name)
+    answers = asyncio.run(judge.adecide(framed, m.questions()))
+    return m.apply_answers("u", answers, exchange, source=source, user_name=user_name)
 
 
 class MoodTests(unittest.TestCase):
@@ -67,8 +75,8 @@ class MoodTests(unittest.TestCase):
     def test_judging_moves_by_expected_level_and_spreads_feelings(self):
         judge = Judge(change={"-2": 0, "-1": 0.04, "0": 0.45, "1": 0.4, "2": 0.11},
                       feeling={"tender": 0.94, "happy": 0.06})
-        m, _ = mood(judge)
-        event = m.judge("u", [("Leo", "今天考试又没考好……"), ("大肥鱼", "才不笨！")], user_name="Leo")
+        m, _ = mood()
+        event = judged(m, judge, [("Leo", "今天考试又没考好……"), ("大肥鱼", "才不笨！")])
         self.assertAlmostEqual(event.delta, 0.58 * 6, places=2)
         self.assertEqual(set(event.emotions), {"tender"})  # 6% of happy is below the noise floor
         self.assertEqual(event.reason, "Leo said “今天考试又没考好……”")  # the feeling is said by the cue
@@ -76,13 +84,12 @@ class MoodTests(unittest.TestCase):
 
     def test_the_question_follows_who_started_it(self):
         judge = Judge(feeling={"sweet": 0.9, "happy": 0.1})
-        m, _ = mood(judge)
-        m.judge("u", "大肥鱼: 想你了", source="speak-up", user_name="Leo")
+        m, _ = mood()
+        judged(m, judge, "大肥鱼: 想你了", source="speak-up")
         input, questions = judge.asked[0]
         self.assertIn("reached out to Leo on their own", input)
         self.assertNotIn("Leo", questions["mood_change"].instructions)  # names live in the text, not the question
-        self.assertIsNone(m.judge("u", "x", source="runtime"))
-        self.assertEqual(len(judge.asked), 1)
+        self.assertIsNone(m.apply_answers("u", {}, "x", source="runtime"))
 
     def test_news_says_what_to_feel(self):
         m, _ = mood()
@@ -119,9 +126,9 @@ class MoodTests(unittest.TestCase):
         m.apply("u", delta=-70, emotions={"sad": 90})
         self.assertEqual(m.state("u").face, "sad")
 
-    def test_without_a_decider_judging_does_nothing(self):
+    def test_no_answers_move_nothing(self):
         m, _ = mood()
-        self.assertIsNone(m.judge("u", "hello"))
+        self.assertIsNone(m.apply_answers("u", {}, "hello"))
 
 
 if __name__ == "__main__":

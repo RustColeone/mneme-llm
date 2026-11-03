@@ -1,10 +1,9 @@
-"""What every tier needs to reach a model or a service: calling the host's function (sync or async), posting JSON
-to an API, reading JSON out of a model's reply, and resting a provider that just failed.
+"""What reaching a model or a service takes: calling the host's function (sync or async), posting JSON to an API,
+reading JSON out of a model's reply, and resting a provider that just failed.
 
-One policy for failures, used by every tier that calls out: a provider that fails, for whatever reason, is skipped
-for `Rest.seconds` (60) instead of being waited on at every call, so a recall never pays for the same failure twice
-in a minute. The last decision tier (the host's model) is never rested: there is nothing after it to fall through
-to.
+One policy for failures, used by the meaning tiers: a provider that fails, for whatever reason, is skipped for
+`Rest.seconds` (60) instead of being waited on at every call, so a recall never pays for the same failure twice in a
+minute. A judge is never rested: nothing else can answer in its place.
 """
 
 from __future__ import annotations

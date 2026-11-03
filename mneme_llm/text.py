@@ -202,3 +202,13 @@ def clip(text: str, limit: int) -> str:
     """`text` cleaned and on one line, cut to `limit` characters, ending in "…" when something was cut."""
     text = " ".join(clean(text).split())
     return text if len(text) <= limit else text[:max(0, limit - 1)].rstrip() + "…"
+
+
+def fit(text: str, limit: int) -> str:
+    """`text` within `limit` characters: the opening (where who-is-who is said) and the end (the newest words) are kept,
+    the middle is cut."""
+    if len(text) <= limit:
+        return text
+    head = min(600, limit // 3)
+    tail = limit - head - 5  # (the marker takes 5)
+    return text[:head] + "\n[…]\n" + text[-tail:] if tail > 0 else text[:max(0, limit)]

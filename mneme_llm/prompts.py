@@ -9,7 +9,7 @@ escaping.
 from __future__ import annotations
 
 PROMPTS = {
-    # decision tier 3: how the host's chat model is asked for its verdict (the questions follow in the message)
+    # how the host's chat model is asked for a verdict (the questions follow in the message)
     "judge": """You judge a piece of text and answer questions about it. Reply with only one JSON object, no prose,
 with one entry per question name:
 - yes/no question: {"probability": <0..1 that it is true>}
@@ -17,7 +17,7 @@ with one entry per question name:
 - score: {"level": "<one of the listed labels>", "confidence": <0..1>}
 Any entry may add "reason": one short sentence. Use only the listed values and labels.""",
 
-    # the questions every decision tier answers after an exchange
+    # the questions a judge answers after an exchange
     "mood_change": "How did this move the assistant's own mood, from the assistant's side? Who started it is said "
                    "at the top. Being annoyed at the user does not lower it; only aching for them, worry or sadness "
                    "does.",

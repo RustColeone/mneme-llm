@@ -17,11 +17,12 @@ from datetime import datetime, timedelta, timezone
 from tests.tiers import needs_centroids, needs_unify
 from mneme_llm import Embeddings, Mneme
 from mneme_llm.dates import find, local, noon
-from mneme_llm.decide import Answer, Choice, Prompt, Score, fit
+from mneme_llm.decide import Choice, Prompt, Score
 from mneme_llm.mcp import serve
 from mneme_llm.meaning import pack, unpack
 from tests.invariants import check
 from mneme_llm.store import Store
+from mneme_llm.text import fit
 from mneme_llm.tools import Toolbox
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -784,7 +785,7 @@ class RefactorReviewTests(unittest.TestCase):
         self.assertEqual(m.memory.notes("u")[0].gloss, "Has a cat named Niangao")
 
     def test_a_misconfigured_embedder_is_rested_too(self):
-        from mneme_llm.decide import Unavailable
+        from mneme_llm.providers import Unavailable
         calls = []
 
         async def wrong(texts):

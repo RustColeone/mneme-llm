@@ -16,16 +16,17 @@ Swap the model behind your app and point it at the same file: the facts, the his
 from __future__ import annotations
 
 import dataclasses
+import logging
 import time
 from dataclasses import dataclass, field
 from datetime import tzinfo
 from typing import Callable
 
-from . import dates, exchange as exchanges, providers
+from . import dates, exchange as exchanges, providers, text as texts
 from .aliases import Aliases
 from .capture import WORTH_NAME, notes_in, reflect_prompt, worth, writer_prompt
 from .config import STORED, Config
-from .decide import Answer, Chain, Choice, Predicate, Prompt, Score, fit
+from .decide import Answer, Choice, Predicate, Prompt, Score
 from .episodes import Episode, Episodes
 from .gut import Gut, Turn
 from .i18n import Words, say
@@ -40,6 +41,7 @@ from .surface import First, Surface, View
 
 __version__ = "0.4.0"
 SEARCHED = 5  # exchanges a search adds to a look
+log = logging.getLogger("mneme_llm")
 
 
 def _optional(module: str, name: str):
@@ -72,10 +74,10 @@ class Mneme:
     display_language  the language of everything shown to people and to the chat model: the notes' header,
                    dates, moods, tool replies ("en", "zh", or one the config gives sentences for)
     companion_name the companion's own name (the person's is given per call, as `user_name`)
-    complete       your own chat model, `complete(system, user) -> str` (sync or async). It is the last tier of
-                   decisions and of meaning, and it writes notes (`observe`, `capture`) and the profile card
-                   (`reflect`). It can be a fixed, cheap model whatever model your conversation uses.
-    judge          a decision tier of your own, tried before `complete` (`decide/__init__.py`)
+    complete       your own chat model, `complete(system, user) -> str` (sync or async). It answers the small
+                   decisions, is the last tier of meaning, and writes notes (`observe`, `capture`) and the profile
+                   card (`reflect`). It can be a fixed, cheap model whatever model your conversation uses.
+    judge          a judge of your own, answering the small decisions in place of `complete` (`decide.py`)
     embed          meaning tier 1: True uses OpenAI embeddings when OPENAI_API_KEY is set; or pass any embedder
                    (`Embeddings(fn, name=...)` for your own function); False leaves it out.
     meaning_micro  meaning tier 2: word centroids learned from tier 1 (False leaves it out).
@@ -112,8 +114,8 @@ class Mneme:
         self.companion_name = stored(companion_name, "companion.name")
         zone = own.zone() if zone is STORED else zone
         words = Words(stored(display_language, "companion.display_language"), own.messages())
-        self._tiers = [judge] if judge else []
-        self.decider = self._chain(complete)
+        self.judge = judge
+        self.decisions = {"answered": 0, "abstained": 0, "failed": 0, "last_error": ""}
         self.meaning = self._meaning(embed, meaning_micro, memory_language, complete)
         self.people = People(self.store, space, clock=clock)
         self.memory = Memory(self.store, space, half_life_days=stored(half_life_days, "memory.half_life_days"),
@@ -121,8 +123,8 @@ class Mneme:
                              max_notes=own.get("memory.max_notes"), semantic_window=own.get("memory.semantic_window"),
                              zone=zone, display_language=words, meaning=self.meaning, people=self.people,
                              clock=clock)
-        self.mood = Mood(self.store, space, decider=self.decider, settings=own.mood_settings() if mood is STORED
-                         else mood, companion_name=self.companion_name, display_language=words, prompts=self.prompts,
+        self.mood = Mood(self.store, space, settings=own.mood_settings() if mood is STORED else mood,
+                         companion_name=self.companion_name, display_language=words, prompts=self.prompts,
                          people=self.people, clock=clock)
         self.relations = Relations(self.store, space, roles=own.roles() if roles is STORED else roles,
                                    growth=own.get("relations.growth"),
@@ -151,9 +153,6 @@ class Mneme:
         for part in (self.memory, self.mood, self.relations, self.aliases, self.episodes):
             part.display_language = language
 
-    def _chain(self, complete) -> Chain:
-        return Chain(*self._tiers, Prompt(complete, system=self.prompts["judge"]) if complete is not None else None)
-
     def _meaning(self, embed, meaning_micro, memory_language, complete) -> Meaning | None:
         embedder = None
         if embed is True:
@@ -176,14 +175,6 @@ class Mneme:
         if embedder is None and centroids is None and unify is None:
             return None
         return Meaning(self.store, embedder, centroids, unify)
-
-    def _decider(self, complete) -> Chain:
-        """The chain for one call: with a `complete` of the call's own as its last tier."""
-        if complete is None:
-            return self.decider
-        decider = self._chain(complete)
-        decider.stats = self.decider.stats  # one report for both
-        return decider
 
     # ---- the few calls most programs need ------------------------------------------------------------
     def remember(self, subject: str, text: str, *, kind: str | None = None, key: str | None = None,
@@ -368,15 +359,10 @@ class Mneme:
         episode = self.episodes.keep(subject, lines, at=at, conversation=conversation) \
             if keep and source == "user" else None
         writer = complete or self.complete
-        decider = self._decider(complete)
         judge_mood = mood and source not in self.mood.settings.skip
         keep_notes = capture and source == "user" and writer is not None
         questions = (self.mood.questions() if judge_mood else []) + ([self._worth()] if keep_notes else [])
-        answers = {}
-        if questions and decider.tiers:
-            framed = exchanges.frame(exchange, source=source, user_name=user_name,
-                                     companion_name=self.companion_name, prompts=self.prompts)
-            answers = await decider.adecide(framed, questions)
+        answers = await self._decide(exchange, questions, source, user_name, complete)
         event = (self.mood.apply_answers(subject, answers, exchange, source=source, user_name=user_name,
                                          weight=self.relations.weight(subject)) if judge_mood else None)
         if source == "user":
@@ -400,17 +386,34 @@ class Mneme:
     async def acapture(self, subject: str, exchange, *, user_name: str = "the user", gate: float = 0.5,
                        complete=None) -> list[Note]:
         """Notes kept from one exchange, without judging the mood (source "auto", so the daily quota applies).
-        "Worth remembering?" is asked first when a decision tier is there; the note writer only when it says yes."""
-        found = None
-        decider = self._decider(complete)
-        if decider.tiers and gate > 0:
-            framed = exchanges.frame(exchange, source="user", user_name=user_name, companion_name=self.companion_name,
-                                     prompts=self.prompts)
-            found = (await decider.adecide(framed, [self._worth()])).get(WORTH_NAME)
-        return await self._capture(subject, exchange, user_name, found, gate, complete or self.complete)
+        "Worth remembering?" is asked first when there is a judge; the note writer only when it says yes."""
+        answers = await self._decide(exchange, [self._worth()] if gate > 0 else [], "user", user_name, complete)
+        return await self._capture(subject, exchange, user_name, answers.get(WORTH_NAME), gate,
+                                   complete or self.complete)
 
     def _worth(self):
         return worth(self.prompts["worth"])
+
+    async def _decide(self, exchange, questions: list, source: str, user_name: str, complete) -> dict[str, Answer]:
+        """What the host's judge, or else the chat model (this call's own when it gives one), answers about an exchange.
+        One that fails is logged and answers nothing."""
+        complete = complete or self.complete
+        if not questions or (self.judge is None and complete is None):
+            return {}
+        decider = self.judge or Prompt(complete, system=self.prompts["judge"])
+        framed = exchanges.frame(exchange, source=source, user_name=user_name, companion_name=self.companion_name,
+                                 prompts=self.prompts)
+        try:
+            answers = await decider.adecide(framed, questions)
+        except Exception as error:
+            self.decisions["failed"] += 1
+            self.decisions["last_error"] = f"{type(error).__name__}: {error}"[:300]
+            log.info("the judge failed: %s", self.decisions["last_error"])
+            return {}
+        found = {question.name: answers[question.name] for question in questions if answers.get(question.name)}
+        self.decisions["answered"] += len(found)
+        self.decisions["abstained"] += len(questions) - len(found)
+        return found
 
     def capture(self, subject: str, exchange, **options) -> list[Note]:
         """`acapture` for code without an event loop."""
@@ -420,7 +423,7 @@ class Mneme:
                        complete) -> list[Note]:
         if worth is not None and worth.probability < gate:
             return []
-        exchange = fit(exchanges.as_text(exchange), self.WRITER_INPUT)  # a huge exchange: its opening and its end
+        exchange = texts.fit(exchanges.as_text(exchange), self.WRITER_INPUT)  # a huge exchange: its opening and its end
         memory = self.memory
         known = [item.note.text for item in memory.recall(subject, exchange, log=False).chosen]
         unify = self.meaning.unify if self.meaning is not None else None
@@ -479,8 +482,8 @@ class Mneme:
         return run(self.aregloss(subject, **options))
 
     def report(self) -> dict:
-        """What each tier has answered, abstained on or failed, and what the paid ones cost."""
-        return {"decisions": self.decider.report(), "meaning": self.meaning.report() if self.meaning else None}
+        """What the judge has answered, abstained on or failed, and what the meaning tiers did and cost."""
+        return {"decisions": dict(self.decisions), "meaning": self.meaning.report() if self.meaning else None}
 
     # ---- moving between projects ------------------------------------------------------------------
     def export_data(self) -> dict:
@@ -528,7 +531,7 @@ class Mneme:
         self.close()
 
 
-__all__ = ["Aliases", "Answer", "Chain", "Choice", "Config", "Embeddings", "Emotion", "Episode", "Episodes", "First", "Gut", "KINDS",
+__all__ = ["Aliases", "Answer", "Choice", "Config", "Embeddings", "Emotion", "Episode", "Episodes", "First", "Gut", "KINDS",
            "Meaning", "Memory", "Mneme", "Mood", "MoodEvent", "MoodSettings", "Note", "Observation",
            "OpenAIEmbeddings", "People", "Predicate", "Prompt", "Recall", "Relations", "Relationship", "Role", "STORED",
            "Score", "Store", "Surface", "Turn", "Unavailable", "View", "__version__"]

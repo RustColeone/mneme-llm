@@ -6,9 +6,9 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from types import SimpleNamespace
 
 from mneme_llm import Mneme
+from mneme_llm.decide import Answer
 from mneme_llm.mcp import serve
 from mneme_llm.tools import Toolbox, specs
 
@@ -140,14 +140,33 @@ class FacadeTests(unittest.TestCase):
         seen = asyncio.run(m.aobserve("u", "user: 你真棒\n大肥鱼: 嘿嘿", complete=complete, capture=False))
         event = seen.mood
         self.assertEqual((event.judge, event.reason), ("prompt", "被夸了"))
-        self.assertEqual(m.decider.report()["prompt"]["answered"], 2)
+        self.assertEqual(m.report()["decisions"]["answered"], 2)
         self.assertEqual(len(asked), 1)
 
-    def test_a_judge_of_your_own_comes_before_your_model(self):
-        tier = SimpleNamespace(name="mine")
-        self.assertEqual(plain().decider.tiers, [])
-        m = Mneme(":memory:", judge=tier, complete=lambda system, user: "", embed=False)
-        self.assertEqual([t.name for t in m.decider.tiers], ["mine", "prompt"])
+    def test_a_judge_of_your_own_answers_in_place_of_your_model(self):
+        asked = []
+
+        class Mine:
+            async def adecide(self, input, questions):
+                asked.append([question.name for question in questions])
+                return {"feeling": Answer("feeling", {"happy": 1.0}, 0.9, "mine")}
+
+        async def model(system, user):
+            raise AssertionError("the model is not asked")
+        m = Mneme(":memory:", judge=Mine(), complete=model, embed=False, memory_language=None)
+        seen = asyncio.run(m.aobserve("u", "user: hi", capture=False))
+        self.assertEqual((asked, seen.mood.judge), ([["mood_change", "feeling"]], "mine"))
+        self.assertEqual(m.report()["decisions"], {"answered": 1, "abstained": 1, "failed": 0, "last_error": ""})
+
+    def test_a_failing_judge_gives_no_answers_and_says_why(self):
+        class Broken:
+            async def adecide(self, input, questions):
+                raise RuntimeError("no key")
+        m = Mneme(":memory:", judge=Broken(), embed=False, memory_language=None)
+        self.assertIsNone(asyncio.run(m.aobserve("u", "user: hi", capture=False)).mood)
+        report = m.report()["decisions"]
+        self.assertEqual(report["failed"], 1)
+        self.assertIn("no key", report["last_error"])
 
 
 

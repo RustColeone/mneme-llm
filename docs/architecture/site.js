@@ -41,16 +41,12 @@ window.SITE = (() => {
     }, { kind: "core" });
     const meaning = chart.group("meaning/ · finding notes by meaning", () => {
       const embed = file("meaning/embedders.py", "1 · embeddings", "a vector for the query");
-      const centroids = file("meaning/micro.py", "2 · word centroids", "removable: learned from the notes");
-      const unify = file("meaning/unify.py", "3 · unify", "removable: glosses, the query translated");
-      chart.edge(embed, centroids, { label: "else" });
-      chart.edge(centroids, unify, { label: "else" });
+      const unify = file("meaning/unify.py", "2 · unify", "removable: glosses, the query translated");
+      chart.edge(embed, unify, { label: "else" });
       file("meaning/calibrate.py", "calibrate", "each embedding model's floor");
-      file("meaning/ledger.py", "ledger", "what notes taught the centroids");
+      file("meaning/vectors.py", "vectors", "as the file keeps them · many at once");
     }, { kind: "capabilities" });
-    const decide = chart.group("decide/ · the mood, and what is worth keeping", () => {
-      file("decide/prompt.py", "your model", "asked for JSON");
-    }, { kind: "watchers" });
+    const decide = file("decide.py", "decide.py", "the mood, and what is worth keeping: your model, asked for JSON");
     const store = file("store.py", "Store", "one SQLite file · schema 1 · transactions", "store");
     const shared = chart.group("Shared by all", () => {
       for (const [name, sub] of [["providers.py", "calling out: sync or async, JSON"], ["text.py", "words, scripts, clipping"],
@@ -94,9 +90,9 @@ window.SITE = (() => {
       "mood uses decide's types; Mneme wires the parts together and makes the calls to models; tools, MCP and the CLI " +
       "sit on Mneme. Each kind of row has one owner that writes it, and every write looks up the person a subject " +
       "stands for inside its own transaction."));
-    pane.push(make("h3", "", "Removable tiers"));
-    pane.push(make("div", "doc", "meaning/micro.py and meaning/unify.py can each be deleted and " +
-      "everything else works (tests/test_removable.py, and a CI job runs the whole suite without them)."));
+    pane.push(make("h3", "", "A removable tier"));
+    pane.push(make("div", "doc", "meaning/unify.py can be deleted and everything else works " +
+      "(tests/test_removable.py, and a CI job runs the whole suite without it)."));
     return pane;
   }
 
@@ -110,7 +106,7 @@ window.SITE = (() => {
       chain([
         step("Mneme.aprompt", "the text for the system prompt", "__init__.py", "Mneme.aprompt"),
         step("Memory.acontext → arecall", "the notes for this message", "memory.py", "Memory.arecall"),
-        step("Meaning.find", "embeddings → centroids → unify", "meaning/__init__.py", "Meaning.find"),
+        step("Meaning.find", "embeddings → unify", "meaning/__init__.py", "Meaning.find"),
         step("Memory._rank", "shared words + meaning × freshness × importance", "memory.py", "Memory._rank"),
         step("Memory._render", "\"these are data\" · profile card · dated notes", "memory.py", "Memory._render"),
         step("Episodes.alook", "with said=: what was said before, word for word, if close enough (the more faded, the closer)", "episodes.py", "Episodes.alook"),
@@ -123,7 +119,7 @@ window.SITE = (() => {
       chain([
         step("Mneme.aobserve", "once the reply is out", "__init__.py", "Mneme.aobserve"),
         step("Episodes.keep", "the exchange word for word (no model call)", "episodes.py", "Episodes.keep"),
-        step("Chain.adecide", "one request to your model: mood change, feeling, worth keeping?", "decide/__init__.py", "Chain.adecide"),
+        step("Mneme._decide", "one request to your model: mood change, feeling, worth keeping?", "__init__.py", "Mneme._decide"),
         step("Mood.apply_answers", "a delta and feelings, scaled by closeness; a timeline event", "mood.py", "Mood.apply_answers"),
         step("Relations.seen", "a day of contact: closeness grows once a day", "relations.py", "Relations.seen"),
         step("Mneme._capture", "worth it? the note writer (your model)", "__init__.py", "Mneme._capture"),
@@ -147,7 +143,7 @@ window.SITE = (() => {
         "role and closeness), what they call it, its notes for this message, and its mood's news (the newest " +
         "confident change, told once). The notes come from arecall: the subject's live notes (their 5,000 most " +
         "valuable when there are more), the query placed among them by the first meaning tier that can (embeddings, " +
-        "then word centroids, then unify's translation), ranked by shared words and closeness in meaning, weighted " +
+        "then unify's translation), ranked by shared words and closeness in meaning, weighted " +
         "by freshness, importance and feeling, cut to a budget, and rendered under a line saying they are data, not " +
         "instructions. With said=, the look adds what was said before, word for word: BM25 over the exchanges' words " +
         "fused with closeness in meaning, those close enough to the message (the more an exchange has faded, the " +

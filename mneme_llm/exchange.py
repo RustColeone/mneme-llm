@@ -39,8 +39,8 @@ def as_text(exchange) -> str:
 
 def frame(exchange, *, source: str = "user", user_name: str = "the user", companion_name: str = "the assistant",
           prompts: Mapping[str, str] = PROMPTS) -> str:
-    """What a judge reads: who is who and who started it (`prompts["frame"]`, `started_user` …), then the
-    exchange. The questions name nobody, so one learned model serves every person; the names are said here instead."""
+    """What a judge reads: who is who and who started it (`prompts["frame"]`, `started_user` …), then the exchange.
+    The questions name nobody; the names are said here instead."""
     names = {"user": user_name, "assistant": companion_name}
     started = {"user": "started_user", "speak-up": "started_speak_up", "duty": "started_duty"}.get(source)
     said = fill(prompts[started], **names) if started else ""

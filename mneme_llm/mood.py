@@ -2,9 +2,8 @@
 
     value       drifts back to `baseline` (70) with a half-life of 3 hours
     emotions    each fades toward 0 with a half-life of 90 minutes
-    judgement   after an exchange the decision chain answers two questions (how her mood moved on a -2..+2
-                scale, and which feeling was strongest); expected values move the state, so an unsure judge
-                moves it little
+    judgement   after an exchange the judge answers two questions (how her mood moved on a -2..+2 scale, and
+                which feeling was strongest); expected values move the state, so an unsure judge moves it little
     guardrails  her mood only drops from aching for them, worry or sadness, never from being cross with them;
                 exchanges that change nothing leave no record; a judgement below `threshold` confidence is
                 recorded but never told to her ("rather say nothing than put a guess in her mouth")
@@ -25,11 +24,10 @@ from dataclasses import dataclass, field
 from typing import Callable, Mapping, Sequence
 
 from . import dates, exchange as exchanges, text as texts
-from .decide import Answer, Chain, Choice, Score
+from .decide import Answer, Choice, Score
 from .i18n import LANGUAGES, Speaks, Words, code, has, say
 from .people import People, Resolves
 from .prompts import PROMPTS
-from .providers import run
 from .store import Store, dumps
 
 
@@ -101,11 +99,11 @@ class MoodEvent:
 
 
 class Mood(Speaks, Resolves):
-    def __init__(self, store: Store, space: str, *, decider: Chain | None = None,
-                 settings: MoodSettings = MoodSettings(), companion_name: str = "the assistant",
-                 display_language: str | Words = "en", prompts: Mapping[str, str] = PROMPTS,
-                 people: People | None = None, clock: Callable[[], float] = time.time):
-        self.store, self.space, self.decider, self.settings = store, space, decider, settings
+    def __init__(self, store: Store, space: str, *, settings: MoodSettings = MoodSettings(),
+                 companion_name: str = "the assistant", display_language: str | Words = "en",
+                 prompts: Mapping[str, str] = PROMPTS, people: People | None = None,
+                 clock: Callable[[], float] = time.time):
+        self.store, self.space, self.settings = store, space, settings
         self.people = people
         self.words, self.prompts = Words.of(display_language), prompts
         self.companion_name, self.clock = companion_name, clock
@@ -168,8 +166,8 @@ class Mood(Speaks, Resolves):
 
     # ---- changing ------------------------------------------------------------------------------------
     def questions(self) -> list:
-        """What the judge is asked. The wording names nobody (who is who, and who started it, is said in the
-        judged text: `exchange.frame`), so the micro model learns one model per question for every person."""
+        """What the judge is asked. The wording names nobody: who is who, and who started it, is said in the judged
+        text (`exchange.frame`)."""
         choices = {e.key: e.description() for e in self.settings.emotions}
         choices["none"] = "nothing in particular"
         return [
@@ -178,21 +176,6 @@ class Mood(Speaks, Resolves):
                    "2": "clearly better"}),
             Choice("feeling", self.prompts["feeling"], choices),
         ]
-
-    async def ajudge(self, subject: str, exchange: str | Sequence[tuple[str, str]], *, source: str = "user",
-                     user_name: str = "the user", weight: float = 1.0,
-                     decider: Chain | None = None) -> MoodEvent | None:
-        """Judge one exchange and move the mood; returns the recorded change, or None when nothing changed.
-
-        `weight` scales the change (how much this person's words count); `decider` replaces the mood's own chain
-        for this call (for hosts whose model handle belongs to one request)."""
-        decider = decider or self.decider
-        if source in self.settings.skip or decider is None:
-            return None
-        framed = exchanges.frame(exchange, source=source, user_name=user_name, companion_name=self.companion_name,
-                                 prompts=self.prompts)
-        answers = await decider.adecide(framed, self.questions())
-        return self.apply_answers(subject, answers, exchange, source=source, user_name=user_name, weight=weight)
 
     def apply_answers(self, subject: str, answers, exchange, *, source: str = "user", user_name: str = "the user",
                       weight: float = 1.0) -> MoodEvent | None:
@@ -207,20 +190,15 @@ class Mood(Speaks, Resolves):
         reason = (change.reason if change else "") or (feeling.reason if feeling else "")
         if not reason and feeling is not None and feeling.choice != "none":
             reason = self._reason(exchange, source, user_name)
-        confidence, counted = _confidence(change, feeling)
-        others = sorted({a.by for a in (change, feeling) if a is not None and a.by != counted})
+        confidence, judge = _confidence(change, feeling)
         return self.apply(subject, delta=change.mean(LEVELS) * s.step if change else 0.0,
                           emotions=self._bumps(feeling), reason=reason, confidence=confidence, source=source,
-                          judge="+".join([counted, *others]), weight=weight)  # the counted tier comes first
-
-    def judge(self, subject: str, exchange, **options) -> MoodEvent | None:
-        """`ajudge` for code without an event loop."""
-        return run(self.ajudge(subject, exchange, **options))
+                          judge=judge, weight=weight)
 
     def apply(self, subject: str, *, delta: float = 0.0, emotions: Mapping[str, float] | None = None,
               reason: str = "", confidence: float = 1.0, source: str = "manual", judge: str = "manual",
               weight: float = 1.0) -> MoodEvent | None:
-        """Move the mood directly (hosts with their own judge use this); same guardrails as `judge`. The change
+        """Move the mood directly (hosts with their own judge use this), under the guardrails above. The change
         is scaled by `weight` and by the source's weight."""
         texts.required(subject, "subject")
         s = self.settings
@@ -394,7 +372,7 @@ def _feelings(value) -> dict[str, float]:
 
 
 def _confidence(change: Answer | None, feeling: Answer | None) -> tuple[float, str]:
-    """How sure the judge was, and which tier said so: the feeling's when there is one, else the change's."""
+    """How sure the judge was, and who said so: the feeling's when there is one, else the change's."""
     if feeling is not None and feeling.choice != "none":
         return feeling.confidence, feeling.by
     return (change.confidence, change.by) if change is not None else (0.0, "")

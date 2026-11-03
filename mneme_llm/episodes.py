@@ -36,7 +36,6 @@ from datetime import tzinfo
 from typing import Callable, Iterable
 
 from . import dates, exchange as exchanges, text as texts
-from .decide import fit
 from .i18n import Speaks, Words, say
 from .meaning import cosine, pack, unpack
 from .people import People, Resolves
@@ -97,7 +96,7 @@ def lines_of(exchange) -> list[tuple[str, str]]:
         said = texts.clean(said).strip()
         if texts.blank(said):
             continue
-        kept.append((texts.clip(who, MAX_NAME), fit(said, MAX_LINE)))
+        kept.append((texts.clip(who, MAX_NAME), texts.fit(said, MAX_LINE)))
     return kept[:MAX_LINES]
 
 
@@ -430,7 +429,7 @@ class Episodes(Speaks, Resolves):
         for episode in self._get_many(ranked):
             if shorten:
                 limit = int(SHOWN_LINE * (FLOOR + (1 - FLOOR) * self.retention(episode, now)))
-                episode = replace(episode, lines=tuple((who, fit(said, limit)) for who, said in episode.lines))
+                episode = replace(episode, lines=tuple((who, texts.fit(said, limit)) for who, said in episode.lines))
             size = len(self.shown(episode)) + 2
             if used + size <= budget:
                 chosen.append(episode)
@@ -498,7 +497,7 @@ class Episodes(Speaks, Resolves):
         stamp = dates.local(episode.at, self.zone).strftime("%Y-%m-%d %H:%M")
         lines = [f"#{episode.id} [{stamp}]"]
         for who, said in episode.lines:
-            said = (said if whole else fit(said, SHOWN_LINE)).replace("\n", "\n  ")
+            said = (said if whole else texts.fit(said, SHOWN_LINE)).replace("\n", "\n  ")
             lines.append(f"{who}: {said}" if who else f"  {said}")
         return "\n".join(lines)
 

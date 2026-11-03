@@ -2,7 +2,7 @@ import asyncio
 import unittest
 
 from mneme_llm import Embeddings, Mneme
-from mneme_llm.decide import Unavailable
+from mneme_llm.providers import Unavailable
 from mneme_llm.meaning import Meaning, cosine, normalize, pack, unpack
 try:  # the tiers are removable; their tests are skipped where they were removed
     from mneme_llm.meaning.micro import TermCentroids
