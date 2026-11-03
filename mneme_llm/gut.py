@@ -500,7 +500,7 @@ def note_messages(prompt: str, told: str, before: list[dict], said: str, reply: 
             {"role": "assistant", "content": reply}, {"role": "user", "content": f"{BESIDE}\n\n{NOTE}"}]
 
 
-# ---- one student's gut, kept ------------------------------------------------------------------------------------------
+# ---- one companion's gut, kept ----------------------------------------------------------------------------------------
 def usual(rows: list[tuple]) -> dict | None:
     """What she feels on average across her starter: her normal, for her tone."""
     feels = [row[1] for row in rows if isinstance(row[1], dict)]
@@ -508,7 +508,7 @@ def usual(rows: list[tuple]) -> dict | None:
 
 
 def read_starter(path: Path) -> tuple[list[tuple], dict]:
-    """A student's starter (tools/gut_starter.py): her born lessons and her normal words; none is a blank gut."""
+    """A companion's starter, a file the host gives: her born lessons and her normal words; none is a blank gut."""
     try:
         with gzip.open(path, "rt", encoding="utf-8") as file:
             data = json.load(file)
@@ -519,7 +519,7 @@ def read_starter(path: Path) -> tuple[list[tuple], dict]:
 
 
 class Gut:
-    """One student's network, marks and tone, in `<data>/gut/<persona>.db`, apart from her memory: a wipe does not reach
+    """One companion's network, marks and tone, in a file of their own, apart from her memory: a wipe does not reach
     them. Lessons are written as they come; the weights are written after a sleep, and lessons since are replayed."""
 
     def __init__(self, path, starter=None, tags: dict[str, str] | None = None, names: tuple[str, ...] = NAMES):

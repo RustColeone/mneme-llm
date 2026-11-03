@@ -45,8 +45,8 @@ class TextTests(unittest.TestCase):
         self.assertEqual(terms("don't forget my dog's name"), ["forget", "dog", "name"])
 
     def test_the_script_of_a_text(self):
-        from mneme_llm.text import script
-        self.assertEqual([script(t) for t in ("我的猫", "my cat", "Мурка", "123", "ＡＢＣ", "ქართული")],
+        from mneme_llm.text import scripts
+        self.assertEqual([next(iter(scripts(t)), "") for t in ("我的猫", "my cat", "Мурка", "123", "ＡＢＣ", "ქართული")],
                          ["han", "latin", "cyrillic", "", "latin", "georgian"])
 
     def test_function_words_are_dropped(self):

@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from . import text as texts
+from . import episodes, surface, text as texts
 from .i18n import MESSAGES, placeholders
 from .mood import EMOTIONS, Emotion, MoodSettings
 from .prompts import PROMPTS
@@ -57,9 +57,10 @@ def _defaults() -> dict[str, Any]:
         "companion.name": "the assistant", "companion.display_language": "en",
         "companion.memory_language": "English", "companion.zone": "",
         "memory.half_life_days": 30.0, "memory.daily_quota": 8, "memory.max_notes": 50_000,
-        "memory.semantic_window": 5000, "memory.said_days": 30.0, "memory.said_budget": 6000,
-        "memory.said_cut": 0.08, "memory.said_cut_faded": 0.16, "memory.surface_days": 30,
-        "memory.surface_floor": 70_000, "memory.surface_cap": 504_000, "memory.surface_window": 1_048_576,
+        "memory.semantic_window": 5000, "memory.said_days": episodes.DAYS, "memory.said_budget": episodes.BUDGET,
+        "memory.said_cut": episodes.CUT, "memory.said_cut_faded": episodes.CUT_FADED,
+        "memory.surface_days": surface.DAYS, "memory.surface_floor": surface.FLOOR, "memory.surface_cap": surface.CAP,
+        "memory.surface_window": surface.WINDOW,
         **{f"mood.{f.name}": _plain(getattr(mood, f.name)) for f in fields(MoodSettings) if f.name != "emotions"},
         "relations.growth": 1.0, "relations.fade_days": 30.0,
         "roles": [_role_row(role) for role in ROLES],

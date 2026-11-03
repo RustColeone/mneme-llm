@@ -156,13 +156,6 @@ def scripts(text: str) -> dict[str, float]:
     return {kind: count / total for kind, count in counts.items()} if total else {}
 
 
-def script(text: str) -> str:
-    """The script most of `text` is written in ("han", "kana", "hangul", "latin", "cyrillic", "arabic",
-    "devanagari", "tamil"…, or "other"); "" when it has no letters."""
-    shares = scripts(text)
-    return max(shares, key=shares.get) if shares else ""
-
-
 WIDE_TEXT = re.compile("[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af\uf900-\ufaff]")
 
 

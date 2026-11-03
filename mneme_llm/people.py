@@ -33,12 +33,6 @@ class People:
         row = self.store.row("select person from people where space = ? and subject = ?", (self.space, subject))
         return row["person"] if row is not None else subject
 
-    def subjects(self, subject: str) -> list[str]:
-        """Every subject the person goes by: their own first, then the ones linked to them."""
-        person = self.of(subject)
-        return [person] + [row["subject"] for row in self.store.rows(
-            "select subject from people where space = ? and person = ? order by subject", (self.space, person))]
-
     def all(self) -> dict[str, str]:
         """Every link, subject → person."""
         return {row["subject"]: row["person"] for row in self.store.rows(

@@ -123,10 +123,6 @@ class Toolbox:
         self.seen.clear()
 
     @property
-    def display_language(self) -> str:
-        return self.mneme.memory.display_language
-
-    @property
     def words(self):
         return self.mneme.memory.words
 

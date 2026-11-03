@@ -21,7 +21,7 @@ import json
 import math
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Mapping, Sequence
+from typing import Callable, Mapping
 
 from . import dates, exchange as exchanges, text as texts
 from .decide import Answer, Choice, Score
@@ -287,7 +287,8 @@ class Mood(Speaks, Resolves):
                 subject = _subject(row)
                 if subject is None:
                     continue
-                event = (self.space, subject, _moment(row.get("at"), now), texts.number(row.get("delta"), 0.0, -100, 100),
+                event = (self.space, subject, _moment(row.get("at"), now),
+                         texts.number(row.get("delta"), 0.0, -100, 100),
                          texts.number(row.get("value"), s.baseline, s.floor, s.ceiling),
                          dumps(_feelings(row.get("emotions"))),
                          texts.clip(row["reason"], 200) if isinstance(row.get("reason"), str) else "",

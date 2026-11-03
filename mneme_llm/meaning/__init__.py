@@ -22,7 +22,7 @@ from typing import Sequence
 from ..providers import Rest, Unavailable
 from . import calibrate
 from .embedders import FLOOR, Embedder, Embeddings, OpenAIEmbeddings
-from .vectors import Matrix, Vector, cosine, drop, normalize, numpy, pack, raw, unpack, usable
+from .vectors import Matrix, Vector, cosine, drop, normalize, pack, raw, unpack, usable
 
 log = logging.getLogger("mneme_llm.meaning")
 
@@ -212,4 +212,4 @@ class Meaning:
 
 
 __all__ = ["Embedder", "Embeddings", "FLOOR", "Found", "Matrix", "Meaning", "OpenAIEmbeddings", "Vector", "cosine",
-           "drop", "normalize", "numpy", "pack", "raw", "unpack"]
+           "drop", "normalize", "pack", "raw", "unpack"]

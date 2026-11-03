@@ -1,11 +1,11 @@
 """What the note writer and the profile writer are asked, and how their replies are read.
 
 After an exchange, `Mneme.aobserve` (or `acapture`) asks the judge a cheap yes/no first (`worth`: did they share
-anything worth remembering?), so the note writer is only called when there is something to write. The writer is the host's `complete` function, which can be a fixed, cheap model whatever model the conversation runs
-on, so the notes stay the same quality when the chat model changes; with the unify tier on, it also gives each
-note in the unifying language. `Mneme.areflect` has it rewrite the short profile card from the notes. This module
-only builds the prompts (their wording is in `prompts.py`, or the companion's config) and reads the replies; `Mneme`
-makes the calls.
+anything worth remembering?), so the note writer is only called when there is something to write. The writer is the
+host's `complete` function, which can be a fixed, cheap model whatever model the conversation runs on, so the notes stay
+the same quality when the chat model changes; with the unify tier on, it also gives each note in the unifying language.
+`Mneme.areflect` has it rewrite the short profile card from the notes. This module only builds the prompts (their
+wording is in `prompts.py`, or the companion's config) and reads the replies; `Mneme` makes the calls.
 """
 
 from __future__ import annotations

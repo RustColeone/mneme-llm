@@ -20,7 +20,6 @@ from mneme_llm.dates import find, local, noon
 from mneme_llm.decide import Choice, Prompt, Score
 from mneme_llm.mcp import serve
 from mneme_llm.meaning import pack, unpack
-from tests.invariants import check
 from mneme_llm.store import SCHEMA_VERSION, Store
 from mneme_llm.text import fit
 from mneme_llm.tools import Toolbox
@@ -690,8 +689,9 @@ class RefactorReviewTests(unittest.TestCase):
     @needs_unify
     def test_chinese_japanese_and_korean_are_told_apart_and_mixed_text_is_translated(self):
         from mneme_llm.meaning.unify import Unify
-        from mneme_llm.text import script
-        self.assertEqual([script(t) for t in ("我的猫", "猫が好きです", "고양이", "என் பூனை", "আমার বিড়াল")],
+        from mneme_llm.text import scripts
+        said = ("我的猫", "猫が好きです", "고양이", "என் பூனை", "আমার বিড়াল")
+        self.assertEqual([max(scripts(t), key=scripts(t).get) for t in said],
                          ["han", "kana", "hangul", "tamil", "bengali"])
         self.assertTrue(Unify(None, "Korean").needs_translation("我的猫"))
         self.assertTrue(Unify(None, "Japanese").needs_translation("我的猫很可爱"))

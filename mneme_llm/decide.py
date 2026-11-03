@@ -1,6 +1,7 @@
 """Small judgements about a text (yes/no, pick one, rate on a scale), answered by your own chat model.
 
-    answers = await Prompt(complete).adecide(text, [Predicate("remember", "The user shared something worth remembering.")])
+    question = Predicate("remember", "The user shared something worth remembering.")
+    answers = await Prompt(complete).adecide(text, [question])
     answers["remember"].probability
 
 `complete(system, user) -> str` (or an async function returning str) is any chat model you already have: DeepSeek,

@@ -36,7 +36,7 @@ from typing import Callable, Iterable, Iterator
 
 from . import dates, exchange as exchanges, text as texts
 from .i18n import Speaks, Words, say
-from .meaning import Matrix, numpy, pack, raw
+from .meaning.vectors import Matrix, numpy, pack, raw
 from .people import People, Resolves
 from .store import Store, dumps
 
@@ -54,7 +54,7 @@ SCANNED = 200         # the best-ranked exchanges a look reads to fill its budge
 READ = 20             # ... this many at a time
 MATRICES = 16         # people whose vectors stay in memory (the most recently looked at)
 PREPARED = 256        # exchanges a prepare embeds at most (the rest the next time)
-STRONGEST_ID = 2 ** 63 - 1  # no exchange has an id at or past this
+BEYOND = 2 ** 63 - 1  # past every id
 CUT = 0.08            # a look's bar: an exchange this much closer to the query than the embedder's floor ...
 CUT_FADED = 0.16      # ... and, fully faded, this much (in between by its retention); a search has no bar
 BUDGET = 6000         # characters a look shows
@@ -330,7 +330,7 @@ class Episodes(Speaks, Resolves):
         return Episode.of(row) if row else None
 
     def after(self, subject: str, start_id: int, budget: float | None = None, *,
-              before: int = STRONGEST_ID) -> list[Episode]:
+              before: int = BEYOND) -> list[Episode]:
         """The person's exchanges with an id after `start_id` (and before `before`), the newest first, whole, within
         `budget` tokens when one is given, and always the newest, even alone over it. They are read a few at a time, so
         a small budget reads little however much there is."""
@@ -358,8 +358,8 @@ class Episodes(Speaks, Resolves):
     def latest(self, subject: str, before: float = dates.LATEST) -> tuple[int, float]:
         """The highest id among the person's exchanges said before `before`, and the latest moment one was said (0, 0.0
         with none)."""
-        row = self.store.row("select coalesce(max(id), 0) as id, coalesce(max(at), 0.0) as at from episodes where space "
-                             "= ? and subject = ? and at < ?", (self.space, self.who(subject), before))
+        row = self.store.row("select coalesce(max(id), 0) as id, coalesce(max(at), 0.0) as at from episodes where "
+                             "space = ? and subject = ? and at < ?", (self.space, self.who(subject), before))
         return row["id"], row["at"]
 
     def holds(self, subject: str) -> bool:
@@ -385,8 +385,8 @@ class Episodes(Speaks, Resolves):
                            "stability": episode.stability}, dates.talking_day(now, self.zone),
                           self.talking_days(episode.subject))
 
-    def look(self, subject: str, query: str, *, budget: int = BUDGET, cut: tuple[float, float] | None = (CUT, CUT_FADED),
-             more: int = 0, found=None) -> list[Episode]:
+    def look(self, subject: str, query: str, *, budget: int = BUDGET,
+             cut: tuple[float, float] | None = (CUT, CUT_FADED), more: int = 0, found=None) -> list[Episode]:
         """What comes to mind for `query` (words only; `alook` adds meaning): the best matches within `budget`
         characters as `render` shows them, in the order they were said. With the query's vector from the embedder, an
         exchange must clear a bar: its cosine with the query at least the embedder's floor as the bundled set placed

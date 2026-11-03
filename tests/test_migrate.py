@@ -12,7 +12,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from mneme_llm import Mneme, migrate as migrate_module
+from mneme_llm import Mneme
 from mneme_llm.dates import talking_day
 from mneme_llm.episodes import cost
 from mneme_llm.migrate import main, migrate
@@ -101,10 +101,9 @@ def old_file(folder: str, zone: str = "UTC+8") -> str:
     db.execute("insert into surfaces values ('t', 'u', ?, 'he has a cat', ?)", (START + 3600, START))
     db.execute("insert into surfaces values ('t', 'nobody', ?, '', ?)", (START, START))
     db.execute("insert into first_prompts values ('t', 'u', '你是我的姐姐', ?, 0, 0)", (START,))
-    db.execute("insert into memories (id, space, subject, kind, text, importance, happened_at, created_at, terms, folded) "
-               "values (1, 't', 'u', 'fact', 'Has a CAT', 3, 0, 0, null, null)")
-    db.execute("insert into memories (id, space, subject, kind, text, importance, happened_at, created_at, terms, folded) "
-               "values (2, 't', 'u', 'fact', 'Likes tea', 3, 0, 0, 'like tea', 'likes tea')")
+    note = "insert into memories (id, space, subject, kind, text, importance, happened_at, created_at, terms, folded) "
+    db.execute(note + "values (1, 't', 'u', 'fact', 'Has a CAT', 3, 0, 0, null, null)")
+    db.execute(note + "values (2, 't', 'u', 'fact', 'Likes tea', 3, 0, 0, 'like tea', 'likes tea')")
     db.execute("insert into note_terms values ('t', 'u', 'tea', 2)")
     db.execute("insert into vectors values (2, 'toy', ?, 'like tea')", (b"\0\0\0\0",))
     db.execute("insert into meaning_terms values ('toy', 'tea', 1, ?)", (b"\0\0\0\0",))
@@ -253,8 +252,8 @@ class MigrateTests(unittest.TestCase):
                 create table meta (key text primary key, value text not null);
                 insert into meta values ('schema_version', '1');
                 create table memories (id integer primary key, space text not null, subject text not null, key text,
-                    kind text not null, text text not null, importance integer not null, feeling real not null default 0,
-                    happened_at real not null, created_at real not null, recalled_at real,
+                    kind text not null, text text not null, importance integer not null,
+                    feeling real not null default 0, happened_at real not null, created_at real not null, recalled_at real,
                     recalls integer not null default 0, superseded_by integer, deleted_at real, source text);
                 insert into memories (space, subject, kind, text, importance, happened_at, created_at)
                     values ('t', 'u', 'fact', 'Has a cat', 3, 0, 0);
@@ -273,8 +272,8 @@ class MigrateTests(unittest.TestCase):
         os.mkdir(second)
         other = old_file(second)
         env = dict(os.environ, PYTHONPATH=ROOT, PYTHONIOENCODING="utf-8")
-        done = subprocess.run([sys.executable, "-m", "mneme_llm.migrate", self.path, other], env=env, capture_output=True,
-                              text=True, timeout=60)
+        done = subprocess.run([sys.executable, "-m", "mneme_llm.migrate", self.path, other], env=env,
+                              capture_output=True, text=True, timeout=60)
         self.assertEqual(done.returncode, 0, done.stderr)
         lines = done.stdout.splitlines()
         self.assertEqual(len(lines), 2)

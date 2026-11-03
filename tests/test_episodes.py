@@ -7,9 +7,8 @@ from unittest import mock
 
 from mneme_llm import Embeddings, Mneme, episodes as episodes_module
 from mneme_llm.dates import talking_day
-from mneme_llm.episodes import Episodes, lines_of, threshold
+from mneme_llm.episodes import lines_of, threshold
 from mneme_llm.meaning import FLOOR, Found, vectors
-from mneme_llm.store import Store
 from mneme_llm.tools import Toolbox
 
 DAY = 86400

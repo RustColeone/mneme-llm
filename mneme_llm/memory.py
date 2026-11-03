@@ -434,7 +434,8 @@ class Memory(Speaks, Resolves):
         live = "m.deleted_at is null and m.superseded_by is null"
         df = {row["term"]: row["n"] for row in self.store.rows_in(
             "select t.term, count(*) as n from note_terms t join memories m on m.id = t.memory_id where t.space = ? "
-            "and t.subject = ? and t.term in ({}) and " + live + " group by t.term", query_terms, (self.space, subject))}
+            "and t.subject = ? and t.term in ({}) and " + live + " group by t.term", query_terms,
+            (self.space, subject))}
         weights = {term: math.log((count + 1) / (df[term] + 0.5)) for term in query_terms
                    if df.get(term) and (count < 8 or df[term] <= count / 2)}
         matches: dict[int, list[str]] = {}

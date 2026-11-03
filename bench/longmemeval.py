@@ -395,8 +395,7 @@ def judge_prompt(item: dict, response: str) -> str:
 
 
 async def answer_one(run: Path, item: dict, arm: str, budget: int, models: Models, cache: Cache, name: str, *,
-                     steps: int = 6, final: bool = False, cut=(CUT, CUT_FADED), shorten: bool = False,
-                     later: float = 0.0) -> dict:
+                     steps: int = 6, final: bool = False, cut=(CUT, CUT_FADED), later: float = 0.0) -> dict:
     date = item["question_date"]
     record = {"question_id": item["question_id"], "type": item["question_type"],
               "abstain": item["question_id"].endswith("_abs"), "question": item["question"],
@@ -415,9 +414,7 @@ async def answer_one(run: Path, item: dict, arm: str, budget: int, models: Model
         a, b = item.get("speakers") or ("the user", "")
         system, agentic = (LOCOMO, LOCOMO_AGENT) if item.get("speakers") else (SYSTEM, AGENT)
         try:
-            found = await memory.episodes.alook(SUBJECT, item["question"], budget=budget, cut=cut,
-                                                shorten=shorten) \
-                if budget else []
+            found = await memory.episodes.alook(SUBJECT, item["question"], budget=budget, cut=cut) if budget else []
             opening = memory.episodes.render(found, user_name=a, search=arm == "agent")
             record["opening_chars"] = len(opening)
             if arm == "look":
@@ -436,12 +433,12 @@ async def answer_one(run: Path, item: dict, arm: str, budget: int, models: Model
 
 
 async def answer(run: Path, arm: str, budget: int, models: Models, concurrency: int, *, steps: int = 6,
-                 final: bool = False, cut=(CUT, CUT_FADED), shorten: bool = False, later: float = 0.0) -> Path:
+                 final: bool = False, cut=(CUT, CUT_FADED), later: float = 0.0) -> Path:
     # (runs before 2e2d6e7 weighed the look by fading unless "-nofade"; since then a name always says its bar)
     name = arm if arm == "oracle" else f"{arm}-{budget}" + (f"-s{steps}" if steps != 6 else "") + \
         ("-final" if final else "") + \
         (f"-cut{round(cut[0] * 100)}" + (f"-{round(cut[1] * 100)}" if cut[1] != cut[0] else "") if cut else "-nocut") + \
-        ("-shorten" if shorten else "") + (f"-later{later:g}" if later else "")
+        (f"-later{later:g}" if later else "")
     path = run / "answers" / f"{name}.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
     done = {json.loads(line)["question_id"] for line in path.read_text(encoding="utf-8").split("\n") if line} \
@@ -453,7 +450,7 @@ async def answer(run: Path, arm: str, budget: int, models: Models, concurrency: 
     async def one(item):
         async with limit:
             record = await answer_one(run, item, arm, budget, models, cache, name, steps=steps, final=final,
-                                      cut=cut, shorten=shorten, later=later)
+                                      cut=cut, later=later)
             async with lock:
                 with path.open("a", encoding="utf-8") as out:
                     out.write(json.dumps(record, ensure_ascii=False) + "\n")
@@ -508,7 +505,7 @@ async def main(arguments) -> int:
             else:
                 await answer(run, arguments.arm, arguments.budget, models, arguments.concurrency,
                              steps=arguments.steps, final=arguments.final, cut=cut_of(arguments.cut),
-                             shorten=arguments.shorten, later=arguments.later)
+                             later=arguments.later)
         except OutOfBalance as error:
             print(f"stopped: {error}", flush=True)
         after = await models.balance()
@@ -547,7 +544,6 @@ def parse(argv=None):
     parser.add_argument("--cut", default=f"{CUT},{CUT_FADED}",
                         help="a first look's bar, above the embedder's floor: one margin (0.08), or fresh and fully "
                              "faded (the default, 0.08,0.16), or none")
-    parser.add_argument("--shorten", action="store_true", help="a first look shows a faded exchange in part")
     parser.add_argument("--later", type=float, default=0.0, help="days: memory fades as if asked this much later")
     parser.add_argument("--env", default=str(Path(__file__).resolve().parents[2] / ".env"))
     parser.add_argument("--floor", type=float, default=25.0, help="stop under this DeepSeek balance (CNY)")

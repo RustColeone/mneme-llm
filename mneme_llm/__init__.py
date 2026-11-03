@@ -361,7 +361,7 @@ class Mneme:
             except Exception as failure:  # the note writer is the host's model: report it, keep the mood
                 error = f"{type(failure).__name__}: {failure}"[:300]
         if episode is not None:
-            await self.episodes.prepare(episode.subject, first=[episode.id])  # its vector: it rehearses what it is about
+            await self.episodes.prepare(episode.subject, first=[episode.id])  # it rehearses what it is about
         return Observation(event, notes, worth.probability if worth is not None else None, error, episode)
 
     def observe(self, subject: str, exchange, **options) -> Observation:
@@ -516,7 +516,7 @@ class Mneme:
         self.close()
 
 
-__all__ = ["Aliases", "Answer", "Choice", "Config", "Embeddings", "Emotion", "Episode", "Episodes", "First", "Gut", "KINDS",
-           "Meaning", "Memory", "Mneme", "Mood", "MoodEvent", "MoodSettings", "Note", "Observation",
+__all__ = ["Aliases", "Answer", "Choice", "Config", "Embeddings", "Emotion", "Episode", "Episodes", "First", "Gut",
+           "KINDS", "Meaning", "Memory", "Mneme", "Mood", "MoodEvent", "MoodSettings", "Note", "Observation",
            "OpenAIEmbeddings", "People", "Predicate", "Prompt", "Recall", "Relations", "Relationship", "Role", "STORED",
            "Score", "Store", "Surface", "Turn", "Unavailable", "View", "__version__"]

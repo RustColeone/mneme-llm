@@ -137,8 +137,8 @@ class Relations(Speaks, Resolves):
         return Relationship(subject, role, float(closeness), since, updated)
 
     def seen(self, subject: str) -> Relationship | None:
-        """A contact: the first one on a talking day (in the companion's zone) grows closeness by `growth`. A person with
-        no role is left without one. A clock that went back changes nothing (time never moves backwards here)."""
+        """A contact: the first one on a talking day (in the companion's zone) grows closeness by `growth`. A person
+        with no role is left without one. A clock that went back changes nothing (time never moves backwards here)."""
         with self.writing(subject) as subject:
             now = self.clock()
             present = self.get(subject, now)

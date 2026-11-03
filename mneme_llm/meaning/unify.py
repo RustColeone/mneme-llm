@@ -19,7 +19,7 @@ from ..i18n import fill
 from ..prompts import PROMPTS
 from ..providers import Complete, Rest, ask, json_in
 
-# The script each language is written in, as `text.script` names it; a language not listed is taken as Latin.
+# The script each language is written in, as `text.scripts` names it; a language not listed is taken as Latin.
 SCRIPTS = {
     "han": ("chinese", "mandarin", "cantonese", "中文", "汉语", "漢語", "普通话", "粤语"),
     "kana": ("japanese", "日本語"),

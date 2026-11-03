@@ -57,8 +57,8 @@ def _in_order(exchanges: list) -> list:
 
 @dataclass(frozen=True)
 class View:
-    """The surface as it stands: its messages for a model, oldest first, how many tokens its turns come to, what it keeps
-    and may reach, and `upto`, when the newest of it was said: a host adds only what came after."""
+    """The surface as it stands: its messages for a model, oldest first, how many tokens its turns come to, what it
+    keeps and may reach, and `upto`, when the newest of it was said: a host adds only what came after."""
     messages: list
     tokens: int
     keep: int
@@ -68,7 +68,8 @@ class View:
 
 @dataclass(frozen=True)
 class First:
-    """A person's first prompt: `by_command` when they set it themselves, `send` when it goes in front of the surface."""
+    """A person's first prompt: `by_command` when they set it themselves, `send` when it goes in front of the
+    surface."""
     text: str
     at: float
     by_command: bool
@@ -172,8 +173,8 @@ class Surface(Speaks, Resolves):
         return True
 
     def _put(self, subject: str, start_id: int, cleared_at: float, summary: str) -> None:
-        self.store.execute("insert into surfaces (space, subject, start_id, cleared_at, summary) values (?, ?, ?, ?, ?) "
-                           "on conflict(space, subject) do update set start_id = excluded.start_id, cleared_at = "
+        self.store.execute("insert into surfaces (space, subject, start_id, cleared_at, summary) values (?, ?, ?, ?, "
+                           "?) on conflict(space, subject) do update set start_id = excluded.start_id, cleared_at = "
                            "excluded.cleared_at, summary = excluded.summary",
                            (self.space, subject, start_id, cleared_at, summary))
 
@@ -195,9 +196,9 @@ class Surface(Speaks, Resolves):
 
     # ---- the first prompt ------------------------------------------------------------------------
     def first(self, subject: str) -> First | None:
-        row = self.store.row("select * from first_prompts where space = ? and subject = ?",
+        row = self.store.row("select * from first_prompts where space = ? and subject = ? and text != ''",
                              (self.space, self.who(subject)))
-        return First(row["text"], row["at"], bool(row["by_command"]), bool(row["send"])) if row and row["text"] else None
+        return First(row["text"], row["at"], bool(row["by_command"]), bool(row["send"])) if row else None
 
     def noticed(self, subject: str, lines) -> None:
         """What was said to the companion, as `(who, said)` lines: the first time, a copy of the first line not hers
@@ -221,14 +222,14 @@ class Surface(Speaks, Resolves):
     def send_first(self, subject: str, send: bool = True) -> bool:
         """Whether it goes in front of the surface; False when they have none."""
         with self.writing(subject) as subject:
-            return self.store.execute("update first_prompts set send = ? where space = ? and subject = ? and text != ''",
-                                      (int(bool(send)), self.space, subject)).rowcount > 0
+            return self.store.execute("update first_prompts set send = ? where space = ? and subject = ? and text "
+                                      "!= ''", (int(bool(send)), self.space, subject)).rowcount > 0
 
     def drop_first(self, subject: str) -> bool:
         """They have none from now on: their row stays with no text, so the next message does not become it."""
         with self.writing(subject) as subject:
-            return self.store.execute("update first_prompts set text = '', by_command = 0, send = 0 where space = ? and "
-                                      "subject = ? and text != ''", (self.space, subject)).rowcount > 0
+            return self.store.execute("update first_prompts set text = '', by_command = 0, send = 0 where space = ? "
+                                      "and subject = ? and text != ''", (self.space, subject)).rowcount > 0
 
     # ---- keeping up ------------------------------------------------------------------------------
     def subjects(self) -> list[str]:
@@ -272,9 +273,13 @@ class Surface(Speaks, Resolves):
                 cleared = dates.seconds(row.get("cleared_at")) if isinstance(row, dict) else None
                 subject, summary = (row.get("subject"), row.get("summary")) if isinstance(row, dict) else (None, None)
                 if isinstance(subject, str) and subject.strip() and isinstance(summary, str) and cleared is not None:
-                    subject, mine = self.who(subject), self._row(self.who(subject))
+                    subject = self.who(subject)
+                    mine = self._row(subject)
                     given = self.episodes.latest(subject, cleared)[0], cleared, texts.fit(texts.clean(summary), SUMMARY)
-                    self._combine(subject, tuple(mine), given) if mine else self._put(subject, *given)
+                    if mine is None:
+                        self._put(subject, *given)
+                    else:
+                        self._combine(subject, tuple(mine), given)
             for row in firsts:
                 at = dates.seconds(row.get("at")) if isinstance(row, dict) else None
                 subject, text = (row.get("subject"), row.get("text")) if isinstance(row, dict) else (None, None)

@@ -65,8 +65,8 @@ def _to_2(db: sqlite3.Connection) -> str:
     gone = [table for table in GONE if _has(db, table)]
     for table in moved:
         db.execute(f"alter table {table} rename to old_{table}")
-        for row in db.execute("select name from sqlite_master where type = 'index' and tbl_name = ? and sql is not null",
-                              (f"old_{table}",)).fetchall():
+        for row in db.execute("select name from sqlite_master where type = 'index' and tbl_name = ? and sql is not "
+                              "null", (f"old_{table}",)).fetchall():
             db.execute(f"drop index {row['name']}")
     for table in gone:
         db.execute(f"drop table {table}")
@@ -85,7 +85,8 @@ def _to_2(db: sqlite3.Connection) -> str:
         zones = _zones(db)
         for row in db.execute("select id, space, at, lines from episodes").fetchall():
             db.execute("update episodes set day = ?, tokens = ? where id = ?",
-                       (dates.talking_day(row["at"], zones.get(row["space"])), cost(json.loads(row["lines"])), row["id"]))
+                       (dates.talking_day(row["at"], zones.get(row["space"])), cost(json.loads(row["lines"])),
+                        row["id"]))
             exchanges += 1
     if "surfaces" in moved:
         for row in db.execute("select * from old_surfaces").fetchall():
