@@ -268,10 +268,10 @@ class LettingGoTests(unittest.TestCase):
 class WhereItEndsTests(unittest.TestCase):
     def test_what_was_left_unanswered_in_a_chat_stays_that_chats(self):
         m, clock = companion()
-        say(m, clock, "这边", conversation="a")
+        m.episodes.keep("u", [("Leo", "这边"), ("小鲸", "好")], at=clock.now, conversation="a")
         clock.now += 60
         here = clock.now
-        say(m, clock, "那边", conversation="b")
+        m.episodes.keep("u", [("Leo", "那边"), ("小鲸", "好")], at=clock.now, conversation="b")
         clock.now += 60
         self.assertEqual(m.surface.read("u", here="a").upto, here - 60)
         self.assertEqual(m.surface.read("u", here="b").upto, here)
