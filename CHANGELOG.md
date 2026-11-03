@@ -3,7 +3,7 @@
 All notable changes to mneme-llm are listed here. The project follows [semantic versioning](https://semver.org);
 before 1.0, a minor version may change the Python API, and this file says how.
 
-## 0.4.0 (unreleased)
+## 0.4.0 (2026-11-03)
 
 - **The gut (CMP): what stays of a companion when her memory is wiped and her model is swapped.** `mneme_llm.gut`: `Gut`
   and `Turn`. Her model reads each message into a small form, a tiny network of her own and her vote give seven numbers,
