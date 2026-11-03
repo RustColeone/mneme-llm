@@ -199,6 +199,18 @@ class MigrateTests(unittest.TestCase):
         self.assertIn("3 old config keys", report)
         self.assertEqual(self.open().config.unknown, [])
 
+    def test_someone_with_no_first_prompt_gets_the_first_thing_they_said(self):
+        with contextlib.closing(sqlite3.connect(self.path)) as db:
+            for at, lines in ((START, [["小鲸", "你好呀"], ["Mei", "以后叫我姐姐"]]), (START + 60, [["Mei", "今天好累"]])):
+                db.execute("insert into episodes (space, subject, at, conversation, lines, size, stability) values "
+                           "('t', 'v', ?, '', ?, 10, 30)", (at, json.dumps(lines, ensure_ascii=False)))
+            db.commit()
+        self.assertIn("2 first prompts taken", migrate(self.path))  # (and u in the other space)
+        m = self.open()
+        self.assertEqual(m.surface.first("v").text, "以后叫我姐姐")  # (not what she said first)
+        self.assertFalse(m.surface.first("v").send)
+        self.assertEqual(m.surface.first("u").text, "你是我的姐姐")  # (one they had stays)
+
     def test_notes_links_and_first_prompts_carry_over(self):
         migrate(self.path)
         m = self.open()

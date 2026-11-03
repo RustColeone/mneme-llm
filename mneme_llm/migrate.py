@@ -6,7 +6,8 @@ Back the file up and stop whatever uses it first. Each file changes in one trans
 that is current already is left as it is, so running this twice is safe. It says what it did to each file.
 
 From schema 1 to 2: every exchange gets its talking day (in the zone of its space's config, the machine's where that
-gives none) and its tokens; a surface's `since` becomes the last exchange said before it; what nothing reads any more
+gives none) and its tokens; a surface's `since` becomes the last exchange said before it; everyone kept from before first
+prompts were gets the first thing they said as theirs; what nothing reads any more
 goes (the word centroids, `vectors.taught`, `memories.terms`, `people.updated_at`, `episodes.terms`), and so do config
 keys no version knows; the term indexes are rebuilt the first time they are searched.
 """
@@ -23,6 +24,7 @@ from . import dates, text as texts
 from .config import known, zone_of
 from .episodes import cost
 from .store import SCHEMA_VERSION, create
+from .surface import FIRST
 
 RESHAPED = ("memories", "vectors", "people", "episodes", "surfaces")  # in schema 2
 GONE = ("micro_models", "meaning_terms")
@@ -59,6 +61,26 @@ def _copy(db: sqlite3.Connection, table: str, **filled: str) -> None:
     db.execute(f"insert into {table} ({', '.join(columns)}) select {values} from old_{table}")
 
 
+def _firsts(db: sqlite3.Connection) -> int:
+    """For everyone kept from before first prompts were, the first thing they said: else their next message would be."""
+    names = {row["space"]: json.loads(row["value"]) for row in db.execute(
+        "select space, value from config where key = 'companion.name'").fetchall()}
+    added = 0
+    for row in db.execute("select space, subject, min(id) as id from episodes where not exists (select 1 from "
+                          "first_prompts f where f.space = episodes.space and f.subject = episodes.subject) group by "
+                          "space, subject").fetchall():
+        hers = {names.get(row["space"]), "assistant", ""}
+        for episode in db.execute("select at, lines from episodes where space = ? and subject = ? order by at, id",
+                                  (row["space"], row["subject"])).fetchall():
+            said = next((said for who, said in json.loads(episode["lines"]) if who not in hers), None)
+            if said:
+                db.execute("insert into first_prompts (space, subject, text, at, by_command, send) values (?, ?, ?, ?, "
+                           "0, 0)", (row["space"], row["subject"], texts.fit(said, FIRST), episode["at"]))
+                added += 1
+                break
+    return added
+
+
 def _to_2(db: sqlite3.Connection) -> str:
     """Schema 1 to 2, inside the caller's transaction; what it did, in words."""
     moved = [table for table in RESHAPED if _has(db, table)]
@@ -88,6 +110,7 @@ def _to_2(db: sqlite3.Connection) -> str:
                        (dates.talking_day(row["at"], zones.get(row["space"])), cost(json.loads(row["lines"])),
                         row["id"]))
             exchanges += 1
+    firsts = _firsts(db) if "episodes" in moved else 0
     if "surfaces" in moved:
         for row in db.execute("select * from old_surfaces").fetchall():
             start = db.execute("select coalesce(max(id), 0) as id from episodes where space = ? and subject = ? and at "
@@ -106,7 +129,8 @@ def _to_2(db: sqlite3.Connection) -> str:
                "like 'meaning_version:%'")
     dropped = f", dropped {' and '.join(gone)}" if gone else ""
     return (f"{exchanges} exchanges got their day and tokens, {surfaces} surfaces start at an exchange now, "
-            f"{len(stale)} old config keys removed{dropped}; search indexes are rebuilt at the first search")
+            f"{firsts} first prompts taken from the first thing said, {len(stale)} old config keys removed{dropped}; "
+            f"search indexes are rebuilt at the first search")
 
 
 def migrate(path: str | Path) -> str:
