@@ -286,7 +286,7 @@ def notes_path(out: Path, conversation: Conversation, person: str, kind: str = "
 
 def open_memory(path: Path, conversation: Conversation, companion: str, clock, complete=None) -> Mneme:
     return Mneme(str(path), space=conversation.id, companion_name=companion, display_language="en", zone=UTC,
-                 complete=complete, embed=False, meaning_micro=False, memory_language=None,
+                 complete=complete, embed=False, memory_language=None,
                  daily_quota=10_000, clock=clock)
 
 

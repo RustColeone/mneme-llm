@@ -233,7 +233,7 @@ class Cache:
 def companion(path: Path, question_id: str, cache: Cache, clock) -> Mneme:
     return Mneme(str(path), space=question_id, companion_name="Assistant", display_language="en", zone=UTC,
                  embed=Embeddings(cache.embed, name=EMBEDDER, floor=0.33),
-                 meaning_micro=False, memory_language=None, clock=clock)
+                 memory_language=None, clock=clock)
 
 
 # ---- ingesting: every session, exchange by exchange, on its own date -----------------------------------------------

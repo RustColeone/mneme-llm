@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import operator
 from array import array
-from typing import Sequence
+from typing import Iterable, Sequence
 
 Vector = list
 
@@ -40,3 +40,8 @@ def unpack(blob: bytes) -> Vector:
 def cosine(a: Sequence[float], b: Sequence[float]) -> float:
     """Of two normalized vectors."""
     return sum(map(operator.mul, a, b))
+
+
+def drop(store, ids: Iterable[int]) -> None:
+    """The vectors of these notes gone, whatever embedder made them: a vector is the note's words in another form."""
+    store.rows_in("delete from vectors where memory_id in ({})", ids)

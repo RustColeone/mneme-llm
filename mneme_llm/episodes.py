@@ -264,8 +264,7 @@ class Episodes(Speaks, Resolves):
         missing = ("select * from episodes e where space = ? and subject = ? and not exists (select 1 from "
                    "episode_vectors v where v.episode_id = e.id and v.embedder = ?)")
         first = [int(id) for id in first][:limit]
-        rows = self.store.rows(f"{missing} and id in ({', '.join('?' * len(first))}) order by at, id",
-                               (self.space, subject, name, *first)) if first else []
+        rows = self.store.rows_in(f"{missing} and id in ({{}}) order by at, id", first, (self.space, subject, name))
         rows += [row for row in self.store.rows(f"{missing} order by at, id limit ?",
                                                 (self.space, subject, name, limit))
                  if row["id"] not in set(first)][:limit - len(rows)]
@@ -335,11 +334,8 @@ class Episodes(Speaks, Resolves):
 
     def _rehearse(self, ids: Iterable[int], now: float) -> None:
         """Each exchange recalled at `now`: its stability grows, the more the further it had faded, and it is fresh."""
-        ids = list(ids)
-        if not ids:
-            return
-        for row in self.store.rows(f"select id, subject, at, recalled_at, stability from episodes where id in "
-                                   f"({', '.join('?' * len(ids))})", ids):
+        for row in self.store.rows_in("select id, subject, at, recalled_at, stability from episodes where id in ({})",
+                                      ids):
             if row["recalled_at"] is not None and row["recalled_at"] >= now:
                 continue  # (one moment, one rehearsal: and a late vector's, from before it, counts nothing)
             last = max(row["at"], row["recalled_at"] or 0.0)
@@ -369,12 +365,9 @@ class Episodes(Speaks, Resolves):
         return len(ids)
 
     def _delete(self, ids: list[int]) -> None:
-        for start in range(0, len(ids), 500):
-            chunk = ids[start:start + 500]
-            marks = ", ".join("?" * len(chunk))
-            for table in ("episode_terms", "episode_vectors"):
-                self.store.execute(f"delete from {table} where episode_id in ({marks})", chunk)
-            self.store.execute(f"delete from episodes where id in ({marks})", chunk)
+        for table in ("episode_terms", "episode_vectors"):
+            self.store.rows_in(f"delete from {table} where episode_id in ({{}})", ids)
+        self.store.rows_in("delete from episodes where id in ({})", ids)
 
     def join(self, old: str, new: str) -> None:
         """`old` is the person `new` now (`People.link`): its exchanges and their index are the person's, and the two
@@ -515,23 +508,17 @@ class Episodes(Speaks, Resolves):
         average = sum(sizes.values()) / count or 1.0
         words = getattr(found, "words", "") or ""
         wanted = texts.terms(query + (" " + words if words else ""))
-        df: dict[str, int] = {}
-        for start in range(0, len(wanted), 400):
-            chunk = wanted[start:start + 400]
-            df.update({row["term"]: row["n"] for row in self.store.rows(
-                f"select term, count(*) as n from episode_terms where space = ? and subject = ? and term in "
-                f"({', '.join('?' * len(chunk))}) group by term", (self.space, subject, *chunk))})
+        mine = (self.space, subject)
+        df = {row["term"]: row["n"] for row in self.store.rows_in(
+            "select term, count(*) as n from episode_terms where space = ? and subject = ? and term in ({}) group by "
+            "term", wanted, mine)}
         idf = {term: math.log(1 + (count - n + 0.5) / (n + 0.5)) for term, n in df.items()}
         bm25: dict[int, float] = {}
-        terms = list(idf)
-        for start in range(0, len(terms), 400):
-            chunk = terms[start:start + 400]
-            for row in self.store.rows(f"select term, episode_id from episode_terms where space = ? and subject = ? "
-                                       f"and term in ({', '.join('?' * len(chunk))})", (self.space, subject, *chunk)):
-                id = row["episode_id"]
-                if id in sizes:
-                    bm25[id] = bm25.get(id, 0.0) + idf[row["term"]] * 2.2 / (
-                        1 + 1.2 * (0.25 + 0.75 * sizes[id] / average))
+        for row in self.store.rows_in("select term, episode_id from episode_terms where space = ? and subject = ? and "
+                                      "term in ({})", list(idf), mine):
+            id = row["episode_id"]
+            if id in sizes:
+                bm25[id] = bm25.get(id, 0.0) + idf[row["term"]] * 2.2 / (1 + 1.2 * (0.25 + 0.75 * sizes[id] / average))
         fused: dict[int, float] = {}
         for place, id in enumerate(sorted(bm25, key=lambda id: (-bm25[id], -id))):
             fused[id] = 1 / (RRF + place)
@@ -548,7 +535,7 @@ class Episodes(Speaks, Resolves):
                     close[id] = float(similarities[index])
                     place += 1
         lines = None
-        if cut is not None and close and getattr(found, "tier", "") == "embeddings":  # (the floor is the embedder's)
+        if cut is not None and close:
             floor = self.meaning.set_floor
             lines = (floor + cut[0], floor + cut[1])
         if lines:
@@ -619,11 +606,7 @@ class Episodes(Speaks, Resolves):
 
     def _get_many(self, ids: list[int]) -> list[Episode]:
         """These exchanges, in the order given."""
-        found: dict[int, Episode] = {}
-        for start in range(0, len(ids), 500):
-            chunk = ids[start:start + 500]
-            for row in self.store.rows(f"select * from episodes where id in ({', '.join('?' * len(chunk))})", chunk):
-                found[row["id"]] = Episode.of(row)
+        found = {row["id"]: Episode.of(row) for row in self.store.rows_in("select * from episodes where id in ({})", ids)}
         return [found[id] for id in ids if id in found]
 
     @staticmethod

@@ -8,7 +8,6 @@ import json
 from collections import Counter, defaultdict
 
 from mneme_llm import text as texts
-from mneme_llm.meaning import unpack
 from mneme_llm.config import ORIGINS, check as check_setting
 from mneme_llm.relations import ROLES
 
@@ -68,31 +67,6 @@ def check(store) -> list[str]:
 
     vectors = store.rows("select * from vectors")
     problems += [f"a vector of missing note #{row['memory_id']}" for row in vectors if row["memory_id"] not in ids]
-
-    # The word centroids: every count and mean is exactly what the taught vectors add up to.
-    for embedder in {row["embedder"] for row in vectors} | {row["embedder"] for row in
-                                                            store.rows("select distinct embedder from meaning_terms")}:
-        taught = [row for row in vectors if row["embedder"] == embedder and row["taught"] is not None]
-        learned = int(store.meta(f"meaning_texts:{embedder}") or 0)
-        if learned != len(taught):
-            problems.append(f"{embedder}: meaning_texts {learned} but {len(taught)} vectors taught")
-        expected = defaultdict(list)
-        for row in taught:
-            for term in row["taught"].split():
-                expected[term].append(unpack(row["vector"]))
-        stored = {row["term"]: row for row in store.rows("select * from meaning_terms where embedder = ?",
-                                                         (embedder,))}
-        if set(stored) != set(expected):
-            problems.append(f"{embedder}: terms differ, only stored {sorted(set(stored) - set(expected))[:5]}, "
-                            f"only taught {sorted(set(expected) - set(stored))[:5]}")
-        for term in set(stored) & set(expected):
-            vectors_of = expected[term]
-            if stored[term]["count"] != len(vectors_of):
-                problems.append(f"{embedder}: {term!r} counted {stored[term]['count']}, taught {len(vectors_of)}")
-                continue
-            mean = [sum(values) / len(vectors_of) for values in zip(*vectors_of)]
-            if any(abs(a - b) > 1e-3 for a, b in zip(unpack(stored[term]["vector"]), mean)):
-                problems.append(f"{embedder}: the mean of {term!r} drifted")
 
     for row in store.rows("select * from moods"):
         if not 0 <= row["value"] <= 100:

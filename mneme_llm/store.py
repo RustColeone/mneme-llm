@@ -128,6 +128,7 @@ create table if not exists episode_spread (
     primary key (space, subject, embedder)
 );
 """
+IN_LIST = 400  # values in one `in (...)`: SQLite takes 999 parameters in all on older builds
 # Columns added after a table first shipped, so files made by earlier builds gain them on open.
 ADDED_COLUMNS = {"memories": {"gloss": "text", "terms": "text", "folded": "text"}, "vectors": {"taught": "text"}}
 # Indexes on added columns, made once the columns exist.
@@ -228,6 +229,15 @@ class Store:
     def row(self, sql: str, parameters: Iterable[Any] = ()) -> sqlite3.Row | None:
         with self._lock:
             return self._db.execute(sql, tuple(parameters)).fetchone()
+
+    def rows_in(self, sql: str, values: Iterable, parameters: Iterable = ()) -> list[sqlite3.Row]:
+        """`sql` for any number of values: its `{}` takes marks for up to IN_LIST of them at a time, after `parameters`.
+        Any statement will do (a delete gives no rows)."""
+        values, parameters, found = list(values), tuple(parameters), []
+        for start in range(0, len(values), IN_LIST):
+            chunk = values[start:start + IN_LIST]
+            found += self.rows(sql.format(", ".join("?" * len(chunk))), parameters + tuple(chunk))
+        return found
 
     def transaction(self):
         """`with store.transaction():` several writes that land together or not at all. It takes the write lock up

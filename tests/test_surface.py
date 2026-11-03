@@ -22,7 +22,7 @@ class Clock:
 
 def companion(clock=None, path=":memory:", config=None, complete=None):
     clock = clock or Clock()
-    m = Mneme(path, "t", config=config, embed=False, meaning_micro=False,
+    m = Mneme(path, "t", config=config, embed=False,
               memory_language=None, zone=UTC, clock=clock, companion_name="小鲸", complete=complete)
     return m, clock
 

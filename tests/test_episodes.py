@@ -41,7 +41,7 @@ class Clock:
 
 def companion(clock=None, embed=None, path=":memory:"):
     clock = clock or Clock()
-    m = Mneme(path, "t", meaning_micro=False, memory_language=None, zone=UTC, clock=clock,
+    m = Mneme(path, "t", memory_language=None, zone=UTC, clock=clock,
               embed=embed if embed is not None else False)
     return m, clock
 
@@ -234,7 +234,7 @@ class CutTests(unittest.TestCase):
     def test_the_bar_is_a_setting(self):
         self.assertEqual(self.m.said_cut, (0.08, 0.16))
         low = Mneme(":memory:", "t", config={"memory": {"said_cut": -1, "said_cut_faded": -1}}, 
-                    embed=embedder(), meaning_micro=False, memory_language=None)
+                    embed=embedder(), memory_language=None)
         asyncio.run(low.episodes.akeep("u", [("Leo", "my cat and the exam")]))
         self.assertEqual(len(asyncio.run(low.episodes.alook("u", "hello", cut=low.said_cut))), 1)
 
@@ -434,7 +434,7 @@ class EdgeTests(unittest.TestCase):
 
     def test_a_slow_embedder_keeps_what_a_lower_tier_made_of_a_query(self):
         m, _ = companion(embed=embedder())
-        before = Found("micro", vector=meaning_of("hello"))
+        before = Found("unify", words="hello")
         m.episodes._queries["hello"] = before
 
         async def slow(text, **_):
@@ -456,17 +456,6 @@ class EdgeTests(unittest.TestCase):
         after = m.episodes.get(kept.id)
         m.episodes._rehearse([kept.id], clock.now - DAY)
         self.assertEqual(m.episodes.get(kept.id), after)
-
-    def test_the_bar_is_for_the_embedders_own_vector(self):
-        m, _ = companion(embed=embedder())
-        cat = m.episodes.keep("u", [("Leo", "my cat and the exam")])
-        asyncio.run(m.episodes.prepare("u"))
-        hello = meaning_of("hello")
-        self.assertEqual(m.episodes.look("u", "hello", found=Found("embeddings", vector=hello, floor=0.3)), [])
-        self.assertEqual([e.id for e in m.episodes.look("u", "hello", found=Found("micro", vector=hello))],
-                         [cat.id])
-        m.episodes._queries["hello"] = Found("micro", vector=hello)  # (asked while the embedder was down)
-        self.assertEqual(asyncio.run(m.episodes._found("hello")).tier, "embeddings")
 
     def test_the_bar_stands_on_the_sets_floor_not_the_one_the_files_notes_moved(self):
         m, _ = companion(embed=Embeddings(lambda texts: [meaning_of(text) for text in texts], name="free"))

@@ -30,7 +30,7 @@ from .decide import Answer, Choice, Predicate, Prompt, Score
 from .episodes import Episode, Episodes
 from .gut import Gut, Turn
 from .i18n import Words, say
-from .meaning import Embeddings, Meaning, OpenAIEmbeddings, ledger
+from .meaning import Embeddings, Meaning, OpenAIEmbeddings
 from .memory import KINDS, Memory, Note, Recall
 from .mood import Emotion, Mood, MoodEvent, MoodSettings
 from .people import People
@@ -80,8 +80,7 @@ class Mneme:
     judge          a judge of your own, answering the small decisions in place of `complete` (`decide.py`)
     embed          meaning tier 1: True uses OpenAI embeddings when OPENAI_API_KEY is set; or pass any embedder
                    (`Embeddings(fn, name=...)` for your own function); False leaves it out.
-    meaning_micro  meaning tier 2: word centroids learned from tier 1 (False leaves it out).
-    memory_language  meaning tier 3: the language notes are unified into ("English" by default), or a `Unify`
+    memory_language  meaning tier 2: the language notes are unified into ("English" by default), or a `Unify`
                    of your own; None turns it off.
     roles          what people can be to the companion (`relate`): creator, family, friend, acquaintance, and any
                    `Role` of your own.
@@ -92,13 +91,12 @@ class Mneme:
 
     def __init__(self, path: str = "mneme.db", space: str = "default", *, config=None,
                  display_language: str = STORED, companion_name: str = STORED, zone: tzinfo | None = STORED,
-                 complete=None, judge=None, embed=True, meaning_micro=True, memory_language=STORED,
+                 complete=None, judge=None, embed=True, memory_language=STORED,
                  mood: MoodSettings = STORED, roles: tuple[Role, ...] = STORED, half_life_days: float = STORED,
                  daily_quota: int = STORED, surface_days: int = STORED, surface_floor: int = STORED,
                  surface_cap: int = STORED, surface_window: int = STORED, clock: Callable[[], float] = time.time):
         self.store = Store(path)
         try:
-            ledger.repair(self.store)  # centroids changed by something that kept no account start over
             self.config = Config(self.store, space, clock)
             self.config.seed(config)  # a new companion: the file over the defaults; otherwise its own copy
         except BaseException:
@@ -116,7 +114,7 @@ class Mneme:
         words = Words(stored(display_language, "companion.display_language"), own.messages())
         self.judge = judge
         self.decisions = {"answered": 0, "abstained": 0, "failed": 0, "last_error": ""}
-        self.meaning = self._meaning(embed, meaning_micro, memory_language, complete)
+        self.meaning = self._meaning(embed, memory_language, complete)
         self.people = People(self.store, space, clock=clock)
         self.memory = Memory(self.store, space, half_life_days=stored(half_life_days, "memory.half_life_days"),
                              daily_quota=stored(daily_quota, "memory.daily_quota"),
@@ -153,7 +151,7 @@ class Mneme:
         for part in (self.memory, self.mood, self.relations, self.aliases, self.episodes):
             part.display_language = language
 
-    def _meaning(self, embed, meaning_micro, memory_language, complete) -> Meaning | None:
+    def _meaning(self, embed, memory_language, complete) -> Meaning | None:
         embedder = None
         if embed is True:
             embedder = OpenAIEmbeddings()
@@ -161,20 +159,15 @@ class Mneme:
             embedder = Embeddings(embed, name=f"custom:{getattr(embed, '__qualname__', 'function')}")
         elif embed:
             embedder = embed
-        centroids = None
-        if embedder is not None and meaning_micro:  # they are learned from tier 1's vectors
-            TermCentroids = _optional("meaning.micro", "TermCentroids") if meaning_micro is True else None
-            centroids = meaning_micro if meaning_micro is not True else \
-                TermCentroids(self.store, embedder.name) if TermCentroids is not None else None
         unify = None
         if isinstance(memory_language, str) and memory_language.strip():  # a language: the tier, made here
             Unify = _optional("meaning.unify", "Unify")
             unify = Unify(complete, memory_language, prompts=self.prompts) if Unify is not None else None
         elif memory_language:  # a tier of the host's own
             unify = memory_language
-        if embedder is None and centroids is None and unify is None:
+        if embedder is None and unify is None:
             return None
-        return Meaning(self.store, embedder, centroids, unify)
+        return Meaning(self.store, embedder, unify)
 
     # ---- the few calls most programs need ------------------------------------------------------------
     def remember(self, subject: str, text: str, *, kind: str | None = None, key: str | None = None,
@@ -240,10 +233,9 @@ class Mneme:
         return self.memory.purge(subject)
 
     def erase(self, subject: str) -> int:
-        """Everything about a person, gone for good ("forget me"): notes, history, vectors, what they taught the
-        word centroids, profile card, recall log, every exchange kept word for word, the surface and their first
-        prompt, mood and its timeline, their role, their alias and the links of their other accounts. Returns how many
-        notes there were."""
+        """Everything about a person, gone for good ("forget me"): notes, history, vectors, profile card, recall log,
+        every exchange kept word for word, the surface and their first prompt, mood and its timeline, their role, their
+        alias and the links of their other accounts. Returns how many notes there were."""
         with self.store.transaction():
             subject = self.people.of(subject)
             count = self.memory.erase(subject)

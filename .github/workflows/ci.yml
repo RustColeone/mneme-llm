@@ -26,17 +26,17 @@ jobs:
           PYTHONIOENCODING: utf-8
         run: python -W error::ResourceWarning -m unittest discover -s tests -t . -v
 
-  without-tiers:
-    name: The tests with the optional tiers deleted
+  without-unify:
+    name: The tests with the optional tier deleted
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - name: Delete the three removable tiers and run everything else
+      - name: Delete the removable tier and run everything else
         run: |
-          rm mneme_llm/decide/micro.py mneme_llm/meaning/micro.py mneme_llm/meaning/unify.py
+          rm mneme_llm/meaning/unify.py
           python -W error::ResourceWarning -m unittest discover -s tests -t .
 
   stress:

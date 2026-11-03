@@ -126,12 +126,8 @@ def refine(store, embedder: str, record: dict) -> dict:
     rng = random.Random(top)
     ids = [row["memory_id"] for row in store.rows("select memory_id from vectors where embedder = ?", (embedder,))]
     ids = rng.sample(ids, min(len(ids), SAMPLE))  # uniformly among the notes that have a vector
-    vectors = []
-    for start in range(0, len(ids), 500):
-        chunk = ids[start:start + 500]
-        rows = store.rows(f"select vector from vectors where embedder = ? and memory_id in "
-                          f"({', '.join('?' * len(chunk))})", (embedder, *chunk))
-        vectors += [vector for vector in (usable(unpack(row["vector"])) for row in rows) if vector is not None]
+    rows = store.rows_in("select vector from vectors where embedder = ? and memory_id in ({})", ids, (embedder,))
+    vectors = [vector for vector in (usable(unpack(row["vector"])) for row in rows) if vector is not None]
     if vectors:  # of one model only: the length most of them have
         length = Counter(len(vector) for vector in vectors).most_common(1)[0][0]
         vectors = [vector for vector in vectors if len(vector) == length]

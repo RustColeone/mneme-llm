@@ -14,7 +14,7 @@ import time
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from tests.tiers import needs_centroids, needs_unify
+from tests.tiers import needs_unify
 from mneme_llm import Embeddings, Mneme
 from mneme_llm.dates import find, local, noon
 from mneme_llm.decide import Choice, Prompt, Score
@@ -180,20 +180,16 @@ class TwoProcessTests(unittest.TestCase):
         other.close()
 
 
-@needs_centroids
 class EraseTests(unittest.TestCase):
     def test_erase_leaves_none_of_the_persons_words_in_the_file(self):
         m = Mneme(":memory:", "t", memory_language=None, embed=Embeddings(toy, name="toy:1"))
         m.remember("u", "Diagnosed with diabetes, takes metformin", kind="fact")
-        m.remember("v", "Likes green tea", kind="preference")
+        kept = m.remember("v", "Likes green tea", kind="preference")
         asyncio.run(m.arecall("u", "medication"))
         asyncio.run(m.arecall("v", "tea"))
         m.memory.erase("u")
-        terms = {row["term"] for row in m.store.rows("select term from meaning_terms")}
-        self.assertFalse({"metformin", "diabete", "medication"} & terms)
-        self.assertIn("tea", terms)  # what the other person's note taught stays
-        rows = m.store.rows("select * from memories where subject = 'u'")
-        self.assertEqual(rows, [])
+        self.assertEqual(m.store.rows("select * from memories where subject = 'u'"), [])
+        self.assertEqual([row["memory_id"] for row in m.store.rows("select memory_id from vectors")], [kept.id])
 
 
 class TransactionTests(unittest.TestCase):
@@ -317,20 +313,6 @@ class PromptTierTests(unittest.TestCase):
 
 
 class MeaningRobustnessTests(unittest.TestCase):
-    @needs_centroids
-    def test_a_learning_problem_never_discards_the_embedding(self):
-        m = Mneme(":memory:", "t", memory_language=None, embed=Embeddings(toy, name="toy:1"))
-        m.remember("u", "Has a cat", kind="fact")
-
-        def broken(store, embedder, items):
-            raise RuntimeError("disk full")
-        from unittest import mock
-        with mock.patch("mneme_llm.meaning.ledger.teach", broken):
-            found = asyncio.run(m.arecall("u", "猫", important=0, recent=0))
-        self.assertEqual(found.tier, "embeddings")
-        self.assertIn("micro", m.meaning.report()["failures"])
-        self.assertEqual(len(m.meaning.vectors([m.memory.notes("u")[0].id])), 1)  # the vector stayed
-
     @needs_unify
     def test_a_missing_gloss_keeps_the_note_and_failures_rest(self):
         calls = []
@@ -363,62 +345,6 @@ class RecallCostTests(unittest.TestCase):
 
 
 # ---- the second pass --------------------------------------------------------------------------------------------
-
-def centroids(m):
-    return {row["term"]: (row["count"], unpack(row["vector"])) for row in m.store.rows("select * from meaning_terms")}
-
-
-def learned(path=":memory:", **notes):
-    m = Mneme(path, "t", memory_language=None, embed=Embeddings(toy, name="toy:1"))
-    for subject, texts in notes.items():
-        for text in texts:
-            m.remember(subject, text, kind="fact")
-        asyncio.run(m.arecall(subject, "anything"))  # embeds the subject's notes, which teaches the centroids
-    return m
-
-
-@needs_centroids
-class UnlearnTests(unittest.TestCase):
-    def assertSameCentroids(self, got, want):
-        self.assertEqual(set(got), set(want))
-        for term, (count, vector) in want.items():
-            self.assertEqual(got[term][0], count, term)
-            for a, b in zip(got[term][1], vector):
-                self.assertAlmostEqual(a, b, places=5)
-
-    def test_erase_takes_back_exactly_what_the_notes_taught(self):
-        m = learned(u=["Drinks tea with metformin"], v=["Likes green tea", "Has a cat"])
-        m.memory.erase("u")
-        alone = learned(v=["Likes green tea", "Has a cat"])
-        self.assertSameCentroids(centroids(m), centroids(alone))
-        self.assertEqual(m.meaning.micro.learned, 2)
-
-    def test_the_cli_erase_takes_them_back_too(self):
-        path = os.path.join(tempfile.mkdtemp(), "m.db")
-        learned(path, u=["Drinks tea with metformin"], v=["Likes green tea"]).store.close()
-        env = dict(os.environ, PYTHONPATH=ROOT, PYTHONIOENCODING="utf-8")
-        env.pop("OPENAI_API_KEY", None)
-        done = subprocess.run([sys.executable, "-m", "mneme_llm", "--db", path, "--space", "t", "erase", "u",
-                               "--yes"], env=env, capture_output=True, text=True, timeout=60)
-        self.assertEqual(done.returncode, 0, done.stderr)
-        m = Mneme(path, "t", embed=False, memory_language=None)
-        self.assertEqual(centroids(m)["tea"][0], 1)
-        self.assertNotIn("metformin", centroids(m))
-        m.store.close()
-
-    def test_purge_takes_back_what_forgotten_notes_taught(self):
-        m = learned(u=["Takes metformin", "Likes tea"])
-        m.memory.forget("u", id=next(n.id for n in m.memory.notes("u") if "metformin" in n.text))
-        m.memory.purge()
-        self.assertIn("tea", centroids(m))
-        self.assertNotIn("metformin", centroids(m))
-
-    def test_queries_teach_nothing(self):
-        m = learned(u=["Has a cat"])
-        before = centroids(m)
-        asyncio.run(m.arecall("u", "my secret question about metformin"))
-        self.assertEqual(set(centroids(m)), set(before))
-
 
 class SettleTests(unittest.TestCase):
     def test_an_import_keeps_the_keyed_copy_of_a_repeated_text(self):
@@ -497,31 +423,8 @@ class StdioTests(unittest.TestCase):
         self.assertEqual([(reply["id"], "error" in reply) for reply in replies], [(None, True), (7, False)])
 
 
-class TaughtTests(unittest.TestCase):
-    def test_an_older_files_centroids_are_dropped_and_relearned_from_its_notes(self):
-        path = os.path.join(tempfile.mkdtemp(), "old.db")
-        m = learned(path, u=["Takes metformin"])
-        m.store.execute("insert into meaning_terms values ('toy:1', 'secret', 1, ?)", (pack([0, 0, 0, 1]),))
-        m.store.close()
-        db = sqlite3.connect(path)  # as an earlier build left it: no record of what each vector taught
-        db.executescript("drop index vectors_untaught; create table old (memory_id integer not null, embedder text not "
-                         "null, vector blob not null, primary key (memory_id, embedder)); insert into old select "
-                         "memory_id, embedder, vector from vectors; drop table vectors; alter table old rename to "
-                         "vectors;")
-        db.close()
-        embedded = []
-
-        def counting(texts):
-            embedded.extend(texts)
-            return toy(texts)
-        m = Mneme(path, "t", memory_language=None, embed=Embeddings(counting, name="toy:1"))
-        self.assertEqual(centroids(m), {})  # what the earlier build learned (queries too) is gone
-        asyncio.run(m.arecall("u", "medicine"))
-        self.assertEqual(set(centroids(m)), {"take", "metformin"})  # relearned from the stored vector,
-        self.assertEqual(embedded, ["medicine"])  # without embedding the note again
-        m.store.close()
-
-    def test_a_note_erased_while_it_is_embedded_teaches_nothing(self):
+class EmbeddingRaceTests(unittest.TestCase):
+    def test_a_note_erased_while_it_is_embedded_keeps_no_vector(self):
         async def scenario():
             gate = asyncio.Event()
 
@@ -537,9 +440,9 @@ class TaughtTests(unittest.TestCase):
             await recall
             return m
         m = asyncio.run(scenario())
-        self.assertEqual((m.store.rows("select * from vectors"), centroids(m)), ([], {}))
+        self.assertEqual(m.store.rows("select * from vectors"), [])
 
-    def test_a_note_embedded_twice_at_once_is_taught_once(self):
+    def test_a_note_embedded_twice_at_once_is_kept_once(self):
         async def scenario():
             gate = asyncio.Event()
 
@@ -554,17 +457,7 @@ class TaughtTests(unittest.TestCase):
             await asyncio.gather(*recalls)
             return m
         m = asyncio.run(scenario())
-        self.assertEqual((centroids(m)["metformin"][0], m.meaning.micro.learned), (1, 1))
-        m.memory.erase("u")
-        self.assertEqual((centroids(m), m.meaning.micro.learned), ({}, 0))
-
-    def test_unlearning_needs_no_tokenizer(self):
-        from unittest import mock
-        with mock.patch("mneme_llm.text.version", return_value="4+another"):  # a host with jieba, say
-            m = learned(u=["Drinks tea with metformin"], v=["Likes green tea"])
-        m.memory.erase("u")  # as the CLI would, with its own tokenizer
-        self.assertEqual(centroids(m)["tea"][0], 1)
-        self.assertNotIn("metformin", centroids(m))
+        self.assertEqual(m.store.row("select count(*) as n from vectors")["n"], 1)
 
 
 class OpeningTests(unittest.TestCase):
@@ -692,7 +585,6 @@ class FourthPassTests(unittest.TestCase):
             await recall
             return m
         m = asyncio.run(scenario())
-        self.assertNotIn("metformin", centroids(m))
         self.assertEqual(m.store.rows("select * from vectors"), [])
 
     def test_odd_import_rows_are_cleaned_or_skipped_and_reads_still_work(self):
@@ -718,19 +610,6 @@ class FourthPassTests(unittest.TestCase):
         m.memory.keep("u", "B", kind="fact", key="k")
         m.memory.keep("u", "A", kind="fact", key="k")
         self.assertEqual([n.text for n in m.memory.history("u", "k")], ["C", "B", "A"])
-
-    @needs_centroids
-    def test_centroids_changed_without_an_account_are_reset_on_open(self):
-        path = os.path.join(tempfile.mkdtemp(), "m.db")
-        m = learned(path, u=["Takes metformin"])
-        m.store.execute("insert into meaning_terms values ('toy:1', 'query', 1, ?)", (pack([0, 0, 0, 1]),))
-        m.store.execute("update meta set value = '2' where key = 'meaning_texts:toy:1'")  # an earlier build's lesson
-        m.store.close()
-        m = Mneme(path, "t", memory_language=None, embed=Embeddings(toy, name="toy:1"))
-        self.assertNotIn("query", centroids(m))
-        asyncio.run(m.arecall("u", "x"))
-        self.assertEqual(set(centroids(m)), {"take", "metformin"})
-        m.store.close()
 
     def test_an_error_after_sqlite_rolled_back_by_itself_comes_through(self):
         store = Store(":memory:")
@@ -813,28 +692,6 @@ class RefactorReviewTests(unittest.TestCase):
         for index in range(5):
             m.remember("u", f"tea note {index}", kind="fact")
         self.assertEqual(m.prompt("u", "tea", limit=2, header="H").count("\n- "), 2)
-
-    def test_a_hosts_own_tiers_need_no_floor_and_no_flush(self):
-        class Centroids:
-            name = "mine"
-
-            def vector(self, text):
-                return [1.0, 0.0, 0.0, 0.0]
-
-            def report(self):
-                return {}
-
-        class Tier:
-            name = "mine"
-
-            async def adecide(self, input, questions):
-                return {}
-        m = Mneme(":memory:", "t", judge=Tier(), memory_language=None, meaning_micro=Centroids(),
-                  embed=Embeddings(toy, name="toy:1"))
-        m.remember("u", "Has a cat", kind="fact")
-        m.meaning.rest.until = float("inf")  # embeddings down: the host's centroids answer
-        self.assertEqual(asyncio.run(m.arecall("u", "cat")).tier, "micro")
-        m.close()
 
     def test_an_odd_id_or_link_skips_nothing_else(self):
         source = plain()

@@ -26,7 +26,7 @@ from typing import Callable, Iterable
 
 from . import dates, text as texts
 from .i18n import Speaks, Words, say
-from .meaning import Found, ledger
+from .meaning import Found, drop
 from .people import People, Resolves
 from .store import Store, dumps
 
@@ -128,7 +128,7 @@ class Recall:
     query: str
     chosen: list[Recalled]
     skipped: list[tuple[Note, str]] = field(default_factory=list)  # (note, reason) for the closest misses
-    tier: str = ""  # which meaning tier helped ("embeddings", "micro", "unify"), "" for words alone
+    tier: str = ""  # which meaning tier helped ("embeddings", "unify"), "" for words alone
 
     def explain(self) -> str:
         lines = [f"recall for {self.query!r}" + (f" (meaning: {self.tier})" if self.tier else "") + ":"]
@@ -214,7 +214,7 @@ class Memory(Speaks, Resolves):
         row = {**row, "space": self.space, "subject": subject, "folded": texts.fold(row["text"])}
         new = self.store.execute(f"insert into memories ({', '.join(row)}) values ({', '.join('?' * len(row))})",
                                  tuple(row.values())).lastrowid
-        ledger.unteach(self.store, [new])  # SQLite reuses the id of a deleted note; nothing of it may stay
+        drop(self.store, [new])  # SQLite reuses the id of a deleted note; nothing of it may stay
         self.store.execute("delete from note_terms where memory_id = ?", (new,))
         return new
 
@@ -244,17 +244,16 @@ class Memory(Speaks, Resolves):
             if subject is not None:
                 sql, parameters = sql + " and subject = ?", (self.space, self.who(subject))
             ids = [row["id"] for row in self.store.rows(sql.replace("delete from", "select id from", 1), parameters)]
-            ledger.unteach(self.store, ids)
+            drop(self.store, ids)
             self._unindex(ids)
             count = self.store.execute(sql, parameters).rowcount
         return count
 
     def erase(self, subject: str) -> int:
-        """Every note about a subject gone for good, with their history, vectors, profile card and recall log;
-        what the notes taught the word centroids is taken back, so none of their words stay. (`Mneme.erase` also
-        resets the mood, for "forget me".)"""
+        """Every note about a subject gone for good, with their history, vectors, profile card and recall log.
+        (`Mneme.erase` also resets the mood, for "forget me".)"""
         with self.writing(subject) as subject:
-            ledger.unteach(self.store, [row["id"] for row in self.store.rows(
+            drop(self.store, [row["id"] for row in self.store.rows(
                 "select id from memories where space = ? and subject = ?", (self.space, subject))])
             count = self.store.execute("delete from memories where space = ? and subject = ?",
                                        (self.space, subject)).rowcount
@@ -432,23 +431,16 @@ class Memory(Speaks, Resolves):
         """How much each query term says (rarer among this person's notes says more; one in more than half of them
         says nothing) and which notes have it, from the term index."""
         live = "m.deleted_at is null and m.superseded_by is null"
-        df: dict[str, int] = {}
-        for start in range(0, len(query_terms), 400):
-            chunk = query_terms[start:start + 400]
-            df.update({row["term"]: row["n"] for row in self.store.rows(
-                f"select t.term, count(*) as n from note_terms t join memories m on m.id = t.memory_id where "
-                f"t.space = ? and t.subject = ? and t.term in ({', '.join('?' * len(chunk))}) and {live} group by "
-                f"t.term", (self.space, subject, *chunk))})
+        df = {row["term"]: row["n"] for row in self.store.rows_in(
+            "select t.term, count(*) as n from note_terms t join memories m on m.id = t.memory_id where t.space = ? "
+            "and t.subject = ? and t.term in ({}) and " + live + " group by t.term", query_terms, (self.space, subject))}
         weights = {term: math.log((count + 1) / (df[term] + 0.5)) for term in query_terms
                    if df.get(term) and (count < 8 or df[term] <= count / 2)}
         matches: dict[int, list[str]] = {}
-        terms = list(weights)
-        for start in range(0, len(terms), 400):
-            chunk = terms[start:start + 400]
-            for row in self.store.rows(f"select t.term, t.memory_id from note_terms t join memories m on m.id = "
-                                       f"t.memory_id where t.space = ? and t.subject = ? and t.term in "
-                                       f"({', '.join('?' * len(chunk))}) and {live}", (self.space, subject, *chunk)):
-                matches.setdefault(row["memory_id"], []).append(row["term"])
+        for row in self.store.rows_in(
+                "select t.term, t.memory_id from note_terms t join memories m on m.id = t.memory_id where t.space = ? "
+                "and t.subject = ? and t.term in ({}) and " + live, list(weights), (self.space, subject)):
+            matches.setdefault(row["memory_id"], []).append(row["term"])
         return weights, matches
 
     def _score(self, notes, weights: dict, matches: dict, similar: dict, floor: float, now: float) -> list:
@@ -536,12 +528,7 @@ class Memory(Speaks, Resolves):
         return [Note.of(row) for row in rows]
 
     def _get_many(self, ids) -> list[Note]:
-        ids, found = list(ids), []
-        for start in range(0, len(ids), 500):
-            chunk = ids[start:start + 500]
-            found += [Note.of(row) for row in self.store.rows(f"select * from memories where id in "
-                                                               f"({', '.join('?' * len(chunk))})", chunk)]
-        return found
+        return [Note.of(row) for row in self.store.rows_in("select * from memories where id in ({})", ids)]
 
     # ---- profile card ------------------------------------------------------------------------------
     def profile(self, subject: str) -> str | None:
@@ -616,11 +603,8 @@ class Memory(Speaks, Resolves):
         """Take notes out of the term index (their words changed, or they are going); they are indexed again when
         next needed."""
         ids = list(ids)
-        for start in range(0, len(ids), 500):
-            chunk = ids[start:start + 500]
-            marks = ", ".join("?" * len(chunk))
-            self.store.execute(f"delete from note_terms where memory_id in ({marks})", chunk)
-            self.store.execute(f"update memories set terms = null where id in ({marks})", chunk)
+        self.store.rows_in("delete from note_terms where memory_id in ({})", ids)
+        self.store.rows_in("update memories set terms = null where id in ({})", ids)
 
     # ---- moving between files ----------------------------------------------------------------------
     def export_rows(self) -> dict:

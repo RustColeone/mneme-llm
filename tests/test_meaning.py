@@ -4,11 +4,7 @@ import unittest
 from mneme_llm import Embeddings, Mneme
 from mneme_llm.providers import Unavailable
 from mneme_llm.meaning import Meaning, cosine, normalize, pack, unpack
-try:  # the tiers are removable; their tests are skipped where they were removed
-    from mneme_llm.meaning.micro import TermCentroids
-except ImportError:
-    TermCentroids = None
-try:
+try:  # the tier is removable; its tests are skipped where it was removed
     from mneme_llm.meaning.unify import Unify
 except ImportError:
     Unify = None
@@ -92,31 +88,6 @@ class EmbeddingTierTests(unittest.TestCase):
         asyncio.run(m.arecall("u", "猫"))
         self.assertEqual(flaky.calls, calls)  # resting: not asked again right away
         self.assertIn("embeddings", m.meaning.report()["failures"])
-
-
-@unittest.skipIf(TermCentroids is None, "the meaning micro tier is not installed")
-class MicroTierTests(unittest.TestCase):
-    def test_centroids_answer_offline_after_learning_and_abstain_before(self):
-        flaky = Flaky()
-        m = mneme(embed=flaky)
-        m.meaning.micro.min_texts = 6
-        for text in ("Has a cat named Mochi", "Drinks coffee every morning", "Math exam on Friday",
-                     "Likes green tea", "我的猫很可爱", "明天数学考试", "喜欢喝茶", "早上喝咖啡"):
-            m.remember("u", text, kind="fact")
-        flaky.up = False
-        self.assertIsNone(m.meaning.micro.vector("猫"))  # nothing learned yet: abstain
-        flaky.up = True
-        asyncio.run(m.arecall("u", "tea"))  # embeds every note: the centroids learn
-        flaky.up = False
-        m.meaning.rest.until = 0
-        found = asyncio.run(m.arecall("u", "猫", important=0, recent=0))
-        self.assertEqual(found.tier, "micro")
-        self.assertIn("Has a cat named Mochi", [r.note.text for r in found.chosen])
-        self.assertIsNone(m.meaning.micro.vector("完全陌生的词语"))  # unknown words: abstain
-
-    def test_the_micro_tier_can_be_left_out(self):
-        m = mneme(embed=Embeddings(toy, name="toy:1"), meaning_micro=False)
-        self.assertIsNone(m.meaning.micro)
 
 
 @unittest.skipIf(Unify is None, "the unify tier is not installed")

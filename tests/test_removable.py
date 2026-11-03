@@ -1,5 +1,5 @@
-"""The optional tiers really are optional: with each one's file deleted (and with all three), everything else still
-works. Each case copies the package, deletes the file, and runs every kind of call in a fresh interpreter."""
+"""The optional tier really is optional: with its file deleted, everything else still works. Each case copies the
+package, deletes the file, and runs every kind of call in a fresh interpreter."""
 
 import os
 import shutil
@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-TIERS = ("meaning/micro.py", "meaning/unify.py")
+UNIFY = "meaning/unify.py"
 
 SMOKE = r'''
 import asyncio, io, json, os, sys
@@ -77,16 +77,11 @@ class RemovableTierTests(unittest.TestCase):
                              env=env, cwd=folder, capture_output=True, text=True, timeout=60)
         self.assertEqual(cli.returncode, 0, cli.stderr[-2000:])
 
-    def test_everything_works_with_all_tiers(self):
+    def test_everything_works_with_the_tier(self):
         self.run_without()
 
-    def test_each_tier_can_be_deleted(self):
-        for tier in TIERS:
-            with self.subTest(tier=tier):
-                self.run_without(tier)
-
-    def test_all_of_them_can_be_deleted(self):
-        self.run_without(*TIERS)
+    def test_the_tier_can_be_deleted(self):
+        self.run_without(UNIFY)
 
 
 if __name__ == "__main__":

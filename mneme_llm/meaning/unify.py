@@ -1,4 +1,4 @@
-"""Tier 3 of meaning: one language for all notes, written by your own chat model.
+"""Tier 2 of meaning: one language for all notes, written by your own chat model.
 
 Notes are kept in whatever language they were written in, and people ask in theirs. This tier has the chat
 model you already use write each note once more in one language of your choice (English by default: most
