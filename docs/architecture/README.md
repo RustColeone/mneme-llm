@@ -1,7 +1,7 @@
 # The architecture page
 
 `index.html` here is a browsable map of mneme-llm, made from the code itself. It starts at the whole package (your
-application, `Mneme`, the parts that own each kind of row, the meaning and decision tiers, the SQLite store) and goes
+application, `Mneme`, the parts that own each kind of row, the meaning tiers and the judge, the SQLite store) and goes
 in: a folder, then a file, where each class is a box around its methods (grouped by the file's `# ---- section ----`
 comments), and finally one function, whose code shows in the pane on the right. **One exchange, end to end**
 (`#/guide/exchange`) follows `aprompt` before a reply and `aobserve` after it through the real functions. Every box

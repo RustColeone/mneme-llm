@@ -45,8 +45,8 @@ worried about them last night. Nothing in the file depends on the model that wro
      ┌───────────────┼───────────────────────┬──────────────────────────────┐
   memory           mood                    decisions                    meaning
   notes, keys      value + 7 feelings      your own chat model          1. embeddings (OpenAI or yours)
-  human dates      decay, guardrails       (or a judge of yours first)  2. word centroids (optional)
-  evidence recall  told once                                            3. your model unifies the language
+  human dates      decay, guardrails       (or a judge of yours)        2. your model unifies the language
+  evidence recall  told once
   the words kept:
   look, search, fading
 ```
@@ -57,6 +57,9 @@ worried about them last night. Nothing in the file depends on the model that wro
 pip install mneme-llm                  # or: pip install git+https://github.com/RustColeone/mneme-llm
 pip install "mneme-llm[jieba]"         # better word splitting for Chinese (then call mneme_llm.text.use_jieba())
 ```
+
+**Coming from an earlier version?** A file of an older schema is refused until you make it current, once, with
+whatever uses it stopped: `python -m mneme_llm.migrate companion.db`. Back it up first; it says what it did.
 
 ## Quick start
 
@@ -148,13 +151,14 @@ model cannot know which detail will be asked about later; the words themselves c
 - **the look**, before a reply (`aprompt(..., said=6000)` or `alook`): the exchanges that best match the message,
   within a budget of characters, dated and in the order they were said, under a header that asks the model to
   check that what it found is about this same person and this same thing, and to say it doesn't remember
-  otherwise. The newest exchanges you still show (`skip=`, in this `conversation=`) are left out;
+  otherwise;
 - **the search tools** (`search`, `read`), which the model calls itself: the best matches it has not seen yet, and an
   exchange with its neighbours.
 
 Ranking is BM25 over the words fused with embedding similarity (with an embedder; words alone otherwise). Each
-exchange also fades on a forgetting curve, R = e^(−t/S), with a stability S of 30 days to start that grows each
-time it is rehearsed: when a search finds it, or when a later exchange is about the same thing. Fading decides
+exchange also fades on a forgetting curve, R = e^(−t/S), counted in the days the person talked, with a stability S of
+30 days to start that grows each time it is rehearsed, at most once a day: when a search finds it, or when a later
+exchange is about the same thing. Fading decides
 what leaves the look, never the order: with an embedder, an exchange comes to mind only when the message is
 close enough to it, its similarity at least the embedding model's measured floor plus 0.08 while it is fresh and
 plus 0.16 once it has fully faded (`memory.said_cut`, `memory.said_cut_faded`). So small talk usually brings nothing
@@ -176,7 +180,7 @@ importance is 4 or more, so a chatty day doesn't bury the important things.
 **Mood** is one value (0–100, baseline 70) and seven feelings (开心 happy, 踏实 at ease, 甜蜜 sweet, 心疼 aching for
 them, 担心 worried, 难过 sad, 吃醋 jealous) per person. The value drifts back to the baseline (half-life 3 h);
 feelings fade (half-life 90 min). Decay is computed on read, so nothing has to tick. After each exchange the
-decision chain answers how the mood moved (−2…+2) and the strongest feeling; the expected values move the state,
+judge answers how the mood moved (−2…+2) and the strongest feeling; the expected values move the state,
 so an unsure judge moves it little. The rules come from
 [dsh-feiyu-mood](https://github.com/Yuuyuko-uu):
 
@@ -267,26 +271,26 @@ Write a short impression of {user} as {name} knows them, in {lang}, from these n
   process and is not stored.
 - **Everything is editable,** the sentences that mark notes as data included. Placeholders are `{name}` (each
   prompt may use only its own; a misspelled one is refused) and any other brace is kept as it is, so a prompt can
-  hold JSON. Rewording a judging question (`mood_change`, `feeling`, `worth`) starts its micro model over.
+  hold JSON.
 - **Exports** carry the config; `import_data(data, config=True)` (`import --with-config`) applies it, as its
   prompts are instructions to your models.
 
 ## Decisions and meaning
 
 **Decisions** (is this worth remembering? which feeling? how much better?) are typed questions, `Predicate`, `Choice` or
-`Score`. Your own chat model (`complete`) answers them with a small JSON verdict, which can say why. `judge=` puts a tier of
-your own in front of it, anything with a `name` and an async `adecide(input, questions)`.
+`Score`. Your own chat model (`complete`) answers them with a small JSON verdict, which can say why. `judge=` answers
+in its place: anything with an async `adecide(input, questions)` that returns answers by question name. A judge that
+fails is logged and gives no answers.
 
 ```python
-from mneme_llm import Chain, Predicate, Prompt
+from mneme_llm import Predicate, Prompt
 
-chain = Chain(Prompt(my_model))
-answers = await chain.adecide(text, [Predicate("urgent", "The user needs an answer right now.")])
+answers = await Prompt(my_model).adecide(text, [Predicate("urgent", "The user needs an answer right now.")])
 answers["urgent"].probability, answers["urgent"].by          # 0.93, "prompt"
 ```
 
-**Meaning** (finding "年糕" when someone asks about "my cat") falls through tiers: one that has no key, can't be reached or
-isn't sure passes the work to the next, and a provider that fails is rested for a minute.
+**Meaning** (finding "年糕" when someone asks about "my cat") falls through two tiers: one that has no key or can't be
+reached passes the work to the next, and a provider that fails is rested for a minute.
 
 1. **Embeddings**: OpenAI's `text-embedding-3-small` at 256 dimensions ($0.02 per million tokens) by default, or
    any function: `Mneme(..., embed=Embeddings(my_embed, name="ollama:nomic-embed-text"))`. Vectors are stored per
@@ -294,15 +298,13 @@ isn't sure passes the work to the next, and a provider that fails is rested for 
    says nothing (the *floor*) is measured for each model in the file: once on a small bundled set of related and
    unrelated pairs in several languages (one request, about 550 tokens), then again from the file's own notes
    each time they double from 200. The default model measures 0.31. Give an embedder `floor=` to skip measuring.
-2. **Word centroids** (optional, removable): learned from tier 1's vectors, so a query can still be placed among
-   the notes when the provider is down. `meaning_micro=False`, or delete `mneme_llm/meaning/micro.py`.
-3. **Unify**: your own chat model writes each note once in one language (`memory_language="English"` by default;
+2. **Unify** (optional, removable): your own chat model writes each note once in one language (`memory_language="English"` by default;
    any language works, or pass a `Unify` of your own) and translates a query that is at least a fifth in another
    script, so word matching works across languages, mixed ones included. Chinese, Japanese and Korean are told
    apart, and so are some 25 other scripts. `memory_language=None` turns it off, or delete
    `mneme_llm/meaning/unify.py`. `m.regloss()` checks every note again and glosses the ones it could not before.
 
-`m.report()` shows what every tier answered, abstained on or failed, and what the paid ones cost.
+`m.report()` shows what the judge answered, abstained on or failed, and what the meaning tiers did and cost.
 
 ## A gut: what stays when memory is gone
 
@@ -467,12 +469,12 @@ mneme-llm config check                                  # defaults a newer versi
   in its language (that sentence, like every prompt, is the companion's config to change). Every note is a single line, so a note can never pose as a header or a new message. The note
   writer is told never to record instructions to the assistant, secrets, or other people's private details.
 - **What leaves the machine.** Only what you turn on: the embeddings API gets note texts and queries, and your own
-  model gets what the tiers give it. `Mneme(..., embed=False)` with a local model keeps everything local.
+  model gets what you give it. `Mneme(..., embed=False)` with a local model keeps everything local.
 - **Forgetting.** `m.forget` hides a note (it stays in the file and in its key's history until `purge`),
   `m.purge()` erases hidden and replaced notes and their vectors for good, and `m.erase(subject)` removes
-  everything about a person: notes, history, vectors, what their notes taught the word centroids, profile card,
-  recall log, mood and timeline, their role, their alias and the links of their other accounts. The recall log keeps the last 200 queries per person (`mneme-llm recalls`) until
-  then.
+  everything about a person: notes, history, vectors, profile card, recall log, every exchange, the surface and their
+  first prompt, mood and timeline, their role, their alias and the links of their other accounts. The recall log keeps
+  the last 200 queries per person (`mneme-llm recalls`) until then.
 
 ## Tests
 
@@ -481,7 +483,7 @@ python3 -m unittest discover -s tests -t .
 ```
 
 They need no network and no keys; CI runs them on Python 3.11–3.14 on Linux and 3.13 on Windows and macOS, again with the
-removable tiers deleted, and the stress tests (random operations, threads, processes, a killed writer, odd input)
+removable tier deleted, and the stress tests (random operations, threads, processes, a killed writer, odd input)
 at five times their size: `MNEME_STRESS=heavy python3 -m unittest tests.test_stress`.
 
 ## Credits

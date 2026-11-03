@@ -1,5 +1,7 @@
 # Pre-release review of mneme-llm 0.1.0
 
+> A dated record of reviews as they happened: it describes the code of its day, not the code now.
+
 **English** · [简体中文](REVIEW.zh-CN.md)
 
 What was checked before the first release, what was fixed, and, in detail, what was not fixed and why. Written on

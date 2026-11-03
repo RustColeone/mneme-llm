@@ -1,4 +1,4 @@
-# mneme-llm 文件格式（结构 1）
+# mneme-llm 文件格式（结构 2）
 
 [English](FORMAT.md) · **简体中文**
 
@@ -6,10 +6,9 @@ mneme-llm 文件是一个 SQLite 3 数据库。仅凭本页内容，就足以用
 读写这样的文件。Python 包只是其中一种实现；下文不依赖它。
 
 时间采用 Unix 秒（浮点数，UTC）。文本为 UTF-8。向量是小端序的
-float32 数组，归一化到长度为 1。`meta.schema_version` 为 `1`：
-读取方必须拒绝版本高于自己已知版本的文件，并且可以迁移版本较低的文件。
-同一版本内新增的列见[结构 1 内的变更](#changes-within-schema-1)；
-写入进程打开较旧的文件时会补上这些列。
+float32 数组，归一化到长度为 1。`meta.schema_version` 为 `2`：
+读取方必须拒绝任何其他版本的文件。
+`python -m mneme_llm.migrate FILE` 会把结构 1 的文件升级到当前版本。
 
 ## 表
 
@@ -32,43 +31,21 @@ float32 数组，归一化到长度为 1。`meta.schema_version` 为 `1`：
 | `superseded_by` | 整数，可为 null | 替换它的笔记的 id（同键） |
 | `deleted_at` | 实数，可为 null | 被遗忘的时间 |
 | `source` | 文本，可为 null | 谁写的：`auto`（模型，未经提示）、`user`、`cli`、`core-diary`… |
-| `gloss` | 文本，可为 null | 用统一语言写的笔记（意思第 3 层），如果写了的话 |
-| `terms` | 文本，可为 null | 缓存：笔记的检索词，以空格分隔；任何时候都可能为 null |
-| `folded` | 文本，可为 null | 缓存：对 `text` 做 Unicode 完整大小写折叠（并把 `i` + U+0307 读作 `i`）后的结果，用于重复检查；可能为 null |
+| `gloss` | 文本，可为 null | 用统一语言写的笔记（意思第 2 层），如果写了的话 |
+| `folded` | 文本 | 对 `text` 做 Unicode 完整大小写折叠（并把 `i` + U+0307 读作 `i`）后的结果，用于重复检查 |
 
 当 `superseded_by` 和 `deleted_at` 都为 null 时，笔记是**有效**的。写入一条带键的笔记，会把同一
 `(space, subject, key)` 下的有效笔记的 `superseded_by` 设好，因此每个键至多只有一条有效笔记。
 `text` 和 `gloss` 从不包含换行（写入时会折叠空白）。
 
-`terms` 属于写入它的分词器（`meta.terms_version`）；分词器不同的读取方会把每个 `terms` 设为 null
-（并清空 `note_terms`），并在使用时重建它们。修改 `text`、`gloss` 或 `key` 的写入进程会把 `terms`
-设为 null，并删除该笔记的 `note_terms` 行。
-`folded` 在写入时填充；比较文本的写入进程会先填充该对象任何为 null 的 `folded`。同一对象的两条
-有效笔记绝不会具有相同的 `folded`，除非两者都有键且键不同。
+同一对象的两条有效笔记绝不会具有相同的 `folded`，除非两者都有键且键不同。
 
 ### `vectors`：意思第 1 层
 
-`(memory_id, embedder)` 主键；`vector`（blob）；`taught`（文本，可为 null：这个向量教给词向量中心的
-检索词，以空格分隔，可能为空；没有教过任何东西时为 null）。`embedder` 指明模型及其设置
-（`openai:text-embedding-3-small:256`）；来自不同 embedder 的向量从不比较。已不存在的笔记的行会在
-`purge` 和 `erase` 时删除。
-
-### `meaning_terms`：意思第 2 层
-
-`(embedder, term)` 主键；`count`（包含该检索词的学习过的笔记数）；`vector`（blob：那些笔记向量的
-滑动平均值，未重新归一化）。只学习笔记，从不学习查询。`meta."meaning_texts:<embedder>"` 记录已学习
-的笔记数，始终等于该 embedder 的 `taught` 不为 null 的向量数（读取方若发现不符，或发现某个检索词
-没有任何被教过的东西，就重置该 embedder 的词向量中心），而 `meta."meaning_version:<embedder>"` 指明
-拆分其检索词的分词器；分词器不同时，这些行不会被使用，下一次学习会先删除它们。
-
-教一条笔记的写入进程会在一个事务里添加向量行、每个检索词的新滑动平均值，以及 `taught` 中的检索词；
-前提是该笔记仍然存在、其文本就是被嵌入的文本（已删除笔记的 id 会被复用），并且它还没有来自该
-embedder 的向量。插入笔记的写入进程会删除其 id 下遗留的任何向量行。删除笔记的写入进程会先收回其
-每个向量教过的东西：对 `taught` 中的每个检索词，`count` 减一，平均值变为
-`(mean · count − vector) / (count − 1)`，当 `count` 变成 0 时该行删除；`meaning_texts` 减一。这不需要
-分词器。不运行这一层的实现，在删除笔记时仍必须这样做，否则已删除笔记的词会留在文件里。重置某个
-embedder 的词向量中心会删除它的行和两个 meta 键，并把它的向量的 `taught` 设为 null；这些向量会从
-文件里重新被教。
+`(memory_id, embedder)` 主键；`vector`（blob）。`embedder` 指明模型及其设置
+（`openai:text-embedding-3-small:256`）；来自不同 embedder 的向量从不比较。只有当笔记仍然存在、其文本就是
+被嵌入的文本时才保存向量（已删除笔记的 id 会被复用），插入笔记的写入进程会删除其 id 下遗留的任何向量行。
+已不存在的笔记的行会在 `purge` 和 `erase` 时删除。
 
 ### `profiles`：印象卡片
 
@@ -91,7 +68,7 @@ embedder 的词向量中心会删除它的行和两个 meta 键，并把它的�
 `id`、`space`、`subject`、`at`、`delta`（实际应用的改变）、`value`（改变后的值）、`emotions`（JSON：
 这个事件添加了什么）、`reason`（推动它的原因，用显示语言：判断模型的句子，或对方的原话；情绪从
 `emotions` 告诉模型）、`confidence`（0–1）、`source`（`user`、`speak-up`、`duty`、`manual`…）、
-`judge`（作出回答的一层或多层，其中置信度最先被计入的那一个：`luna`、`luna+prompt`）。
+`judge`（谁作的回答：宿主程序的聊天模型是 `prompt`，宿主程序自己的判断者则是它写在回答里的名字）。
 
 ### `relationships`：每个人对伴侣来说是谁
 
@@ -105,7 +82,7 @@ embedder 的词向量中心会删除它的行和两个 meta 键，并把它的�
     closeness(t) = min(ceiling, max(floor, closeness − d / 30))       (the creator's does not fade: d = 0)
 
 区间是读取该值时宿主程序所持有的角色区间，因此收窄后的区间会把已经在其内的人保留下来。晚于
-`updated_at` 的某一天（按伴侣所在时区）有一次来往，就加 1，直到角色的上限；在 `updated_at` 之前的
+`updated_at` 的某个聊天日（见 `episodes.day`）有一次来往，就加 1，直到角色的上限；在 `updated_at` 之前的
 时间（时钟被调回）有来往则什么也不改变。速率、区间和时区都是设置，不属于文件。
 
 ### `aliases`：每个人怎么称呼伴侣
@@ -115,43 +92,47 @@ embedder 的词向量中心会删除它的行和两个 meta 键，并把它的�
 
 ### `people`：一个人的几个主体
 
-`(space, subject)` 主键，并在 `(space, person)` 上有索引；`person`（这个人的各行存放在哪个主体名下），
-`updated_at`（链接的时间）。一行表示 `subject` 就是 `person`：每个读者和写者在拿到 `subject` 时都改用
-`person`，所以其他表不会在已链接的主体名下保存任何行。链接只有一层：`person` 本身从不被链接，也从不
-等于 `subject`。链接会把 `subject` 名下的内容移到 `person` 名下：它的笔记、检索词索引行和回忆日志（随后
-和导入之后一样，每个键只保留一条最新的有效笔记，同一段有效文本不出现两次），以及它的心情时间线；两张
-印象卡、两份心情（连同事件链接）或两个称呼中保留 `updated_at` 更新的那一个，两段关系中保留此刻更亲近
-的那一段（相同时保留这个人自己的），起始时间 `since` 取更早的一个。没有这一行的主体就是它自己这个人。
+`(space, subject)` 主键；`person`（这个人的各行存放在哪个主体名下）。一行表示 `subject` 就是 `person`：
+每个读者和写者在拿到 `subject` 时都改用 `person`，所以其他表不会在已链接的主体名下保存任何行。链接只有
+一层：`person` 本身从不被链接，也从不等于 `subject`。链接会把 `subject` 名下的内容移到 `person` 名下：它的
+笔记、检索词索引行和回忆日志（随后和导入之后一样，每个键只保留一条最新的有效笔记，同一段有效文本不出现
+两次），它的心情时间线，以及它的对话连同索引和分布；两张印象卡、两份心情（连同事件链接）或两个称呼中
+保留 `updated_at` 更新的那一个，两段关系中保留此刻更亲近的那一段（相同时保留这个人自己的），起始时间
+`since` 取更早的一个，两个第一句话中保留这个人自己的。两个表层合而为一（见 `surfaces`）。没有这一行的主体
+就是它自己这个人。
 
 ### `note_terms`：检索词索引
 
-`(space, subject, term, memory_id)` 主键，并在 `memory_id` 上有索引。一条笔记的行恰好是它的
-`memories.terms` 中的检索词，每个检索词一行；`terms` 为 null 的笔记没有行。把 `terms` 设为 null 的
-写入进程（新的译文、新的键、另一个分词器）会删除该笔记的行；删除笔记的写入进程也会删除它们；在
-复用的 id 下插入笔记的写入进程会先删除其下遗留的任何行。不使用该索引的读取方可以忽略它，但写入
+`(space, subject, term, memory_id)` 主键。一条有效笔记的行恰好是它的文本、键的各部分和译文的检索词，每个
+检索词一行。改变其中任何一项的写入进程会替换该笔记的行；删除笔记的写入进程会删除它们；在复用的 id 下插入
+笔记的写入进程会先删除其下遗留的任何行。`meta.terms_version` 指明建立这张表和 `episode_terms` 的分词器：
+分词器不同的写入进程在搜索之前，会从文本重建这两张表，并更新它。不使用该索引的读取方可以忽略它，但写入
 进程必须维护它。
 
 ### `episodes`：说过的话，逐字保留
 
 | 列 | 类型 | 含义 |
 |---|---|---|
-| `id` | integer | 主键 |
+| `id` | integer | 主键，自增：一个 id 绝不会用第二次，`surfaces.start_id` 依赖这一点 |
 | `space` | text | 谁的记忆 |
 | `subject` | text | 这段对话是和谁说的（这个人，与笔记相同） |
 | `at` | real | 说的时间 |
+| `day` | integer | 它的聊天日：`at − 4 小时` 在伴侣所在时区的日历日，用公历序数表示（公元 1 年 1 月 1 日是 1），保存时写入 |
 | `conversation` | text | 在哪里说的：宿主程序给这个聊天起的名字（没有则为 `""`），至多 200 个字符 |
 | `lines` | text | JSON `[[who, said], …]`：按顺序的这段对话，至多 40 行；`who` 是至多 80 个字符的一行（没有特定的人则为 `""`），`said` 至多 8,000 个字符（更长的保留开头和结尾） |
 | `size` | integer | 它有多少个不同的检索词（BM25 的长度） |
+| `tokens` | real | 模型大约算它多少词元：把各行写成 `who: said`、每行一条，中日韩字符每个 0.85，其他字符每个 0.3，再加 2.4；保存时写入 |
 | `stability` | real | S，以天计：它淡忘得有多慢（起始为 30，至多 1,000,000） |
 | `recalled_at` | real, null | 最近一次被重温的时间 |
 | `recalls` | integer | 被重温的次数 |
-| `terms` | text, null | 缓存：它的检索词，以空格分隔 |
 
-一段对话在时间 `t` 的保留度是 `R = exp(−(t − max(at, recalled_at)) / (stability · 86400))`。在 `t`
-重温一次，会把 `stability` 设为 `stability · (1.5 + 3 · (1 − R))`，把 `recalled_at` 设为 `t`（取两者中
-较晚的）。一段对话在被搜索找到时会被重温；同一对象后来的一段对话，如果在意义上是离它最近的三段之一，
-并且比该对象的分布（`episode_spread`）中 98% 的配对都更近，也会重温它。它的检索词取自每一行的 `who`
-和 `said`。对话会被直接删除（`forget`、`erase`），连同它在 `episode_terms` 和 `episode_vectors` 中的行。
+一段对话的保留度是 `R = exp(−d / stability)`。它的最后一天是 `max(at, recalled_at)` 的聊天日；`d` 在那一天是
+0，之后是 1 加上这个对象在那天之后、今天之前的聊天日数（`day` 的不同取值）。在比上一次更晚的聊天日重温一次，
+会把 `stability` 设为 `stability · (1.5 + 3 · (1 − R))`（至多 1,000,000），把 `recalled_at` 设为重温的时间
+（取两者中较晚的）；同一天的第二次什么也不改变。一段对话在被搜索找到时会被重温；同一对象后来的一段对话，
+如果在意义上是离它最近的三段之一，并且比该对象的分布（`episode_spread`）中 98% 的配对都更近，也会重温它。
+它的检索词取自各行说的话，不包括说话的人。对话会被直接删除（`forget`、`erase`），连同它在 `episode_terms` 和
+`episode_vectors` 中的行。
 
 ### `episode_terms`、`episode_vectors`、`episode_spread`
 
@@ -163,16 +144,25 @@ episode_id)`，对话中每个不同的检索词一行，并在 `episode_id` 上
 `−1 + i/100` 起的相似度）和 `pairs`（它们的总和）。一对对话在两者中后一段得到向量时计入；一个对象要
 积累到 100 对之后，才会按意义重温。
 
+### `surfaces`：对话最新部分的起点
+
+`(space, subject)` 主键；`start_id`（表层就是这个对象 `id` 大于它的那些对话）；`cleared_at`（最后一次清空的
+时间，紧接在这个对象最晚的 `at` 之后；或者较早部分变成总结时，留下的第一段对话的 `at`）；`summary`（代替
+已离开部分的总结，至多 8,000 个字符，没有则为 `""`）。没有这一行的对象，全部对话都在表层上。这里只保存起点：
+表层的轮次就是对话本身，按 `id` 从新到旧读取，按 `at` 的顺序显示。
+
+把 `old` 链接到 `person` 时，如果 `old` 有这一行或有任何对话：保留较低的 `start_id` 和 `cleared_at`（没有行算
+作 0），总结合并并截到 8,000 个字符，既没有起点也没有总结的行会被删除。
+
+### `first_prompts`：一个人说的第一句话
+
+`(space, subject)` 主键；`text`（至多 8,000 个字符；被丢弃后为 `""`，这样下一条消息不会取代它：这个人没有第一句
+话，但这一行留到 `erase`）；`at`；`by_command`（这个人亲自设置时为 1）；`send`（放在表层前面时为 1）。
+
 ### `recalls`：回忆日志
 
 `id`、`space`、`subject`、`at`、`query`、`chosen`（JSON `[[id, why], …]`）、`skipped`（JSON
 `[[id, reason], …]`）。每个对象保留最新的 200 条。
-
-### `micro_models`：判断第 2 层
-
-`question`（主键：`name:sha1(type|instructions|labels…|tokenizer version)[:12]`）、`kind`、`labels`（JSON
-列表）、`weights`（JSON `{"bias": [...], "w": {"feature": [...]}, "window": [0/1…]}`）、`examples`、
-`updated_at`。特征是检索词的 CRC-32 哈希，掩码到 18 位。不运行微型模型的实现可以忽略这张表。
 
 ### `config`：伴侣的配置
 
@@ -190,8 +180,8 @@ episode_id)`，对话中每个不同的检索词一行，并在 `episode_id` 上
 
 ### `meta`
 
-`key`、`value`。保存 `schema_version`、`terms_version`、`meaning_texts:<embedder>`、
-`meaning_version:<embedder>`、`floor:<embedder>` 以及宿主程序可设置的 `adopted:…` 标志。
+`key`、`value`。保存 `schema_version`、`terms_version`（见 `note_terms`）、`floor:<embedder>` 以及宿主程序可设置
+的 `adopted:…` 标志。
 
 `floor:<embedder>` 是一个 JSON 对象：在这个文件里为该 embedder 模型测量到的内容。`floor` 是相似度
 下限，低于它时笔记对查询什么也说明不了；`version` 是内置的校准集的版本（另一版本的记录会重新测量）；
@@ -206,16 +196,19 @@ episode_id)`，对话中每个不同的检索词一行，并在 `episode_id` 上
 `Mneme.export_data()` / `mneme-llm export` 会写出一个 JSON 对象：
 
 ```json
-{"mneme_llm": 1, "space": "dafeiyu", "exported_at": 1792885075.5,
+{"mneme_llm": 2, "space": "dafeiyu", "exported_at": 1792885075.5,
  "memories": [{"id": 1, "subject": "discord:42", "key": "pet.name", "kind": "fact", "text": "…", "gloss": null, …}],
  "profiles": [...], "moods": [...], "mood_events": [...], "relationships": [...], "aliases": [...],
  "people": [...], "episodes": [{"id": 1, "subject": "discord:42", "at": 1792885000.0, "conversation": "dm",
  "lines": [["Leo", "…"], ["大肥鱼", "…"]], "stability": 30.0, "recalled_at": null, "recalls": 0}],
+ "surfaces": [{"subject": "discord:42", "cleared_at": 1792885000.0, "summary": "…"}],
+ "first_prompts": [{"subject": "discord:42", "text": "…", "at": 1792880000.0, "by_command": 0, "send": 0}],
  "config": [{"key": "companion.name", "value": "大肥鱼", "origin": "file"}, …]}
 ```
 
-各行就是表里的行，以对象的形式给出，不含 `terms` 和 `folded`（对话的 `lines` 是一个列表，不含 `size`
-和 `terms`）。向量、词向量中心、下限、分布和微型模型不导出：它们属于 embedder 和分词器，会在使用时重建或重新测量。导入时，记忆 id 会重新编号，
+各行就是表里的行，以对象的形式给出，不含 `folded`（对话的 `lines` 是一个列表，不含 `size`、`day` 和
+`tokens`；表层不含 `start_id`，因为 id 在另一个文件里没有意义）。向量、下限和分布不导出：它们属于 embedder，
+会在使用时重建或重新测量。导入时，记忆 id 会重新编号，
 `superseded_by` 链接跟随新的编号；每条笔记都要遵守写作规则（单行、至多 500 个字符，空白折叠；
 键转为小写，若不是至多 48 个字符的 `part(.part){0,3}` 就丢弃；未知的种类按 `episode` 读取；
 重要度限制在 1–5，感受限制在 −1…1，`recalls` 限制为 0 或更大；不是 1970 年到 3000 年之间秒数的
@@ -226,7 +219,9 @@ episode_id)`，对话中每个不同的检索词一行，并在 `episode_id` 上
 中已有事件相同的事件不会重复添加。关系会替换对方现有的关系，其亲近度保持在角色对应的区间内
 （宿主程序没有的角色为 0–100）；单人角色（比如第二个创造者）的第二个持有者会被跳过。对话要遵守保存
 规则（各行如上，`at` 是以秒计的时间，`stability` 是正数，否则为 30；没有对象、时间或文字的会被跳过），
-并得到新的 id。链接按链接的方式
+并得到新的 id、聊天日和词元数；已经存在的（同一个人、时间、对话和文字）不会重复添加。表层从这个对象在
+`cleared_at` 之前说的最后一段对话开始，已有表层时按链接的方式合并；已有的第一句话保留，被丢弃的（`""`）
+仍然是丢弃的。链接按链接的方式
 加入（文件里已经链接到另一个人的主体保持原来的链接），随后导入放在任何已链接主体名下的内容并入其本人。只有导入方
 要求时才应用配置（其中的提示词是给导入方模型的指令），逐行应用，键未知或值未通过校验的行会被
 跳过。
@@ -250,32 +245,12 @@ episode_id)`，对话中每个不同的检索词一行，并在 `episode_id` 上
 及以上字符的词也加入中日韩文字串（版本 `4+jieba`）。其他实现的分词方式可能不同；这只
 影响一次查询能找回哪些笔记，不会影响存储的内容。
 
-## 结构 1 内的变更
+## 索引
 
-在这些内容加入之前写入的文件仍按原样打开；写入进程会补上缺失的部分：
-
-- `memories.gloss`、`memories.terms` 和 `memories.folded`（列），以及在
-  `(space, subject, folded)` 上的索引 `memories_folded`；
-- `vectors` 和 `meaning_terms`（表），以及 `vectors.taught`（列）和索引
-  `vectors_untaught`（建在 `embedder` 上，条件是 `taught` 为 null）。在早于
-  `vectors.taught` 的文件中，没有任何向量教过任何内容，而 `meaning_texts` 却
-  表示并非如此，因此第一个读取进程会重置这些词向量中心（它们可能包含查询中的
-  词，且无法撤回），并从已存储的向量重新学习它们；
-- `note_terms`（表）和索引 `note_terms_memory`，以及在
-  `(space, subject, id)` 上的索引 `memories_newest` 和在
-  `(space, subject, importance, id)` 上的索引 `memories_important`。在早于检索词
-  索引的文件中，每条笔记的 `terms` 是否为 null 都有可能；不为 null 的会在首次
-  需要时建立索引（读取进程在使用索引之前，会为某个对象的任意有效笔记建立
-  索引：该笔记的 `terms` 为 null，或者有检索词但没有任何行）；
-- `relationships`（表），以及 `meta` 中的 `floor:<embedder>` 键。没有这些内容的
-  文件没有角色（每个人仍和以前一样计数），下限也尚未测量；
-- `config`（表）。没有行的空间会在下次打开时采用其配置（默认值以及宿主程序
-  的配置文件）；
-- `aliases`（表，mneme-llm 0.2）。没有它的文件没有称呼；mneme-llm 0.1 能打开
-  带有这张表的文件，并且不会动它；
-- `people`（表）及索引 `people_person`（mneme-llm 0.2）。没有它的文件不链接任何人。mneme-llm 0.1
-  能打开带有这张表的文件，但不会读取它：已链接的主体在那里又成了独立的人，并且没有它的笔记；
-- `episodes`、`episode_terms`、`episode_vectors` 和 `episode_spread`（表），以及索引 `episodes_subject`、
-  `episodes_conversation` 和 `episode_terms_episode`（mneme-llm 0.3）。没有它们的文件没有保存任何对话；
-  mneme-llm 0.1 和 0.2 能打开带有这些表的文件，并且不会动它们（那时它们的 `erase` 会把一个人的对话留在
-  文件里）。
+索引不改变文件的含义；创建这些表的写入进程会把它们全部建好：`memories_live`（`(space, subject, deleted_at,
+superseded_by)`）、`memories_key`（`(space, subject, key)`）、`memories_folded`（`(space, subject, folded)`）、
+`memories_newest`（`(space, subject, id)`）、`memories_important`（`(space, subject, importance, id)`）、
+`recalls_subject`（`(space, subject, at)`）、`mood_events_subject`（`(space, subject, at)`）、`people_person`
+（`(space, person)`）、`note_terms_memory`（`memory_id`）、`episodes_subject`（`(space, subject, at)`）、
+`episodes_conversation`（`(space, subject, conversation, at)`）、`episodes_day`（`(space, subject, day)`）、
+`episodes_newest`（`(space, subject, id)`）和 `episode_terms_episode`（`episode_id`）。
