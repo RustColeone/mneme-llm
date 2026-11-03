@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 import unittest
+from datetime import datetime, timezone
 
 from mneme_llm import Mneme, Role
 from mneme_llm.cli import main
@@ -195,6 +196,21 @@ class CommandTests(unittest.TestCase):
         self.assertIn("(leo is your creator; you are very close.)", self.run_cli("context", "leo")[1])
         self.assertEqual(self.run_cli("relate", "amy", "--remove")[1], "removed")
         self.assertEqual(self.run_cli("relate", "amy", "--remove")[1], "(no role)")
+
+
+class TalkingDayTests(unittest.TestCase):
+    def test_closeness_grows_once_a_talking_day_not_once_past_midnight(self):
+        evening = datetime(2026, 3, 1, 23, tzinfo=timezone.utc).timestamp()
+        clock = [evening]
+        m = Mneme(":memory:", "t", embed=False, memory_language=None, zone=timezone.utc, clock=lambda: clock[0])
+        m.relate("amy", "friend", closeness=50)
+        m.relations.seen("amy")
+        clock[0] += 2 * 3600  # 1 a.m.: still the evening's day
+        m.relations.seen("amy")
+        self.assertLess(m.relations.get("amy").closeness, 50.5)
+        clock[0] += 4 * 3600  # 5 a.m.: a new one
+        m.relations.seen("amy")
+        self.assertGreater(m.relations.get("amy").closeness, 50.5)
 
 
 if __name__ == "__main__":

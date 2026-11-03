@@ -190,6 +190,27 @@ class FadingTests(unittest.TestCase):
         clock.now += 60 * DAY
         self.assertGreater(m.episodes.retention(after), before)
 
+    def test_ten_searches_in_a_day_are_one_rehearsal(self):
+        m, clock = companion()
+        kept = m.episodes.keep("u", [("Leo", "my violin teacher Anna moved to Berlin")])
+        clock.now += 60 * DAY
+        for _ in range(10):
+            m.episodes.search("u", "Anna")
+            clock.now += 600
+        once = m.episodes.get(kept.id)
+        self.assertEqual((once.recalls, once.stability), (1, 45.0))
+        clock.now += DAY
+        m.episodes.search("u", "Anna")  # the next talking day: another
+        self.assertEqual(m.episodes.get(kept.id).recalls, 2)
+
+    def test_a_rehearsal_late_at_night_is_the_same_day_as_the_evening(self):
+        m, clock = companion(Clock(datetime(2026, 3, 1, 23, tzinfo=UTC).timestamp()))
+        kept = m.episodes.keep("u", [("Leo", "Anna")])
+        m.episodes.search("u", "Anna")
+        clock.now += 3 * 3600  # 2 a.m.
+        m.episodes.search("u", "Anna")
+        self.assertEqual(m.episodes.get(kept.id).recalls, 1)
+
     def test_the_spread_needs_enough_pairs_before_it_says_what_is_close(self):
         bins = [0] * episodes_module.BINS
         self.assertIsNone(threshold(bins, 10))

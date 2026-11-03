@@ -4,9 +4,9 @@
                 friend, acquaintance, or a role of the host's own. Each role keeps closeness within its band, so
                 family never falls below 60 however much time passes, and an acquaintance never rises above 60
                 until the host calls them a friend
-    closeness   grows by one point on each day the person talks to the companion, up to the role's ceiling, and
-                fades by one point for every 30 days without them, down to its floor (computed when read, and always
-                within the role's band as the host has it now)
+    closeness   grows by one point on each talking day (`dates.talking_day`) the person talks to the companion, up to
+                the role's ceiling, and fades by one point for every 30 days without them, down to its floor (computed
+                when read, and always within the role's band as the host has it now)
     weight      how much the person's words move the mood: 0.5 at closeness 0, 1.0 at 50, 1.5 at 100. A person
                 with no role counts 1.0, as everyone did before roles existed
     telling     `line()` says it for the system prompt ("(Leo is your creator; you are very close.)")
@@ -137,8 +137,8 @@ class Relations(Speaks, Resolves):
         return Relationship(subject, role, float(closeness), since, updated)
 
     def seen(self, subject: str) -> Relationship | None:
-        """A contact: the first one on a day (in the companion's zone) grows closeness by `growth`. A person with no
-        role is left without one. A clock that went back changes nothing (time never moves backwards here)."""
+        """A contact: the first one on a talking day (in the companion's zone) grows closeness by `growth`. A person with
+        no role is left without one. A clock that went back changes nothing (time never moves backwards here)."""
         with self.writing(subject) as subject:
             now = self.clock()
             present = self.get(subject, now)
@@ -146,7 +146,7 @@ class Relations(Speaks, Resolves):
                 return present
             kind = self._role(present.role)
             closeness = present.closeness
-            if dates.local(present.updated_at, self.zone).date() < dates.local(now, self.zone).date():
+            if dates.talking_day(present.updated_at, self.zone) < dates.talking_day(now, self.zone):
                 closeness = max(closeness, min(closeness + self.growth, kind.ceiling))  # never lowered by a visit
             self.store.execute("update relationships set closeness = ?, updated_at = ? where space = ? and "
                                "subject = ?", (closeness, now, self.space, subject))

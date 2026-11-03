@@ -157,7 +157,7 @@ class Memory(Speaks, Resolves):
         """Keep a note; returns it (or the existing note it repeats), or None when an automatic note is over quota.
 
         `source="auto"` marks notes a model chose to keep without being asked; at most `daily_quota` of those per
-        subject per day are kept unless they are important (4+). Anything else (the person asked, an import)
+        subject per talking day are kept unless they are important (4+). Anything else (the person asked, an import)
         always lands.
         """
         return self.keep(subject, text, **options)[1]
@@ -696,9 +696,8 @@ class Memory(Speaks, Resolves):
         return [Note.of(row) for row in self.store.rows(sql, (self.space, subject) + tuple(parameters))]
 
     def _auto_today(self, subject: str, now: float) -> int:
-        today = dates.local(now, self.zone).replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
         row = self.store.row("select count(*) as n from memories where space = ? and subject = ? and source = 'auto'"
-                             " and created_at >= ?", (self.space, subject, today))
+                             " and created_at >= ?", (self.space, subject, dates.day_began(now, self.zone)))
         return row["n"]
 
     def _prune(self, subject: str, now: float, keep: int | None = None) -> None:

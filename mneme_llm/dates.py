@@ -27,6 +27,12 @@ def talking_day(timestamp: float, zone: tzinfo | None = None) -> int:
     return (local(timestamp, zone) - timedelta(hours=DAY_STARTS)).toordinal()
 
 
+def day_began(timestamp: float, zone: tzinfo | None = None) -> float:
+    """When the talking day of a moment began."""
+    day = (local(timestamp, zone) - timedelta(hours=DAY_STARTS)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return (day + timedelta(hours=DAY_STARTS)).timestamp()
+
+
 def when(timestamp: float, now: float, zone: tzinfo | None = None, lang="en") -> str:
     """When `timestamp` is, relative to `now`, in calendar days of `zone` (past or future), in `lang` (a code, or
     a companion's `i18n.Words`)."""

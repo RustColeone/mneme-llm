@@ -2,7 +2,7 @@ import json
 import unittest
 from datetime import datetime, timezone
 
-from mneme_llm import Mneme
+from mneme_llm import Mneme, dates
 from mneme_llm.dates import when
 from mneme_llm.memory import Memory
 from mneme_llm.store import Store
@@ -228,6 +228,23 @@ class MovingTests(unittest.TestCase):
         store.close()
         with self.assertRaises(RuntimeError):
             Store(path)
+
+
+class TalkingDayQuotaTests(unittest.TestCase):
+    def test_the_daily_quota_turns_with_the_talking_day(self):
+        moment = [datetime(2026, 3, 1, 23, tzinfo=UTC).timestamp()]
+        m = Memory(Store(":memory:"), "test", zone=UTC, clock=lambda: moment[0], daily_quota=2)
+        for text in ("one", "two"):
+            m.keep("u", text, source="auto")
+        moment[0] += 3 * 3600  # 2 a.m.: still the evening's day
+        self.assertEqual(m.keep("u", "three", source="auto")[0], "over quota")
+        moment[0] += 2 * 3600  # 4 a.m.: a new one
+        self.assertEqual(m.keep("u", "four", source="auto")[0], "kept")
+
+    def test_a_talking_day_began_at_four_in_the_morning(self):
+        night = datetime(2026, 3, 2, 3, tzinfo=UTC).timestamp()
+        self.assertEqual(dates.day_began(night, UTC), datetime(2026, 3, 1, 4, tzinfo=UTC).timestamp())
+        self.assertEqual(dates.day_began(night + 3600, UTC), night + 3600)
 
 
 if __name__ == "__main__":
