@@ -1,4 +1,5 @@
-"""Turning text into search terms, the same way for notes and for queries.
+"""Turning text into search terms, the same way for notes and for queries, and the rest of what any part does to a
+value it is given: how many tokens it is, cleaning, checking and cutting it.
 
 Words of any alphabet (Latin with its accents, Cyrillic, Greek, Arabic, Hebrew, Devanagari…, combining marks
 included) are case-folded, possessive 's is dropped, and English plurals get a light trim on ASCII words; runs of
@@ -10,6 +11,7 @@ installed), its words are added on top. Function words and characters that would
 
 from __future__ import annotations
 
+import math
 import re
 import unicodedata
 
@@ -196,6 +198,22 @@ def required(value, what: str) -> str:
     if not value.strip():
         raise ValueError(f"{what} must not be empty")
     return value
+
+
+def query(value) -> str:
+    """`value`, which must be a string, as a search takes it (cleaned); TypeError otherwise."""
+    if not isinstance(value, str):
+        raise TypeError(f"a query must be a string, not {type(value).__name__}")
+    return clean(value)
+
+
+def number(value, default: float, low: float, high: float) -> float:
+    """`value` as a finite number from `low` to `high`, or `default` when it is none."""
+    try:
+        value = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return default
+    return max(low, min(high, value)) if math.isfinite(value) else default
 
 
 def clip(text: str, limit: int) -> str:

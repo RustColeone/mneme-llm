@@ -1,9 +1,10 @@
 import asyncio
 import unittest
+from unittest import mock
 
 from mneme_llm import Embeddings, Mneme
 from mneme_llm.providers import Unavailable
-from mneme_llm.meaning import Meaning, cosine, normalize, pack, unpack
+from mneme_llm.meaning import Matrix, Meaning, cosine, normalize, pack, unpack, vectors
 try:  # the tier is removable; its tests are skipped where it was removed
     from mneme_llm.meaning.unify import Unify
 except ImportError:
@@ -47,6 +48,33 @@ class VectorTests(unittest.TestCase):
     def test_pack_and_cosine(self):
         vector = normalize([3.0, 4.0])
         self.assertAlmostEqual(cosine(unpack(pack(vector)), vector), 1.0, places=5)
+
+    def test_a_matrix_finds_the_same_with_and_without_numpy(self):
+        rows = [normalize(row) for row in ([1.0, 0.0], [0.0, 1.0], [1.0, 1.0])]
+
+        def filled():
+            matrix = Matrix()
+            for index, row in enumerate(rows):
+                matrix.add(index + 1, row, float(index))
+            matrix.add(9, [1.0, 0.0, 0.0], 9.0)  # (another length: counted, left out)
+            return matrix
+        query = normalize([1.0, 0.2])
+        fast = filled()
+        fast_order = fast.order(fast.similarities(query))
+        fast_nearest = fast.nearest(fast.similarities(query), 2.0, 0.1, 1)
+        with mock.patch.object(vectors, "numpy", None):
+            slow = filled()
+            values = slow.similarities(query)
+            self.assertEqual((slow.order(values), slow.nearest(values, 2.0, 0.1, 1)), (fast_order, fast_nearest))
+            self.assertEqual((slow.read, slow.count, slow.last), (4, 3, 9))
+        self.assertEqual(Matrix().similarities(query), [])
+
+    def test_arecall_compares_the_notes_in_one_go(self):
+        m = mneme(embed=Embeddings(toy, name="toy:1"))
+        for index in range(50):
+            m.remember("u", f"note {index} about my cat", kind="fact")
+        with mock.patch("mneme_llm.meaning.cosine", side_effect=AssertionError("one pair at a time")):
+            self.assertTrue(asyncio.run(m.arecall("u", "猫", important=0, recent=0)).chosen)
 
 
 class EmbeddingTierTests(unittest.TestCase):

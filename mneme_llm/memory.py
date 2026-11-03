@@ -340,14 +340,14 @@ class Memory(Speaks, Resolves):
         the newest episodes, so a fresh conversation has something to go on.
         """
         subject = self.who(subject)
-        return self._rank(subject, self._query(query), Found(), limit, budget, important, recent, log)
+        return self._rank(subject, texts.query(query), Found(), limit, budget, important, recent, log)
 
     async def arecall(self, subject: str, query: str, *, limit: int = 6, budget: int = 800, important: int = 2,
                       recent: int = 1, log: bool = True, complete=None) -> Recall:
         """`recall` with the meaning tiers: notes close in meaning count as evidence too, in any language.
         `complete` gives the unify tier a chat model for this call."""
         subject = self.who(subject)
-        query = self._query(query)
+        query = texts.query(query)
         window = self._window(subject) if self.meaning is not None and query.strip() else []
         if not window:
             return self._rank(subject, query, Found(), limit, budget, important, recent, log)
@@ -678,12 +678,6 @@ class Memory(Speaks, Resolves):
                 if self.store.execute(f"update memories set gloss = ? where id = ? and space = ?{only_new}",
                                       (texts.clip(gloss, MAX_TEXT) or None, id, self.space)).rowcount:
                     self._index([self.get(id)])
-
-    @staticmethod
-    def _query(query) -> str:
-        if not isinstance(query, str):
-            raise TypeError(f"a query must be a string, not {type(query).__name__}")
-        return texts.clean(query)
 
     def _same_text(self, subject: str, text: str) -> list[Note]:
         """Live notes with the same words, whatever the letters' case in any alphabet ("Straße" is "STRASSE"): by

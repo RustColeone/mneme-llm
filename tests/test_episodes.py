@@ -8,7 +8,7 @@ from unittest import mock
 from mneme_llm import Embeddings, Mneme, episodes as episodes_module
 from mneme_llm.dates import talking_day
 from mneme_llm.episodes import Episodes, lines_of, threshold
-from mneme_llm.meaning import FLOOR, Found
+from mneme_llm.meaning import FLOOR, Found, vectors
 from mneme_llm.store import Store
 from mneme_llm.tools import Toolbox
 
@@ -198,7 +198,8 @@ class FadingTests(unittest.TestCase):
             m.episodes.search("u", "Anna")
             clock.now += 600
         once = m.episodes.get(kept.id)
-        self.assertEqual((once.recalls, once.stability), (1, 45.0))
+        self.assertEqual(once.recalls, 1)
+        self.assertAlmostEqual(once.stability, 30 * (1.5 + 3 * (1 - math.exp(-1 / 30))))  # ten would be over 1000
         clock.now += DAY
         m.episodes.search("u", "Anna")  # the next talking day: another
         self.assertEqual(m.episodes.get(kept.id).recalls, 2)
@@ -260,18 +261,69 @@ class CutTests(unittest.TestCase):
         self.assertEqual(len(asyncio.run(low.episodes.alook("u", "hello", cut=low.said_cut))), 1)
 
 
-class ShortenTests(unittest.TestCase):
-    def test_a_faded_exchange_is_shown_in_part_and_read_whole(self):
+class MoreTests(unittest.TestCase):
+    def setUp(self):
+        self.m, self.clock = companion()
+        self.ids = [self.m.episodes.keep("u", [("Leo", f"Anna part {index}")]).id for index in range(30)]
+
+    def test_more_are_found_past_the_budget_by_relevance_alone(self):
+        one = len(self.m.episodes.shown(self.m.episodes.get(self.ids[-1]))) + 2
+        self.assertEqual(len(self.m.episodes.look("u", "Anna", budget=one)), 1)
+        found = self.m.episodes.look("u", "Anna", budget=one, more=3)
+        self.assertEqual(len(found), 4)
+        self.assertEqual(found, sorted(found, key=lambda episode: (episode.at, episode.id)))
+        self.assertEqual(len(self.m.episodes.look("u", "Anna", budget=0, more=2)), 2)
+
+    def test_more_rehearse_nothing(self):
+        self.m.episodes.look("u", "Anna", more=5)
+        self.assertEqual({self.m.episodes.get(id).recalls for id in self.ids}, {0})
+
+    def test_a_look_ranks_once(self):
+        with mock.patch.object(self.m.episodes, "_ranked", wraps=self.m.episodes._ranked) as ranked:
+            self.m.look("u", "Anna", search=True)
+            asyncio.run(self.m.alook("u", "Anna", search=True))
+        self.assertEqual(ranked.call_count, 2)
+
+    def test_a_look_reads_no_further_than_its_budget_takes(self):
+        one = len(self.m.episodes.shown(self.m.episodes.get(self.ids[-1]))) + 2
+        asked = []
+        rows_in = self.m.store.rows_in
+        self.m.store.rows_in = lambda sql, values, parameters=(): asked.append(len(list(values))) or rows_in(
+            sql, values, parameters)
+        self.m.episodes.look("u", "Anna", budget=one)
+        self.assertLessEqual(sum(asked[-1:]), episodes_module.READ)
+
+
+class SurfaceReadTests(unittest.TestCase):
+    def test_after_is_the_newest_first_within_a_budget_of_tokens(self):
+        m, _ = companion()
+        kept = [m.episodes.keep("u", [("Leo", f"第{index}句")]) for index in range(200)]
+        self.assertEqual([e.id for e in m.episodes.after("u", kept[197].id)], [kept[199].id, kept[198].id])
+        self.assertEqual(len(m.episodes.after("u", 0)), 200)
+        two = kept[199].tokens + kept[198].tokens
+        self.assertEqual([e.id for e in m.episodes.after("u", 0, two)], [kept[199].id, kept[198].id])
+        self.assertEqual([e.id for e in m.episodes.after("u", 0, 0)], [kept[199].id])
+        self.assertEqual([e.id for e in m.episodes.after("u", 0, before=kept[1].id)], [kept[0].id])
+
+    def test_the_tokens_of_the_last_days(self):
         m, clock = companion()
-        long = "Anna " + "x" * 3000 + " Berlin"
-        kept = m.episodes.keep("u", [("Leo", long)])
-        fresh = m.episodes.look("u", "Anna Berlin", shorten=True)
-        self.assertEqual(len(fresh[0].lines[0][1]), episodes_module.SHOWN_LINE)
-        talk(m, clock, 400)
-        faded = m.episodes.look("u", "Anna Berlin", shorten=True)[0].lines[0][1]
-        self.assertEqual(len(faded), int(episodes_module.SHOWN_LINE * episodes_module.FLOOR))
-        self.assertTrue(faded.startswith("Anna") and faded.endswith("Berlin"))
-        self.assertEqual(m.episodes.get(kept.id).lines[0][1], long)  # (only the look's copy is shorter)
+        first = m.episodes.keep("u", [("Leo", "一")])
+        clock.now += DAY
+        second = m.episodes.keep("u", [("Leo", "二二二")])
+        clock.now += DAY
+        third = m.episodes.keep("u", [("Leo", "三")])
+        self.assertAlmostEqual(m.episodes.tokens_after("u", 0), first.tokens + second.tokens + third.tokens)
+        self.assertAlmostEqual(m.episodes.tokens_after("u", first.id), second.tokens + third.tokens)
+        self.assertAlmostEqual(m.episodes.tokens_after("u", 0, days=2), second.tokens + third.tokens)
+        self.assertAlmostEqual(m.episodes.tokens_after("u", 0, days=9), first.tokens + second.tokens + third.tokens)
+        self.assertEqual(m.episodes.tokens_after("nobody", 0, days=1), 0)
+
+    def test_an_exchange_keeps_its_day_and_tokens(self):
+        m, clock = companion()
+        kept = m.episodes.keep("u", [("Leo", "第一句"), ("Momo", "好")])
+        self.assertEqual(kept.day, talking_day(clock.now, UTC))
+        self.assertEqual(kept.tokens, episodes_module.cost(kept.lines))
+        self.assertEqual(m.episodes.talking_days("u"), [kept.day])
 
 
 class MeaningTests(unittest.TestCase):
@@ -317,7 +369,7 @@ class MeaningTests(unittest.TestCase):
         query = "the cat and the exam"
         found = asyncio.run(m.episodes._found(query))
         with_numpy = m.episodes._ranked("u", query, found)
-        with mock.patch.object(episodes_module, "numpy", None):
+        with mock.patch.object(episodes_module, "numpy", None), mock.patch.object(vectors, "numpy", None):
             m.episodes._matrices.clear()
             self.assertEqual(m.episodes._ranked("u", query, found), with_numpy)
 

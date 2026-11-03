@@ -281,17 +281,17 @@ class Mood(Speaks, Resolves):
                     self.store.execute(
                         "insert or replace into moods (space, subject, value, emotions, updated_at, last_event, "
                         "told_event) values (?, ?, ?, ?, ?, null, null)",
-                        (self.space, subject, _number(row.get("value"), s.baseline, s.floor, s.ceiling),
+                        (self.space, subject, texts.number(row.get("value"), s.baseline, s.floor, s.ceiling),
                          dumps(_feelings(row.get("emotions"))), _moment(row.get("updated_at"), now)))
             for row in events:
                 subject = _subject(row)
                 if subject is None:
                     continue
-                event = (self.space, subject, _moment(row.get("at"), now), _number(row.get("delta"), 0.0, -100, 100),
-                         _number(row.get("value"), s.baseline, s.floor, s.ceiling),
+                event = (self.space, subject, _moment(row.get("at"), now), texts.number(row.get("delta"), 0.0, -100, 100),
+                         texts.number(row.get("value"), s.baseline, s.floor, s.ceiling),
                          dumps(_feelings(row.get("emotions"))),
                          texts.clip(row["reason"], 200) if isinstance(row.get("reason"), str) else "",
-                         _number(row.get("confidence"), 0.0, 0.0, 1.0), _word(row.get("source"), "import"),
+                         texts.number(row.get("confidence"), 0.0, 0.0, 1.0), _word(row.get("source"), "import"),
                          _word(row.get("judge"), "import"))
                 columns = "space, subject, at, delta, value, emotions, reason, confidence, source, judge"
                 if self.store.row(f"select 1 from mood_events where ({columns}) = (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -341,14 +341,6 @@ def _subject(row) -> str | None:
     return subject if isinstance(subject, str) and subject.strip() else None
 
 
-def _number(value, default: float, low: float, high: float) -> float:
-    try:
-        value = float(value)
-    except (TypeError, ValueError, OverflowError):
-        return default
-    return max(low, min(high, value)) if math.isfinite(value) else default
-
-
 def _moment(value, default: float) -> float:
     found = dates.seconds(value)
     return default if found is None else found
@@ -367,7 +359,7 @@ def _feelings(value) -> dict[str, float]:
             value = {}
     if not isinstance(value, dict):
         return {}
-    found = {str(key)[:40]: _number(amount, 0.0, 0.0, 100.0) for key, amount in value.items()}
+    found = {str(key)[:40]: texts.number(amount, 0.0, 0.0, 100.0) for key, amount in value.items()}
     return {key: amount for key, amount in found.items() if amount > 0}
 
 

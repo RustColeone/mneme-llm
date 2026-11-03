@@ -306,23 +306,20 @@ class Mneme:
         `own`: this is the person's own conversation with the companion, what they said to it in the first place, so no
         data label. Their same question asked before is left out: all it holds is what she said then, and an "I don't
         remember" found again is said again. "" when nothing bears on it and there is no search."""
-        came = self.episodes.look(subject, query, budget=self._said(budget), cut=self.said_cut)
-        if search and found:
-            came += self.episodes.search(subject, query, limit=found, seen={item.id for item in came}, refresh=False)
+        came = self.episodes.look(subject, query, budget=self._said(budget), cut=self.said_cut,
+                                  more=found if search else 0)
         return self._came_back(came, query, user_name, search, own)
 
     async def alook(self, subject: str, query: str = "", *, user_name: str | None = None, budget: int | None = None,
                     search: bool = False, own: bool = False, found: int = SEARCHED) -> str:
         """`look` with meaning (the query's embedding, when it comes within a few seconds)."""
-        came = await self.episodes.alook(subject, query, budget=self._said(budget), cut=self.said_cut)
-        if search and found:
-            came += await self.episodes.asearch(subject, query, limit=found, seen={item.id for item in came},
-                                                refresh=False)
+        came = await self.episodes.alook(subject, query, budget=self._said(budget), cut=self.said_cut,
+                                         more=found if search else 0)
         return self._came_back(came, query, user_name, search, own)
 
     def _came_back(self, came: list[Episode], query: str, user_name: str | None, search: bool, own: bool) -> str:
         same = "".join(query.split())
-        came = sorted((item for item in came if "".join(item.lines[0][1].split()) != same), key=lambda item: item.at)
+        came = [item for item in came if "".join(item.lines[0][1].split()) != same]
         return self.episodes.render(came, user_name=user_name, search=search, own=own)
 
     def _said(self, budget: int | None) -> int:

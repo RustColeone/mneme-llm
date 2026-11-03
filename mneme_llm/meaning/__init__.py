@@ -22,7 +22,7 @@ from typing import Sequence
 from ..providers import Rest, Unavailable
 from . import calibrate
 from .embedders import FLOOR, Embedder, Embeddings, OpenAIEmbeddings
-from .vectors import Vector, cosine, drop, normalize, pack, unpack, usable
+from .vectors import Matrix, Vector, cosine, drop, normalize, numpy, pack, raw, unpack, usable
 
 log = logging.getLogger("mneme_llm.meaning")
 
@@ -78,13 +78,21 @@ class Meaning:
         gives the unify tier a chat model for this call."""
         await self.prepare_vectors(notes)
         found = await self.query(query, complete=complete)
-        if found.vector is not None:  # (a vector of another length is from another model under the same name)
-            found.similarities = {id: cosine(found.vector, vector)
-                                  for id, vector in self.vectors([note.id for note in notes]).items()
-                                  if len(vector) == len(found.vector)}
+        if found.vector is not None:
+            found.similarities = self._similar(found.vector, [note.id for note in notes])
         elif self.unify is not None and self.unify.ready(complete):  # nothing placed it: glosses help word matching
             found.glosses = await self.unify.glosses(notes, complete=complete)
         return found
+
+    def _similar(self, vector: Vector, ids: Sequence[int]) -> dict[int, float]:
+        """How close each of these notes is to `vector`. A vector of another length is from another model under the
+        same name, and is left out."""
+        matrix, size = Matrix(), 4 * len(vector)
+        for row in self.store.rows_in("select memory_id, vector from vectors where embedder = ? and memory_id in ({})",
+                                      ids, (self.name,)):
+            if len(row["vector"]) == size:
+                matrix.add(row["memory_id"], raw(row["vector"]))
+        return dict(zip(matrix.ids, map(float, matrix.similarities(vector))))
 
     async def query(self, text: str, *, complete=None) -> Found:
         """The best the tiers can do for a query alone (an empty `Found` when none can)."""
@@ -203,5 +211,5 @@ class Meaning:
         log.info("embeddings unavailable for %.0f s: %s", self.rest.seconds, self.rest.error)
 
 
-__all__ = ["Embedder", "Embeddings", "FLOOR", "Found", "Meaning", "OpenAIEmbeddings", "Vector", "cosine", "drop",
-           "normalize", "pack", "unpack"]
+__all__ = ["Embedder", "Embeddings", "FLOOR", "Found", "Matrix", "Meaning", "OpenAIEmbeddings", "Vector", "cosine",
+           "drop", "normalize", "numpy", "pack", "raw", "unpack"]

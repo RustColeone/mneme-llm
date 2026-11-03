@@ -198,7 +198,7 @@ class Relations(Speaks, Resolves):
                 if kind.unique and self.store.row("select 1 from relationships where space = ? and role = ? and "
                                                   "subject != ?", (self.space, role, subject)) is not None:
                     continue
-                closeness = _number(row.get("closeness"), kind.start, kind.floor, kind.ceiling)
+                closeness = texts.number(row.get("closeness"), kind.start, kind.floor, kind.ceiling)
                 updated = dates.seconds(row.get("updated_at"))
                 since = dates.seconds(row.get("since"))
                 self.store.execute(
@@ -219,11 +219,3 @@ class Relations(Speaks, Resolves):
             closeness -= max(0.0, now - row["updated_at"]) / (self.fade_days * DAY)
         closeness = min(kind.ceiling, max(kind.floor, closeness))  # within the band, as the host has it now
         return Relationship(row["subject"], row["role"], closeness, row["since"], row["updated_at"])
-
-
-def _number(value, default: float, low: float, high: float) -> float:
-    try:
-        value = float(value)
-    except (TypeError, ValueError, OverflowError):
-        return default
-    return max(low, min(high, value)) if math.isfinite(value) else default
