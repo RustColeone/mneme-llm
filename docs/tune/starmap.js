@@ -2,14 +2,14 @@
 // (dsh-mneme-llm, lib/starmap.js and plugin/client.js), from her gut file as it is open here. Plain functions with no
 // page in sight, so they run in node as well as in the browser; the drawing takes the canvas it draws on.
 //
-// Her 24 ends sit evenly around a circle, the first at the top. Every row of her heart (one thing she can notice, such
+// Her 26 ends sit evenly around a circle, the first at the top. Every row of her heart (one thing she can notice, such
 // as topic=rain or close=high, with a weight for each end) is a star: it sits where that row alone pulls her (a softmax
 // of its weights, each end's share drawn out along that end's arm), as bright as the row leans at all (its strongest
 // weight less its weakest), in the colour of the bar of its strongest end. The arms are how much more or less she
 // feels each end now than the day she was born, over her own latest lessons; the day she was born is her starter, a
 // file her host gives her, lived again here as mneme_llm.gut's `Net.start` lives it (the same seeded shuffle). Each
 // person she knows is one star more, placed the same way by what is different with them (their table's bias).
-// In three dimensions her 13 bars are spread evenly over a sphere, the first at the top, and the two ends of a bar sit
+// In three dimensions her 14 bars are spread evenly over a sphere, the first at the top, and the two ends of a bar sit
 // side by side, a little apart.
 //
 // Her heart is as the file keeps it: as of her last sleep. The lessons since are learned again when she wakes.
@@ -28,7 +28,7 @@
   const GAIN = 3.0 // an arm grows by this much for each 1 of strength she has gained on an end (0 to 1)
   const APART = 12 * Math.PI / 180 // in 3D, each end of a bar this far from the bar's own direction
   // and how each bar's pair is turned about its direction, in degrees (`TURNS` in the plugin's lib/starmap.js)
-  const TURNS = [108, 163, 173, 173, 165, 163, 160, 163, 173, 178, 173, 0, 0]
+  const TURNS = [114, 5, 88, 12, 143, 53, 144, 63, 64, 25, 114, 0, 0, 94]
   const BLANK = -3.0 // where every end starts before anything is learned (`BLANK` in gut.py)
   const BORN_PASSES = 4, BORN_RATE = 0.15 // her starter, lived again (`BORN_PASSES`, `BORN_RATE`)
   const OLD = ['happy', 'calm', 'sweet', 'tender', 'worried', 'sad', 'jealous'] // a starter from 0.4 knew these
@@ -89,8 +89,12 @@
   /** One row of weights for each thing she can notice, one column for each end, and a bias (`Table` in gut.py). */
   class Table {
     constructor (kept = null, blank = BLANK) {
-      this.w = new Map(Object.entries(kept?.w || {}))
-      this.b = kept?.b ? [...kept.b] : ENDS.map(() => blank)
+      // a table from before the last bar was added is widened: what it did not know starts as nothing
+      const n = ENDS.length
+      this.w = new Map(Object.entries(kept?.w || {}).map(([key, row]) => [key, row.length >= n ? row
+        : [...row, ...Array(n - row.length).fill(0.0)]]))
+      const b = kept?.b ? [...kept.b] : []
+      this.b = [...b, ...Array(Math.max(0, n - b.length)).fill(blank)]
     }
 
     scores (x) {
@@ -303,7 +307,7 @@
     const stars = rows.map(([key, row, bright]) => [...spot(row, reach), bright, strongest(row), key,
       ...spot3(row, reach)])
     const people = Object.entries(kept.people || {}).map(([subject, found]) => {
-      const b = found.table?.b || ENDS.map(() => 0.0)
+      const b = new Table(found.table, 0.0).b
       return { subject, x: spot(b, reach)[0], y: spot(b, reach)[1], at: spot3(b, reach),
         weight: T.personWeight(kept, settings, subject), lessons: Math.round(found.n), end: strongest(b) }
     }).sort((one, other) => other.weight - one.weight || compare(one.subject, other.subject))

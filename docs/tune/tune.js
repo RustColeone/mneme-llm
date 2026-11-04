@@ -27,7 +27,8 @@
     ['courage', '胆量', ['timid', '胆小'], ['bold', '大胆']],
     ['sociability', '社交', ['withdrawn', '内向'], ['outgoing', '外向']],
     ['jealousy', '吃醋', null, ['jealous', '吃醋']],
-    ['aching', '心疼', null, ['aching', '心疼']]
+    ['aching', '心疼', null, ['aching', '心疼']],
+    ['trust', '信任', ['suspicious', '猜疑'], ['trusting', '信任']]
   ]
   const ENDS = BARS.flatMap(([, , left, right]) => (left ? [left[0], right[0]] : [right[0]]))
   const CHINESE = Object.fromEntries(BARS.flatMap(([bar, zh, left, right]) =>

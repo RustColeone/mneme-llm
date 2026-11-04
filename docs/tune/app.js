@@ -741,20 +741,20 @@
       hint(t('settings.sensitivityHint')))
   }
 
-  // One colour for each of her 13 bars, as the DSH plugin's panel has them: the first end of a bar a deeper shade,
+  // One colour for each of her 14 bars, as the DSH plugin's panel has them: the first end of a bar a deeper shade,
   // the second (and a one-sided bar's only end) a lighter one, stepped for each theme.
   const COLOURS = {
     dark: {
       deep: ['#ca5551', '#12976b', '#9167ca', '#a57710', '#128eaa', '#c35481', '#54932d', '#6676d8', '#c36109',
-        '#13938f', '#b05bab', '#888510', '#1485d4'],
+        '#13938f', '#b05bab', '#888510', '#1485d4', '#0f919c'],
       light: ['#ffaba3', '#72ddae', '#d0b4fd', '#ecbb64', '#58d6f9', '#fea6c5', '#a1d687', '#b2c0ff', '#fdb080',
-        '#4fddd7', '#f0a7ea', '#cbca69', '#91caff']
+        '#4fddd7', '#f0a7ea', '#cbca69', '#91caff', '#4ddae9']
     },
     light: {
       deep: ['#972e2d', '#0c6849', '#674098', '#735100', '#0b6276', '#912d59', '#316802', '#424da5', '#884204',
-        '#0f6562', '#81357d', '#5d5b0a', '#0a5c94'],
+        '#0f6562', '#81357d', '#5d5b0a', '#0a5c94', '#0d646c'],
       light: ['#ce766f', '#44a87f', '#9f81cb', '#b68a37', '#22a2c0', '#c97493', '#73a25b', '#7d8cd7', '#c87e4d',
-        '#0ca8a3', '#b878b3', '#99973d', '#5498d3']
+        '#0ca8a3', '#b878b3', '#99973d', '#5498d3', '#05a5b3']
     }
   }
   const darkScheme = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null
@@ -934,7 +934,7 @@
     return named ? `${barName(name)} · ${named}` : barName(name)
   }
 
-  // Each feeling: the 24 ends by bar, and the one chosen.
+  // Each feeling: the 26 ends by bar, and the one chosen.
   function feelings () {
     const ends = () => Object.fromEntries(state.gut.ends.map(item => [item.end, item]))
     const baseEnds = () => Object.fromEntries(state.base.gut.ends.map(item => [item.end, item]))

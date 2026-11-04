@@ -5,6 +5,12 @@ before 1.0, a minor version may change the Python API, and this file says how.
 
 ## Unreleased
 
+- **A 14th bar, trust: 猜疑 suspicious or 信任 trusting** (`trust` in `gut.BARS`): what she believes people mean toward
+  her. Like every bar it lives in her heart and in each person's table, so she can be born suspicious and still trust
+  one person. It goes last, so the 24 ends of 0.5 keep their places: a 0.5 gut file is widened as it is read (what it
+  did not know starts as nothing), its lessons teach only the 24 ends they knew, and 0.5 still reads the first 24 of a
+  file written now. Her note scores all 26; trusting alone, like calm, peaceable or secure, puts nothing in the line.
+  The tuner and the star map have the 14th bar and its colour.
 - **The tuner draws her star map**, flat or in 3D, as the DeepSeek Harness plugin draws it: her heart as of her last
   sleep, and a star for each person she knows, as big as how much of how she is with them is theirs. Dropped in beside
   her files, her starter gives the arms (how far she has grown from it); without it, a heart born from a starter has

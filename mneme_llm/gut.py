@@ -1,8 +1,9 @@
 """A companion's gut (CMP): what is left of her when her memory is wiped and her model is swapped.
 
 Before she answers, her model reads the message into a small fixed form, with no history, and the gut turns the form
-and how close the person is into her feelings: 24 ends on 13 bars (`BARS`), each end a strength of its own, so both sides
-of a bar can be strong at once (sweet and scornful is love-hate; defiant and wronged is 嘴硬). Her heart is one network:
+and how close the person is into her feelings: 26 ends on 14 bars (`BARS`), each end a strength of its own, so both sides
+of a bar can be strong at once (sweet and scornful is love-hate; defiant and wronged is 嘴硬; suspicious and trusting is
+wanting to believe someone and not quite managing). Her heart is one network:
 who she is with anyone. Each person she talks with has a small table of their own, laid over her heart: how she is with
 them. With a person she feels the two blended by how well she knows them. Her model, with her memory in view, gives its
 own reading of the moment, and `balance` says how much each counts. The result, leaned on by her slow levels (`Tone`:
@@ -54,7 +55,8 @@ from pathlib import Path
 from typing import Awaitable, Callable
 
 # Her feelings: (bar, 中文, one end, the other end); an end is (the word her model reads and writes, 中文). The first end
-# of a bar is the one that leans away; a one-sided bar has none. Every end is a strength of its own, 0 to 1.
+# of a bar is the one that leans away; a one-sided bar has none. Every end is a strength of its own, 0 to 1. A new bar
+# goes last, so that the ends a file already knows keep their places (an older file's are the first ones here).
 BARS = (("mood", "心情", ("sad", "难过"), ("happy", "开心")),
         ("security", "安心", ("worried", "担心"), ("secure", "踏实")),
         ("composure", "理智", ("hysterical", "慌乱·崩溃"), ("calm", "平静")),
@@ -67,14 +69,16 @@ BARS = (("mood", "心情", ("sad", "难过"), ("happy", "开心")),
         ("courage", "胆量", ("timid", "胆小"), ("bold", "大胆")),
         ("sociability", "社交", ("withdrawn", "内向"), ("outgoing", "外向")),
         ("jealousy", "吃醋", None, ("jealous", "吃醋")),
-        ("aching", "心疼", None, ("aching", "心疼")))
+        ("aching", "心疼", None, ("aching", "心疼")),
+        ("trust", "信任", ("suspicious", "猜疑"), ("trusting", "信任")))
 ENDS = tuple(end[0] for bar in BARS for end in bar[2:] if end)
 CHINESE = {**{end[0]: end[1] for bar in BARS for end in bar[2:] if end}, **{bar[0]: bar[1] for bar in BARS}}
 OLD = ("happy", "calm", "sweet", "tender", "worried", "sad", "jealous")  # the seven of 0.4: lessons written then know only these
-QUIET = ("calm", "peaceable", "secure")  # alone, an ordinary moment: no line
+QUIET = ("calm", "peaceable", "secure", "trusting")  # alone, an ordinary moment: no line
 SLOW = {"composure": "SAN", "pride": "self-esteem"}  # the two slow levels with names of their own (理智值, 自尊)
 GLOSS = {"tender": "tender (gentle)", "withdrawn": "withdrawn (wanting quiet)", "outgoing": "outgoing (wanting to talk)",
-         "aching": "aching (hurting for them)", "wronged": "wronged (hurt, treated unfairly)"}
+         "aching": "aching (hurting for them)", "wronged": "wronged (hurt, treated unfairly)",
+         "suspicious": "suspicious (doubting what they mean by it)", "trusting": "trusting (sure they mean well)"}
 FEELINGS = "; ".join(" or ".join(GLOSS.get(end[0], end[0]) for end in bar[2:] if end) for bar in BARS)
 TEACH_FROM = 40  # closeness: "friendly" in mneme-llm's relations; below it a person teaches only how she is with them
 LANGUAGES = {"zh": "Mandarin Chinese", "yue": "written Cantonese", "en": "English", "ja": "Japanese"}
@@ -195,8 +199,12 @@ class Table:
     someone new meets her heart, and what her heart learns later reaches everyone she knows."""
 
     def __init__(self, kept: dict | None = None, blank: float = BLANK):
-        self.w: dict[str, list[float]] = dict((kept or {}).get("w") or {})
-        self.b: list[float] = list((kept or {}).get("b") or [blank] * len(ENDS))
+        # a table from before the last bar was added is widened: what it did not know starts as nothing
+        n = len(ENDS)
+        self.w: dict[str, list[float]] = {key: row if len(row) >= n else row + [0.0] * (n - len(row))
+                                          for key, row in ((kept or {}).get("w") or {}).items()}
+        b = list((kept or {}).get("b") or [])
+        self.b: list[float] = b + [blank] * (n - len(b))
 
     def scores(self, x: dict[str, float]) -> list[float]:
         scores = list(self.b)
@@ -801,7 +809,7 @@ class Gut:
         for number, (subject, at, language, form, feel, mood, closeness, words, ends) in enumerate(lessons):
             form, feel, words = json.loads(form), json.loads(feel), json.loads(words)
             if number >= done:
-                net.teach(subject, form, feel, mood, closeness, OLD if ends == len(OLD) else ENDS,
+                net.teach(subject, form, feel, mood, closeness, OLD if ends == len(OLD) else ENDS[:ends],
                           talking_day(at, self.zone))
                 if not kept and (net.lessons in SLEEPS_AT or net.lessons % 100 == 0):
                     net.sleep()

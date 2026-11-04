@@ -34,7 +34,7 @@ class Ends(unittest.TestCase):
     def test_every_end_is_a_strength_of_its_own(self):
         felt = G.Net().vector(FORM, 85)
         self.assertEqual(tuple(felt), G.ENDS)
-        self.assertEqual(len(G.ENDS), 24)
+        self.assertEqual((len(G.ENDS), G.ENDS[23], G.ENDS[24:]), (26, "aching", ("suspicious", "trusting")))  # new: last
         self.assertTrue(all(.04 < value < .06 for value in felt.values()))  # nothing learned: a trace of each
         net = G.Net()
         lessons(net, "a", {"sweet": .9, "scornful": .9}, 40)
@@ -42,6 +42,19 @@ class Ends(unittest.TestCase):
         felt = net.vector(FORM, 85)
         self.assertGreater(min(felt["sweet"], felt["scornful"]), .6)  # both sides of a bar at once: love-hate
         self.assertLess(felt["happy"], .1)
+
+    def test_born_suspicious_she_can_still_trust_one_person(self):
+        net = G.Net()
+        lessons(net, "b", {"suspicious": .9}, 60)  # who she became: doubting what anyone means by it
+        net.sleep()
+        net.locked = True  # (her heart stays so: only how she is with one person moves)
+        lessons(net, "a", {"trusting": .9}, 60)
+        net.sleep()
+        alone, with_them = net.vector(FORM, 85), net.vector(FORM, 85, "a")
+        self.assertGreater(alone["suspicious"], .6)
+        self.assertLess(alone["trusting"], .1)
+        self.assertGreater(with_them["trusting"], with_them["suspicious"])
+        self.assertEqual(net.vector(FORM, 85, "c"), alone)  # someone new meets her heart
 
     def test_the_bars(self):
         self.assertEqual([bar[0] for bar in G.BARS][:3], ["mood", "security", "composure"])
@@ -210,7 +223,7 @@ class Ends(unittest.TestCase):
         self.assertEqual(G.vector('{"feeling": {"irritable": 0.55, "defiant": 0.7}}')["defiant"], .7)  # as DeepSeek wraps it
         self.assertEqual(G.vector('{"feelings": [{"feeling": "calm", "strength": 0.7}, {"name": "shy", "intensity": 0.2}]}')
                          ["shy"], .2)  # and as it lists them
-        self.assertEqual(len(G.vector('{"sad": 1}')), 24)
+        self.assertEqual(len(G.vector('{"sad": 1}')), len(G.ENDS))
         every = dict.fromkeys(G.ENDS, 0.0) | {"sad": .1, "sweet": .7}
         self.assertEqual(G.written(json.dumps({"mood": -1, "feel": every})), {"feel": {"sad": .1, "sweet": .7}, "mood": -1})
         self.assertTrue(all(f" {end}," in G.NOTE or f" {end}." in G.NOTE for end in G.ENDS))  # her note scores every end
@@ -356,7 +369,36 @@ class Kept(unittest.TestCase):
             self.assertEqual(db.execute("select distinct ends from lessons").fetchall(), [(7,)])
         gut.teach("discord:1", "zh", FORM, {"feel": {"defiant": .9}, "mood": 1}, 85, [])
         with contextlib.closing(sqlite3.connect(self.path)) as db:
-            self.assertEqual(db.execute("select ends from lessons order by id desc limit 1").fetchone(), (24,))
+            self.assertEqual(db.execute("select ends from lessons order by id desc limit 1").fetchone(), (len(G.ENDS),))
+
+    def test_a_file_from_0_5_is_widened(self):
+        gut = self.gut()
+        self.teach(gut, 20)
+        gut.sleep()
+        self.teach(gut, 5)  # (these wait for her next sleep: she learns them again when she wakes)
+        gut.close()
+        with contextlib.closing(sqlite3.connect(self.path)) as db, db:
+            db.execute("update lessons set feel = ? where id > 20", (json.dumps({**JEALOUS, "trusting": .9}),))
+        same = self.path.with_name("same.db")
+        with contextlib.closing(sqlite3.connect(self.path)) as db, contextlib.closing(sqlite3.connect(same)) as copy:
+            db.backup(copy)
+        narrow = lambda table: {"w": {key: row[:24] for key, row in table["w"].items()}, "b": table["b"][:24]}
+        with contextlib.closing(sqlite3.connect(self.path)) as db, db:  # as 0.5 wrote it: 24 ends
+            kept = json.loads(gzip.decompress(db.execute("select value from state where key = 'heart'").fetchone()[0]))
+            kept["heart"] = narrow(kept["heart"])
+            for found in kept["people"].values():
+                found["table"] = narrow(found["table"])
+            db.execute("update state set value = ? where key = 'heart'", (gzip.compress(json.dumps(kept).encode()),))
+            db.execute("update lessons set ends = 24")
+        reference = G.Gut(same)
+        reference.wake()
+        self.addCleanup(reference.close)
+        before, after = reference.net.vector(FORM, 85, "discord:1"), self.gut().net.vector(FORM, 85, "discord:1")
+        for end in G.ENDS[:24]:
+            self.assertAlmostEqual(after[end], before[end], places=12, msg=end)
+        self.assertGreater(before["trusting"], G.squash(G.BLANK) + .01)  # (what 26 ends taught)
+        for end in ("suspicious", "trusting"):  # nothing it knew, and a word for one it did not know teaches nothing
+            self.assertAlmostEqual(after[end], G.squash(G.BLANK), places=12, msg=end)
 
     def test_settings_are_hers_and_stay(self):
         gut = self.gut()

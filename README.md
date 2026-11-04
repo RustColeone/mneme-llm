@@ -339,16 +339,18 @@ A host needs two moments and nothing else: the message before she answers, and t
 dependency, and the rest of the package does not use it. `tests/gut_vectors.json` pins its numbers for ports to other
 languages.
 
-**Feelings.** 24 ends on 13 bars (`gut.BARS`): 难过 sad or 开心 happy, 担心 worried or 踏实 secure, 慌乱·崩溃 hysterical or
+**Feelings.** 26 ends on 14 bars (`gut.BARS`): 难过 sad or 开心 happy, 担心 worried or 踏实 secure, 慌乱·崩溃 hysterical or
 平静 calm, 嫌弃 scornful or 甜蜜 sweet, 严厉 stern or 温柔 tender, 易怒 irritable or 平和 peaceable, 委屈 wronged or 不服
-defiant, 羞愧 ashamed or 得意 proud, 害羞 shy or 调皮 cheeky, 胆小 timid or 大胆 bold, 内向 withdrawn or 外向 outgoing, and
-吃醋 jealous and 心疼 aching on their own. Each end is a strength of its own, so both ends of a bar can be strong at once:
-sweet and scornful is love-hate, defiant and wronged is 嘴硬. The line names at most three; calm, peaceable or secure
-alone says nothing. Each end also has a slow level, lately against usual (`Tone`), which leans the line; two have names,
+defiant, 羞愧 ashamed or 得意 proud, 害羞 shy or 调皮 cheeky, 胆小 timid or 大胆 bold, 内向 withdrawn or 外向 outgoing, 吃醋
+jealous and 心疼 aching on their own, and 猜疑 suspicious or 信任 trusting. Each end is a strength of its own, so both ends
+of a bar can be strong at once: sweet and scornful is love-hate, defiant and wronged is 嘴硬, suspicious and trusting is
+wanting to believe someone and not quite managing. Suspicious or trusting is what she believes people mean toward her:
+her heart can be born suspicious while, with one person, she trusts them (each person has a part of their own). The
+line names at most three; calm, peaceable, secure or trusting alone says nothing. Each end also has a slow level, lately against usual (`Tone`), which leans the line; two have names,
 SAN (理智值: calm against hysterical) and self-esteem (自尊: proud against ashamed), and the line says so when lately is
-far from usual. Her note scores all 24 ends, 0 to 1, so a feeling that is only a trace still teaches as a trace (a note
+far from usual. Her note scores all 26 ends, 0 to 1, so a feeling that is only a trace still teaches as a trace (a note
 naming its strongest three left the quieter ones at nothing, and they never moved). Lessons from 0.4 knew seven feelings
-and teach only those.
+and teach only those; lessons from 0.5 knew the first 24 and teach only those.
 
 **Her heart and the people she knows.** Her heart is one network: who she is with anyone. It learns from people at
 closeness 40 or more, each lesson weighted by closeness, fast while she is young and slowly once she has grown up: the
