@@ -3,7 +3,7 @@
 All notable changes to mneme-llm are listed here. The project follows [semantic versioning](https://semver.org);
 before 1.0, a minor version may change the Python API, and this file says how.
 
-## 0.5.0 (unreleased)
+## 0.5.0 (2026-11-04)
 
 - **Her feelings are 24 ends on 13 bars** (`gut.BARS`), each a strength of its own rather than a share of one: 难过 or
   开心, 担心 or 踏实, 慌乱·崩溃 or 平静, 嫌弃 or 甜蜜, 严厉 or 温柔, 易怒 or 平和, 委屈 or 不服, 羞愧 or 得意, 害羞 or 调皮, 胆小 or
