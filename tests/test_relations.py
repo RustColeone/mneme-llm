@@ -117,6 +117,34 @@ class ClosenessTests(unittest.TestCase):
         m.relations.seen("amy", 1)  # a good visit after years: from the floor
         self.assertAlmostEqual(m.relations.get("amy").closeness, 20.25)
 
+    def test_closeness_can_be_locked_by_hand(self):
+        clock = Clock()
+        m = mneme(clock)
+        m.relate("amy", "friend", closeness=50)
+        with self.assertRaises(ValueError):
+            m.relations.lock("amy", 95)  # beyond a friend's band
+        with self.assertRaises(ValueError):
+            m.relations.lock("nobody")
+        m.relations.lock("amy", 80)
+        for _ in range(50):
+            m.relations.seen("amy", -2)
+        clock.days(400)
+        self.assertEqual(m.relations.get("amy").closeness, 80)  # no exchange, no time moves it
+        self.assertEqual(m.config.get("relations.locked"), {"amy": 80.0})
+        m.relations.unlock("amy")
+        self.assertEqual((m.relations.locks(), m.relations.get("amy").closeness), ({}, 80))
+        m.relations.seen("amy", 2)
+        self.assertAlmostEqual(m.relations.get("amy").closeness, 80 + .25 * 2 * 10 / 70)  # from where it was locked
+        clock.days(30)
+        self.assertAlmostEqual(m.relations.get("amy").closeness, 79 + .25 * 2 * 10 / 70)
+        m.relations.lock("amy")
+        m.relate("amy", "acquaintance", closeness=30)
+        self.assertEqual(m.relations.get("amy").closeness, 60)  # a lock stays within the role's band as it is now
+        m.relations.remove("amy")
+        self.assertEqual(m.relations.locks(), {})
+        with self.assertRaises(ValueError):
+            m.config.set("relations.locked", {"amy": 120})
+
     def test_closeness_sets_the_weight_and_the_words(self):
         m = mneme()
         self.assertEqual(m.relations.weight("nobody"), 1.0)
@@ -211,6 +239,11 @@ class CommandTests(unittest.TestCase):
         self.assertEqual([line.split(",")[0] for line in self.run_cli("relations")[1].splitlines()],
                          ["leo: creator", "amy: friend"])
         self.assertIn("(leo is your creator; you are very close.)", self.run_cli("context", "leo")[1])
+        self.assertTrue(self.run_cli("relate", "amy", "--lock", "--closeness", "75")[1].startswith(
+            "amy: friend, closeness 75, locked (since "))
+        self.assertIn("amy: friend, closeness 75, locked", self.run_cli("relations")[1])
+        self.assertIn("locked = {amy = 75.0}", self.run_cli("config", "show")[1])
+        self.assertNotIn("locked", self.run_cli("relate", "amy", "--unlock")[1])
         self.assertEqual(self.run_cli("relate", "amy", "--remove")[1], "removed")
         self.assertEqual(self.run_cli("relate", "amy", "--remove")[1], "(no role)")
 

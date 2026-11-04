@@ -213,6 +213,9 @@ them a friend. A person's words move
 the mood by 0.5× at closeness 0, 1× at 50 and 1.5× at 100 (1× for a person with no role, as before roles
 existed), and the prompt opens by saying who they are: "(Leo is your creator; you are very close.)".
 `Role("teacher", floor=40, ceiling=95, start=70, names={"en": "your teacher"})` adds a role of your own.
+`m.relations.lock("discord:42", 85)` keeps a person's closeness at 85 (within the band of their role) until
+`m.relations.unlock("discord:42")`: no exchange or time moves it, and it moves again from there. Locks are part of the
+companion's config (`relations.locked`).
 
 **Aliases** are what each person calls the companion, beside the name it has for everyone (`companion_name`).
 Your code records one when the person chooses it, never a model: `m.alias("discord:42", "鲸酱")`, and
@@ -315,7 +318,7 @@ reached passes the work to the next, and a provider that fails is rested for a m
 still her. Before she answers, her model reads the message into a small form, and her gut turns it into her feelings;
 her model gives its own reading with her memory in view, and a balance that moves by itself weighs the two. One line of
 fixed size goes beside the message, so it adds no context however long she lives. After she has answered she writes a
-private note in a call of its own, and that note is a lesson.
+private note in a call of its own, scoring every one of her feelings, and that note is a lesson.
 
 ```python
 from mneme_llm import Gut, Turn
@@ -343,7 +346,9 @@ defiant, 羞愧 ashamed or 得意 proud, 害羞 shy or 调皮 cheeky, 胆小 tim
 sweet and scornful is love-hate, defiant and wronged is 嘴硬. The line names at most three; calm, peaceable or secure
 alone says nothing. Each end also has a slow level, lately against usual (`Tone`), which leans the line; two have names,
 SAN (理智值: calm against hysterical) and self-esteem (自尊: proud against ashamed), and the line says so when lately is
-far from usual. Lessons from 0.4 knew seven feelings and teach only those.
+far from usual. Her note scores all 24 ends, 0 to 1, so a feeling that is only a trace still teaches as a trace (a note
+naming its strongest three left the quieter ones at nothing, and they never moved). Lessons from 0.4 knew seven feelings
+and teach only those.
 
 **Her heart and the people she knows.** Her heart is one network: who she is with anyone. It learns from people at
 closeness 40 or more, each lesson weighted by closeness, fast while she is young and slowly once she has grown up: the
@@ -362,9 +367,21 @@ gut.configure(tau=300, sensitivity=.5)       # grow up slower; 敏感 (1) to 钝
 gut.tune("irritable", nature=-1.5)           # a nudge to who she is, never learned away (0 removes it)
 gut.tune("sad", now=.4)                      # how she is lately, fading back as she lives
 gut.set_age(0)                               # young again, forgetting nothing
+gut.configure(locked=True)                   # her heart learns nothing and does not grow up, until unlocked
 gut.report()["people"], gut.report()["SAN"]  # how much each person counts, her slow levels
 gut.forget("discord:42")                     # how she is with them goes; what they did to her heart stays
 ```
+
+Each person can be set by hand too, apart from her heart:
+
+```python
+gut.tune_person("discord:42", "sweet", 2)    # a nudge with them alone, on top of her nature (0 removes it)
+gut.tune_person("discord:42", weight=.3)     # how much what is different with them counts ("learned": as she learned it)
+gut.tune_person("discord:42", locked=True)   # what they say teaches nothing, and they do not fade
+```
+
+A locked person teaches neither their table nor her heart; who she is at heart, as other people shape it, still
+reaches them.
 
 A file from 0.4 is lived again under these rules, lesson by lesson, the first time it wakes.
 
@@ -392,7 +409,13 @@ gut.report()["sides"], gut.report()["held"]  # what grew, and the side she is in
 gut.write_side("御姐", "你从容，从上往下逗对方。")   # a better sentence, or a side by hand
 gut.write_side("御姐", "你从容。", 3)              # with how much of her it is (GROWS by default)
 gut.drop_side("御姐")                        # gone, with what taught it
+gut.lock_side("病娇", often=.5, what="你离不开对方……")   # she is in it from now on, in half her turns
+gut.unlock_side()                            # drawn by weight again, after a month in it
 ```
+
+A locked side holds whatever is drawn and however long, for everyone she talks with, and `often` (0 to 1) is how
+strongly: the share of her turns its sentence goes beside the message. How often is what reaches her, as the test
+above shows, so "a little 病娇" is a low `often` and "very 病娇" is 1, with a sentence that says how far she goes.
 
 It works best when people say what they want. Someone who only praises what she does and never names it grows sides
 that show little, and they can land on the wrong name: what is near on the list is not always what they meant. The sentence is her model's, so it varies and can come out odd; rewrite it when it matters. Her model
@@ -484,6 +507,7 @@ mneme-llm remember discord:42 "对芒果过敏" --kind fact --key user.allergy -
 mneme-llm forget discord:42 --key user.allergy
 mneme-llm mood discord:42                               # value, feelings, the last changes and who judged them
 mneme-llm relate discord:42 family --closeness 90       # who they are to the companion; `relations` lists all
+mneme-llm relate discord:42 --lock --closeness 85       # closeness stays at 85 until --unlock
 mneme-llm alias discord:42 鲸酱                         # what they call the companion (--remove takes it away)
 mneme-llm link web:leo discord:42                       # the same person on another account; `people` lists links
 mneme-llm export --out backup.json && mneme-llm --db other.db import backup.json --into dafeiyu
@@ -494,7 +518,14 @@ mneme-llm config template > companion.toml              # every setting, prompt 
 mneme-llm --config companion.toml config show mood      # a new file takes the config; show a part of it
 mneme-llm config set prompts.reflect --file reflect.txt # change one key (a prompt, from a file)
 mneme-llm config check                                  # defaults a newer version improved, values that fail
+mneme-llm gut --file her.gut.db show                    # her gut: report, settings and locks (stop her first)
+mneme-llm gut set --tau 300 --sensitivity -0.5 --lock   # grow up slower, 钝感, her heart locked (--unlock)
+mneme-llm gut tune sweet --nature 2 --person discord:42 # one feeling by hand, for everyone or one person
+mneme-llm gut person discord:42 --weight 0.3 --lock     # how she is with them, fixed (--forget, --unlock)
+mneme-llm gut side 病娇 --lock --often 0.5 --what "你离不开对方……"   # a side locked, in half her turns
 ```
+
+The `gut` command changes the file, so stop her first: a running companion keeps its own copy and writes over it.
 
 `MNEME_LLM_DB`, `MNEME_LLM_SPACE`, `MNEME_LLM_CONFIG` and `MNEME_LLM_DISPLAY_LANGUAGE` set the defaults.
 

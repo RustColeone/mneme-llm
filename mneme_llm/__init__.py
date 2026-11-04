@@ -127,7 +127,7 @@ class Mneme:
         self.relations = Relations(self.store, space, roles=own.roles() if roles is STORED else roles,
                                    liking=own.get("relations.liking"),
                                    fade_days=own.get("relations.fade_days"), zone=zone, display_language=words,
-                                   people=self.people, clock=clock)
+                                   people=self.people, clock=clock, config=own)
         self.aliases = Aliases(self.store, space, display_language=words, people=self.people, clock=clock)
         self.episodes = Episodes(self.store, space, days=own.get("memory.said_days"), zone=zone,
                                  display_language=words, meaning=self.meaning, people=self.people, clock=clock)

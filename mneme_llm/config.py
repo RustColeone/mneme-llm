@@ -62,7 +62,7 @@ def _defaults() -> dict[str, Any]:
         "memory.surface_days": surface.DAYS, "memory.surface_floor": surface.FLOOR, "memory.surface_cap": surface.CAP,
         "memory.surface_window": surface.WINDOW,
         **{f"mood.{f.name}": _plain(getattr(mood, f.name)) for f in fields(MoodSettings) if f.name != "emotions"},
-        "relations.liking": 0.25, "relations.growth": 1.0, "relations.fade_days": 30.0,
+        "relations.liking": 0.25, "relations.growth": 1.0, "relations.fade_days": 30.0, "relations.locked": {},
         "roles": [_role_row(role) for role in ROLES],
         "emotions": [{"key": e.key, "lowers": e.lowers, "names": dict(e.names)} for e in EMOTIONS],
     }
@@ -154,6 +154,19 @@ def _words(key, value):
     if not isinstance(value, list):
         raise ValueError(f"{key}: a list of words")
     return sorted({_word(key, item) for item in value})
+
+
+def _locks(key, value) -> dict[str, float]:
+    """Closeness locked by hand: a person (their subject) and where they stay, 0 to 100."""
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{key}: a table of people and closeness")
+    number = _number(0, 100)
+    found = {}
+    for subject, closeness in value.items():
+        if not isinstance(subject, str) or not subject.strip() or len(subject) > 200:
+            raise ValueError(f"{key}: {subject!r} is not a person")
+        found[subject] = float(number(f"{key}.{subject}", closeness))
+    return found
 
 
 def _word(key, value) -> str:
@@ -270,7 +283,7 @@ RULES = {
     "mood.tell": _one_of("event", "mood", "off"), "mood.weights": _numbers(0, 10),
     "mood.skip": _words,
     "relations.liking": _number(0, 100), "relations.growth": _number(0, 100),
-    "relations.fade_days": _number(0, 1_000_000),
+    "relations.fade_days": _number(0, 1_000_000), "relations.locked": lambda key, value: _locks(key, value),
     "roles": _roles, "emotions": _emotions,
 }
 

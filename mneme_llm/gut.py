@@ -111,9 +111,11 @@ ASK = ("Before you reply, say how this message makes you feel, given everything 
        "feelings: " + FEELINGS + ".")
 NOTE = ('Now write your private note about the reply you just gave. Answer with JSON only: {"mood": N, "feel": {...}}. '
         "N is how this moment changed your mood, a whole number from -2 (clearly worse) to 2 (clearly better), 0 for no "
-        "real change. feel is how you really feel: one to three feelings from the list, each with how strongly, from 0.1 "
-        "(a trace) to 1 (fully). Both sides of a pair can be true at once. The feelings: " + FEELINGS + ". The note is "
-        "yours alone and the person never sees it. Be honest: it records how you really feel.")
+        f"real change. feel scores all {len(ENDS)} feelings, each from 0 (not at all) to 1 (fully), with these words as "
+        "its keys: " + ", ".join(ENDS) + ". In pairs, with what some of them mean: " + FEELINGS + ". Score each one on "
+        "its own: both sides of a pair can be true at once. The note is yours alone and the person never sees it. Be "
+        "honest: it records how you really feel.")
+NOTED_TOKENS = 320  # a note scoring every feeling
 BESIDE = "[From the system, not from the person]"
 SHAPE = ('You read the end of a chat between a person and their AI companion. Is this person shaping her into a kind of '
          'character? Reply with one line of JSON and nothing else: {"side": null} for no. Say yes only if, in their last '
@@ -230,12 +232,14 @@ class Net:
     """Her heart and a table for each person she has talked with. Her heart learns from everyone close enough to teach
     her, each lesson by closeness tier, fast while she is young and slowly once grown up. A person's table learns only
     from that person, at a steady pace, from anyone. Young, people change who she is; grown up, mostly how she is with
-    them. `nudge` is her nature tuned by hand: added to every end before it is read, never learned away."""
+    them. `nudge` is her nature tuned by hand: added to every end before it is read, never learned away. `locked`: her
+    heart learns nothing and does not grow up. `hands`: each person as set by hand (`Gut.tune_person`)."""
 
     def __init__(self, tau: float = TAU):
         self.tau, self.heart, self.people = tau, Table(), {}
         self.age, self.lessons, self.today, self.born = 0.0, 0, None, 0
         self.nudge = [0.0] * len(ENDS)
+        self.locked, self.hands = False, {}
         self.waiting: list[tuple] = []  # lessons since her last sleep
 
     def learning(self) -> float:
@@ -248,10 +252,15 @@ class Net:
             found = self.people[subject] = {"table": Table(blank=0.0), "n": 0.0, "fade": 1.0, "day": None}
         return found
 
+    def hand(self, subject: str | None) -> dict:
+        return self.hands.get(subject) or {} if subject else {}
+
     def weight(self, subject: str | None) -> float:
         """How much what is different with a person counts, on top of her heart: more as she comes to know them, at
-        most MOST (her nature always has a say), and less for every talking day without them."""
+        most MOST (her nature always has a say), and less for every talking day without them; or as set by hand."""
         found = self.people.get(subject) if subject else None
+        if found and self.hand(subject).get("weight") is not None:
+            return float(self.hand(subject)["weight"])
         return min(MOST, found["n"] / (found["n"] + COUNTS)) * found["fade"] if found else 0.0
 
     def vector(self, form: dict, closeness: float, subject: str | None = None) -> dict[str, float]:
@@ -260,13 +269,16 @@ class Net:
         share = self.weight(subject)
         if share:
             scores = [heart + share * theirs for heart, theirs in zip(scores, self.people[subject]["table"].scores(x))]
-        return {end: squash(score + nudge) for end, score, nudge in zip(ENDS, scores, self.nudge)}
+        theirs = self.hand(subject).get("nudge") or {}
+        return {end: squash(score + nudge + float(theirs.get(end, 0.0)))
+                for end, score, nudge in zip(ENDS, scores, self.nudge)}
 
     def day(self, today: int) -> None:
-        """A talking day is over when the next one begins: everyone she did not talk with on it fades a little."""
+        """A talking day is over when the next one begins: everyone she did not talk with on it fades a little (not a
+        person locked by hand)."""
         if self.today is not None and today > self.today:
-            for found in self.people.values():
-                if found["day"] != self.today:
+            for subject, found in self.people.items():
+                if found["day"] != self.today and not self.hand(subject).get("locked"):
                     found["fade"] *= 1 - PULL
         self.today = today if self.today is None else max(self.today, today)
 
@@ -285,11 +297,13 @@ class Net:
     def teach(self, subject: str, form: dict, feel: dict, mood: int, closeness: float, known: tuple = ENDS,
               today: int | None = None) -> None:
         """One lesson, a quarter of it at once; the rest waits for her sleep. Her heart learns only from people close
-        enough; the person's own table from anyone."""
+        enough; the person's own table from anyone. Locked by hand: her heart learns nothing, and a person locked
+        teaches nothing at all."""
         if today is not None:
             self.day(today)
-        found = self.person(subject) if subject else None
-        heart = self.learning() * tier(closeness) if closeness >= TEACH_FROM else 0.0
+        held = bool(subject) and bool(self.hand(subject).get("locked"))
+        found = self.person(subject) if subject and not held else None
+        heart = self.learning() * tier(closeness) if closeness >= TEACH_FROM and not self.locked and not held else 0.0
         lesson = (features(form, closeness), target(feel), [k for k, end in enumerate(ENDS) if end in known],
                   (1 + abs(mood)) / 3, heart, found)
         self._learn(lesson, AWAKE)
@@ -726,7 +740,8 @@ class Gut:
         if not set(self.tags) <= set(self.names):
             raise ValueError(f"Not a side she can have: {', '.join(set(self.tags) - set(self.names))}.")
         self.net, self.marks, self.tone = Net(tau), Marks(), Tone()
-        self.settings: dict = {"tau": float(tau), "sensitivity": 0.0, "nudge": {}}
+        self.settings: dict = {"tau": float(tau), "sensitivity": 0.0, "nudge": {}, "locked": False, "people": {},
+                               "side": None}
         self.languages: dict[str, str] = {}
         self.sightings: list[tuple] = []  # (subject, when, name, more, closeness, what they want)
         self.grown: dict[str, str] = {}  # the sides that grew: name → sentence
@@ -736,6 +751,7 @@ class Gut:
         self.last: dict = {}  # what she was last told and last wrote: for `$gut`
         self.waking: asyncio.Future | None = None
         self.lock = threading.RLock()  # (never held through the training of her words)
+        self.roll: Callable[[], float] = random.random  # whether a locked side shows this turn
         self.db: sqlite3.Connection | None = None
 
     def _open(self) -> sqlite3.Connection:
@@ -776,6 +792,7 @@ class Gut:
         kept = self._get("heart")
         net, marks = Net(settings["tau"]), Marks(base)
         net.nudge = [float(settings["nudge"].get(end, 0.0)) for end in ENDS]
+        net.locked, net.hands = bool(settings["locked"]), settings["people"]
         if kept:
             net.restore(kept)
         elif rows:
@@ -817,6 +834,9 @@ class Gut:
                 self.tone.feed(vote, self.settings["sensitivity"])
             felt = mix(gut, vote, share) if gut and vote else gut or vote
             side = sides(self.shown(closeness))
+            fixed = self.settings["side"]
+            if side and fixed and self.roll() >= fixed["often"]:
+                side = ""  # a side locked by hand shows in this share of turns: how often is what reaches her
             if felt is None:
                 return {"told": side, "share": share, "felt": None}
             felt = sensitive(self.tone.lean(felt), self.settings["sensitivity"])
@@ -842,6 +862,9 @@ class Gut:
         now = time.time() if now is None else now
         with self.lock:
             hers = {**self.tags, **self.grown}
+            fixed = self.settings["side"]
+            if fixed and fixed["name"] in hers:
+                return [fixed["name"]]  # locked by hand: no month ends it
             kept = [name for name in self.held["names"] if name in hers]
             if not hers or (kept and now - self.held["since"] < HOLD):
                 return kept
@@ -851,9 +874,10 @@ class Gut:
 
     def shown(self, closeness: float, now: float | None = None) -> dict[str, str]:
         """The side she is in, for this person: one she was given is for everyone, what grew only for people who can
-        teach her: what one person made of her is not for a stranger to meet."""
+        teach her: what one person made of her is not for a stranger to meet. One locked by hand is for everyone."""
+        fixed = (self.settings["side"] or {}).get("name")
         return {name: {**self.tags, **self.grown}[name] for name in self.holding(now)
-                if name in self.tags or closeness >= TEACH_FROM}
+                if name in self.tags or name == fixed or closeness >= TEACH_FROM}
 
     def objected(self, name: str, now: float | None = None) -> float:
         rows = [(at, True, closeness) for _, at, seen, more, closeness, _ in self.sightings if seen == name and not more]
@@ -919,8 +943,11 @@ class Gut:
                 db.execute("insert or replace into sides values (?, ?, ?)", (name, what, weight))
 
     def drop_side(self, name: str) -> bool:
-        """Gone, and what taught it with it, so growing it again starts over."""
+        """Gone, and what taught it with it, so growing it again starts over. Locked, it is unlocked."""
         with self.lock:
+            if (self.settings["side"] or {}).get("name") == name:
+                self.settings["side"] = None
+                self._put("settings", self.settings)
             found = self.grown.pop(name, None) is not None
             self.weights.pop(name, None)
             self.sightings = [row for row in self.sightings if row[2] != name]
@@ -989,6 +1016,8 @@ class Gut:
         with self.lock:
             self._settle()
             self.net.people.pop(subject, None)
+            if self.settings["people"].pop(subject, None) is not None:
+                self._put("settings", self.settings)
             self.languages.pop(subject, None)
             self.sightings = [row for row in self.sightings if row[0] != subject]
             with self._open() as db:
@@ -1014,10 +1043,17 @@ class Gut:
         self.wake()
         return gone
 
-    def configure(self, tau: float | None = None, sensitivity: float | None = None) -> dict:
-        """Her settings: how fast her heart grows up (`tau`, in lessons; grown at five times it), and 敏感 or 钝感
-        (`sensitivity`, -1 to 1, 0 as she is). The settings, as they are now."""
+    def configure(self, tau: float | None = None, sensitivity: float | None = None,
+                  locked: bool | None = None) -> dict:
+        """Her settings: how fast her heart grows up (`tau`, in lessons; grown at five times it), 敏感 or 钝感
+        (`sensitivity`, -1 to 1, 0 as she is), and her heart locked (`locked`: it learns nothing and does not grow up
+        until unlocked; how she is with each person still learns, unless locked too). The settings, as they are now."""
+        if locked is not None and not isinstance(locked, bool):
+            raise ValueError("locked is true or false")
         with self.lock:
+            if locked is not None and locked != self.settings["locked"]:
+                self._settle()  # what waits for her sleep is taught as things were
+                self.settings["locked"] = self.net.locked = locked
             if tau is not None:
                 if isinstance(tau, bool) or not isinstance(tau, (int, float)) or not 0 < tau < math.inf:
                     raise ValueError("tau is a number of lessons above 0")
@@ -1059,12 +1095,86 @@ class Gut:
                 self.net.nudge = [float(self.settings["nudge"].get(name, 0.0)) for name in ENDS]
                 self._put("settings", self.settings)
 
+    def tune_person(self, subject: str, end: str | None = None, nature: float | None = None,
+                    weight: float | str | None = None, locked: bool | None = None) -> dict:
+        """How she is with one person, by hand. `end` and `nature` (-3 to 3): a nudge to that end with them alone, on
+        top of her own nature; 0 removes it. `weight` (0 to 1): how much what is different with them counts on top of
+        her heart, in place of what she has learned (more as she knows them, at most 0.7, fading without them);
+        "learned" goes back to that. `locked`: what they say teaches nothing, neither how she is with them nor her
+        heart, and they do not fade; who she is at heart, as others shape it, still reaches them. What is set for them,
+        as it is now."""
+        if not isinstance(subject, str) or not subject.strip():
+            raise ValueError("a person is a subject, such as discord:42")
+        if (end is None) != (nature is None):
+            raise ValueError("a nudge needs both an end and its nature")
+        if end is not None and end not in ENDS:
+            raise ValueError(f"Not an end of hers: {end}. Hers: {', '.join(ENDS)}.")
+        if nature is not None and (isinstance(nature, bool) or not isinstance(nature, (int, float))
+                                   or not -3 <= nature <= 3):
+            raise ValueError(f"{nature} is not from -3 to 3")
+        if weight is not None and weight != "learned" and (isinstance(weight, bool) or
+                                                           not isinstance(weight, (int, float)) or not 0 <= weight <= 1):
+            raise ValueError('a weight is from 0 to 1, or "learned"')
+        if locked is not None and not isinstance(locked, bool):
+            raise ValueError("locked is true or false")
+        with self.lock:
+            if locked is not None:
+                self._settle()  # what waits for her sleep is taught as things were
+            hand = dict(self.settings["people"].get(subject) or {})
+            if nature is not None:
+                nudge = {**hand.get("nudge", {}), end: float(nature)}
+                hand["nudge"] = {name: value for name, value in nudge.items() if value}
+            if weight is not None:
+                hand["weight"] = None if weight == "learned" else float(weight)
+            if locked is not None:
+                hand["locked"] = locked
+            hand = {key: value for key, value in hand.items() if value is not None and value is not False and value != {}}
+            if hand:
+                self.settings["people"][subject] = hand
+            else:
+                self.settings["people"].pop(subject, None)
+            self.net.hands = self.settings["people"]
+            self._put("settings", self.settings)
+            return json.loads(json.dumps(hand))
+
+    def lock_side(self, name: str, often: float = 1.0, what: str | None = None) -> None:
+        """She is in this side from now on, whatever is drawn and however long, and it shows in `often` of her turns
+        (0 to 1: how often is what reaches her; 1 is every turn). For everyone, not only people close enough. `what`:
+        its sentence, a new side by hand or a better one; a side she has needs none. See `unlock_side`."""
+        if name not in self.names:
+            raise ValueError(f"Not a side she can have: {name}.")
+        if isinstance(often, bool) or not isinstance(often, (int, float)) or not 0 <= often <= 1:
+            raise ValueError("often is from 0 to 1")
+        with self.lock:
+            if what:
+                self.grown[name] = " ".join(str(what).split())
+                with self._open() as db:
+                    db.execute("insert or replace into sides values (?, ?, ?)",
+                               (name, self.grown[name], self.weights.get(name, 0)))
+            if name not in self.tags and name not in self.grown:
+                raise ValueError(f"{name} is not one of her sides yet: give it a sentence (what she does)")
+            self.settings["side"] = {"name": name, "often": float(often)}
+            self._put("settings", self.settings)
+
+    def unlock_side(self) -> None:
+        """Her sides are drawn by weight again; she stays in the one she was locked in for a month first."""
+        with self.lock:
+            fixed = self.settings["side"]
+            if fixed is None:
+                return
+            self.settings["side"] = None
+            self._put("settings", self.settings)
+            self.held = {"names": [fixed["name"]], "since": time.time()}
+            self._put("held", self.held)
+
     def report(self) -> dict:
         with self.lock:
             net, tone = self.net, self.tone
             return {"lessons": net.lessons, "age": round(net.age), "tau": net.tau,
                     "grown": round(1 - math.exp(-net.age / net.tau), 2), "learning": round(net.learning() / YOUNG, 3),
                     "sensitivity": self.settings["sensitivity"], "nudge": dict(self.settings["nudge"]),
+                    "locked": self.settings["locked"], "hands": json.loads(json.dumps(self.settings["people"])),
+                    "side": dict(self.settings["side"]) if self.settings["side"] else None,
                     "people": {subject: {"lessons": round(found["n"]), "weight": round(net.weight(subject), 2)}
                                for subject, found in net.people.items()},
                     "lately": {end: round(tone.lately.get(end, 0.0) + tone.shift.get(end, 0.0), 3) for end in ENDS},
@@ -1135,7 +1245,7 @@ class Turn:
         messages = note_messages(self.prompt, self.told, before, self.said, reply)
         note = None
         for _ in range(2):
-            note = written(await self.ask(messages, 120))
+            note = written(await self.ask(messages, NOTED_TOKENS))
             if note:
                 break
         if note is None:

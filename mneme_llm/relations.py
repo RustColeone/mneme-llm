@@ -8,7 +8,8 @@
                 `liking` points a level when the band has all its room that way, less as it nears the edge, so a
                 person she enjoys comes close and one who keeps upsetting her drifts off; a talk that leaves her as
                 she was moves nothing. It fades by one point for every 30 days without them, down to the role's floor
-                (computed when read, and always within the role's band as the host has it now)
+                (computed when read, and always within the role's band as the host has it now). Locked by hand
+                (`lock`), it stays where it was put, within the band, until unlocked: no exchange or time moves it
     weight      how much the person's words move the mood: 0.5 at closeness 0, 1.0 at 50, 1.5 at 100. A person
                 with no role counts 1.0, as everyone did before roles existed
     telling     `line()` says it for the system prompt ("(Leo is your creator; you are very close.)")
@@ -72,9 +73,9 @@ class Relationship:
 class Relations(Speaks, Resolves):
     def __init__(self, store: Store, space: str, *, roles: tuple[Role, ...] = ROLES, liking: float = .25,
                  fade_days: float = 30.0, zone: tzinfo | None = None, display_language: str | Words = "en",
-                 people: People | None = None, clock: Callable[[], float] = time.time):
+                 people: People | None = None, clock: Callable[[], float] = time.time, config=None):
         self.store, self.space, self.roles = store, space, {role.key: role for role in roles}
-        self.people = people
+        self.people, self.config = people, config  # the config keeps the locks (`relations.locked`)
         self.liking, self.fade_days, self.zone = liking, fade_days, zone
         self.words, self.clock = Words.of(display_language), clock
 
@@ -90,6 +91,10 @@ class Relations(Speaks, Resolves):
         found = [self._of(row, now) for row in self.store.rows("select * from relationships where space = ?",
                                                                 (self.space,))]
         return sorted(found, key=lambda relationship: (-relationship.closeness, relationship.subject))
+
+    def locks(self) -> dict[str, float]:
+        """Closeness locked by hand: subject → where they stay."""
+        return dict(self.config.get("relations.locked") or {}) if self.config is not None else {}
 
     def weight(self, subject: str) -> float:
         """How much the person's words move the mood (1.0 for a person with no role)."""
@@ -146,7 +151,7 @@ class Relations(Speaks, Resolves):
         with self.writing(subject) as subject:
             now = self.clock()
             present = self.get(subject, now)
-            if present is None or now < present.updated_at:
+            if present is None or now < present.updated_at or subject in self.locks():
                 return present
             kind = self._role(present.role)
             closeness = present.closeness
@@ -157,8 +162,43 @@ class Relations(Speaks, Resolves):
                                "subject = ?", (closeness, now, self.space, subject))
         return Relationship(subject, present.role, closeness, present.since, now)
 
+    def lock(self, subject: str, closeness: float | None = None) -> Relationship:
+        """Closeness stays where it is (or at `closeness`, within the role's band) until `unlock`: no exchange, no
+        time moves it. The host's call, never a model's. Needs a role, and a config to keep the lock in."""
+        if self.config is None:
+            raise ValueError("no config to keep the lock in")
+        with self.writing(subject) as subject:
+            present = self.get(subject)
+            if present is None:
+                raise ValueError(f"{subject} has no role: give them one first")
+            kind = self._role(present.role)
+            value = present.closeness if closeness is None else closeness
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) \
+                    or not kind.floor <= value <= kind.ceiling:
+                raise ValueError(f"closeness for {present.role} is a number from {kind.floor:g} to {kind.ceiling:g}")
+            self.config.set("relations.locked", {**self.locks(), subject: float(value)})
+        return self.get(subject)
+
+    def unlock(self, subject: str) -> Relationship | None:
+        """Closeness moves again, from where it was locked."""
+        with self.writing(subject) as subject:
+            locks = self.locks()
+            if subject not in locks:
+                return self.get(subject)
+            present = self.get(subject)
+            del locks[subject]
+            self.config.set("relations.locked", locks)
+            if present is not None:
+                self.store.execute("update relationships set closeness = ?, updated_at = ? where space = ? and "
+                                   "subject = ?", (present.closeness, max(self.clock(), present.updated_at),
+                                                   self.space, subject))
+        return self.get(subject)
+
     def remove(self, subject: str) -> bool:
         with self.writing(subject) as subject:
+            locks = self.locks()
+            if locks.pop(subject, None) is not None:
+                self.config.set("relations.locked", locks)
             return bool(self.store.execute("delete from relationships where space = ? and subject = ?",
                                            (self.space, subject)).rowcount)
 
@@ -171,6 +211,10 @@ class Relations(Speaks, Resolves):
                 "select * from relationships where space = ? and subject in (?, ?)", (self.space, old, new))}
             if old not in rows:
                 return
+            locks = self.locks()
+            if old in locks:  # (a lock goes with the person, unless the account they are now has its own)
+                locks.setdefault(new, locks.pop(old))
+                self.config.set("relations.locked", locks)
             self.store.execute("delete from relationships where space = ? and subject = ?", (self.space, old))
             kept = rows[old] if new not in rows or self._of(rows[old], now).closeness > \
                 self._of(rows[new], now).closeness else rows[new]
@@ -219,8 +263,10 @@ class Relations(Speaks, Resolves):
 
     def _of(self, row, now: float) -> Relationship:
         kind = self._role(row["role"])
-        closeness = row["closeness"]
-        if kind.fades and self.fade_days > 0:
+        closeness, locked = row["closeness"], self.locks().get(row["subject"])
+        if locked is not None:
+            closeness = locked
+        elif kind.fades and self.fade_days > 0:
             closeness -= max(0.0, now - row["updated_at"]) / (self.fade_days * DAY)
         closeness = min(kind.ceiling, max(kind.floor, closeness))  # within the band, as the host has it now
         return Relationship(row["subject"], row["role"], closeness, row["since"], row["updated_at"])

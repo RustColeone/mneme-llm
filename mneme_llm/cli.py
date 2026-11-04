@@ -5,6 +5,7 @@
     mneme-llm alias discord:42 鲸酱        mneme-llm relations
     mneme-llm export > backup.json        mneme-llm import backup.json --into other_space
     mneme-llm config template > companion.toml        mneme-llm --config companion.toml config show
+    mneme-llm gut --file her.gut.db show        mneme-llm gut side 病娇 --lock --often 0.5 --what "你……"
 """
 
 from __future__ import annotations
@@ -84,6 +85,9 @@ def main(argv: list[str] | None = None) -> int:
     relate.add_argument("role", nargs="?", help="creator, family, friend or acquaintance")
     relate.add_argument("--closeness", type=float, help="0-100, within the role's band (its start otherwise)")
     relate.add_argument("--remove", action="store_true", help="take the role away")
+    relate.add_argument("--lock", action="store_true",
+                        help="keep closeness where it is (or at --closeness): no exchange or time moves it")
+    relate.add_argument("--unlock", action="store_true", help="closeness moves again, from where it was locked")
 
     commands.add_parser("relations", help="everyone with a role, closest first")
 
@@ -134,6 +138,40 @@ def main(argv: list[str] | None = None) -> int:
     serve = commands.add_parser("mcp", help="serve the tools over MCP (stdio)")
     serve.add_argument("--subject", help="bind every call to this person")
 
+    gut = commands.add_parser("gut", help="her gut file: show it, or set her dials and locks by hand",
+                              description="Her gut file, by hand. Stop her first: a running companion keeps its own "
+                                          "copy and writes over what is changed here (DSH's panel changes the running "
+                                          "one).")
+    gut.add_argument("--file", default=os.environ.get("MNEME_LLM_GUT", "gut.db"), help="the gut file")
+    doing = gut.add_subparsers(dest="action", required=True)
+    doing.add_parser("show", help="her report, settings and locks, as JSON")
+    setting = doing.add_parser("set", help="how fast she grows up, how hard things hit her, her age, her heart locked")
+    setting.add_argument("--tau", type=float, help="lessons; fully grown at five times it")
+    setting.add_argument("--sensitivity", type=float, help="-1 (钝感, thick-skinned) to 1 (敏感, sensitive)")
+    setting.add_argument("--age", type=float, help="lessons; 0 makes her young again, forgetting nothing")
+    setting.add_argument("--lock", action="store_true", help="her heart learns nothing and does not grow up")
+    setting.add_argument("--unlock", action="store_true", help="her heart learns again")
+    tuning = doing.add_parser("tune", help="one feeling by hand, for everyone or for one person")
+    tuning.add_argument("end", help="one of her 24 ends: sad, happy, ... (`gut show` lists them)")
+    tuning.add_argument("--nature", type=float, help="-3 to 3: a nudge to who she is; 0 removes it")
+    tuning.add_argument("--now", type=float, help="-1 to 1: more or less of it lately than usual; it fades")
+    tuning.add_argument("--person", help="the nature with this person alone")
+    person = doing.add_parser("person", help="how she is with one person: weight, lock, forget")
+    person.add_argument("subject")
+    person.add_argument("--weight", help='0 to 1: how much what is different with them counts; "learned" as she '
+                                         'learned it')
+    person.add_argument("--lock", action="store_true", help="what they say teaches nothing, and they do not fade")
+    person.add_argument("--unlock", action="store_true")
+    person.add_argument("--forget", action="store_true", help="how she is with them goes; what is done is done")
+    side = doing.add_parser("side", help="her sides (属性): lock one, write one, unlock, drop")
+    side.add_argument("name", nargs="?", help="a name she can have (病娇, 御姐, ...)")
+    side.add_argument("--what", help="its sentence: what she does, said to her (你……)")
+    side.add_argument("--lock", action="store_true", help="she is in it from now on, whatever is drawn")
+    side.add_argument("--often", type=float, default=1.0, help="locked: the share of her turns it shows in, 0 to 1")
+    side.add_argument("--weight", type=float, help="not locked: how much of her it is when sides are drawn")
+    side.add_argument("--unlock", action="store_true", help="her sides are drawn by weight again")
+    side.add_argument("--drop", action="store_true", help="the side is gone, and what taught it")
+
     args = parser.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure") and (sys.stdout.encoding or "").lower() not in ("utf-8", "utf8"):
         sys.stdout.reconfigure(encoding="utf-8")  # notes are often Chinese; some consoles default to cp1252
@@ -144,6 +182,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "config" and args.action == "template":
         print(configs.to_toml(configs.DEFAULTS), end="")
         return 0
+    if args.command == "gut":
+        return _gut(args)
     space = args.space
     if args.command == "import":  # into --into, or back into the space it came from
         with open(args.file, encoding="utf-8") as handle:
@@ -222,16 +262,21 @@ def _run(m: Mneme, args) -> int:
                 print("give a role with --closeness: this subject has none", file=sys.stderr)
                 return 2
             role = present.role
-        if role:
-            try:
+        try:
+            if args.unlock:
+                m.relations.unlock(args.subject)
+            if role:
                 m.relate(args.subject, role, closeness=args.closeness)
-            except ValueError as error:
-                print(error, file=sys.stderr)
-                return 2
+            if args.lock:
+                m.relations.lock(args.subject, args.closeness)
+        except ValueError as error:
+            print(error, file=sys.stderr)
+            return 2
         found = m.relations.get(args.subject)
-        print(_relationship(found, memory.zone) if found else "(no role)")
+        print(_relationship(found, memory.zone, m.relations.locks()) if found else "(no role)")
     elif args.command == "relations":
-        print("\n".join(_relationship(found, memory.zone) for found in m.relations.all()) or "(nobody has a role)")
+        locks = m.relations.locks()
+        print("\n".join(_relationship(found, memory.zone, locks) for found in m.relations.all()) or "(nobody has a role)")
     elif args.command == "alias":
         if args.remove:
             print("removed" if m.aliases.remove(args.subject) else "(no alias)")
@@ -324,8 +369,69 @@ def _toml_value(text: str, *, text_key: bool = False):
     return text if text_key and not isinstance(value, str) else value
 
 
-def _relationship(found, zone) -> str:
-    return f"{found.subject}: {found.role}, closeness {found.closeness:.0f} (since {stamp(found.since, zone)})"
+def _gut(args) -> int:
+    """`mneme-llm gut`: her gut file opened, changed by hand and closed. Nothing of her memory file is needed."""
+    from pathlib import Path
+
+    from .gut import Gut, GROWS
+    if not Path(args.file).exists():
+        print(f"no gut file at {args.file} (--file, or MNEME_LLM_GUT)", file=sys.stderr)
+        return 2
+    gut = Gut(args.file)
+    try:
+        gut.wake()
+        action = args.action
+        if action == "set":
+            gut.configure(tau=args.tau, sensitivity=args.sensitivity,
+                          locked=True if args.lock else False if args.unlock else None)
+            if args.age is not None:
+                gut.set_age(args.age)
+        elif action == "tune":
+            if args.person:
+                if args.now is not None:
+                    raise ValueError("--now is for everyone: with --person, only --nature")
+                gut.tune_person(args.person, args.end, args.nature)
+            else:
+                gut.tune(args.end, now=args.now, nature=args.nature)
+        elif action == "person":
+            if args.forget:
+                print(f"forgotten: {gut.forget(args.subject)} lessons lost their name")
+                return 0
+            weight = None if args.weight is None else args.weight if args.weight == "learned" else float(args.weight)
+            print(json.dumps(gut.tune_person(args.subject, weight=weight,
+                                             locked=True if args.lock else False if args.unlock else None),
+                             ensure_ascii=False))
+            return 0
+        elif action == "side":
+            if args.unlock:
+                gut.unlock_side()
+            if args.name and args.drop:
+                print("dropped" if gut.drop_side(args.name) else f"{args.name} is not one of her sides")
+                return 0
+            if args.name and args.lock:
+                gut.lock_side(args.name, args.often, args.what)
+            elif args.name and args.what:
+                gut.write_side(args.name, args.what, GROWS if args.weight is None else args.weight)
+            elif args.name and args.weight is not None:
+                if args.name not in gut.grown:
+                    raise ValueError(f"{args.name} is not one of her sides yet: give it a sentence with --what")
+                gut.write_side(args.name, gut.grown[args.name], args.weight)
+            report = gut.report()
+            print(json.dumps({key: report[key] for key in ("sides", "held", "side", "weights")}, ensure_ascii=False,
+                             indent=2))
+            return 0
+        print(json.dumps(gut.report(), ensure_ascii=False, indent=2))
+        return 0
+    except ValueError as error:
+        print(error, file=sys.stderr)
+        return 2
+    finally:
+        gut.close()
+
+
+def _relationship(found, zone, locks=()) -> str:
+    locked = ", locked" if found.subject in locks else ""
+    return f"{found.subject}: {found.role}, closeness {found.closeness:.0f}{locked} (since {stamp(found.since, zone)})"
 
 
 if __name__ == "__main__":

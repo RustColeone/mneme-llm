@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import io
 import gzip
 import json
 import sqlite3
@@ -210,6 +211,9 @@ class Ends(unittest.TestCase):
         self.assertEqual(G.vector('{"feelings": [{"feeling": "calm", "strength": 0.7}, {"name": "shy", "intensity": 0.2}]}')
                          ["shy"], .2)  # and as it lists them
         self.assertEqual(len(G.vector('{"sad": 1}')), 24)
+        every = dict.fromkeys(G.ENDS, 0.0) | {"sad": .1, "sweet": .7}
+        self.assertEqual(G.written(json.dumps({"mood": -1, "feel": every})), {"feel": {"sad": .1, "sweet": .7}, "mood": -1})
+        self.assertTrue(all(f" {end}," in G.NOTE or f" {end}." in G.NOTE for end in G.ENDS))  # her note scores every end
         self.assertIsNone(G.vector('{"sad": "x"}'))
 
 
@@ -356,8 +360,8 @@ class Kept(unittest.TestCase):
 
     def test_settings_are_hers_and_stay(self):
         gut = self.gut()
-        self.assertEqual(gut.configure(tau=300, sensitivity=.5), {"tau": 300.0, "sensitivity": .5, "nudge": {}})
-        for bad in ({"tau": 0}, {"tau": True}, {"sensitivity": 2}):
+        self.assertEqual(gut.configure(tau=300, sensitivity=.5), {"tau": 300.0, "sensitivity": .5, "nudge": {}, "locked": False, "people": {}, "side": None})
+        for bad in ({"tau": 0}, {"tau": True}, {"sensitivity": 2}, {"locked": 1}):
             with self.assertRaises(ValueError):
                 gut.configure(**bad)
         gut.tune("irritable", nature=-2)
@@ -369,7 +373,8 @@ class Kept(unittest.TestCase):
         self.teach(gut, 3)
         gut.close()
         again = self.gut()
-        self.assertEqual(again.settings, {"tau": 300.0, "sensitivity": .5, "nudge": {"irritable": -2.0}})
+        self.assertEqual(again.settings, {"tau": 300.0, "sensitivity": .5, "nudge": {"irritable": -2.0}, "locked": False,
+                                          "people": {}, "side": None})
         self.assertEqual(again.net.tau, 300.0)
         self.assertLess(again.net.vector(FORM, 85)["irritable"], .01)
         again.tune("irritable", nature=0)
@@ -377,6 +382,106 @@ class Kept(unittest.TestCase):
         again.wipe()
         self.assertEqual(again.settings["tau"], 300.0)  # a wipe takes what she learned, not her settings
         self.assertEqual(again.report()["lessons"], 0)
+
+    def test_her_heart_can_be_locked(self):
+        gut = self.gut()
+        self.teach(gut, 30)
+        gut.configure(locked=True)
+        felt, age = gut.net.vector(FORM, 85), gut.net.age
+        self.teach(gut, 60, feel={"scornful": .9})
+        gut.sleep()
+        self.assertEqual((gut.net.vector(FORM, 85), gut.net.age), (felt, age))  # her heart: as it was
+        self.assertGreater(gut.net.vector(FORM, 85, "discord:1")["scornful"], .3)  # how she is with them: still learning
+        gut.close()
+        again = self.gut()
+        self.assertTrue(again.report()["locked"])
+        again.configure(locked=False)
+        self.teach(again, 60, feel={"scornful": .9})
+        self.assertGreater(again.net.vector(FORM, 85)["scornful"], felt["scornful"] + .1)
+
+    def test_each_person_by_hand(self):
+        gut = self.gut()
+        self.teach(gut, 40)
+        learned = gut.net.weight("discord:1")
+        self.assertEqual(gut.tune_person("discord:1", "sweet", 2.5), {"nudge": {"sweet": 2.5}})
+        self.assertGreater(gut.net.vector(FORM, 85, "discord:1")["sweet"], gut.net.vector(FORM, 85, "discord:2")["sweet"] + .3)
+        gut.tune_person("discord:1", weight=0)
+        self.assertEqual(gut.net.weight("discord:1"), 0.0)
+        gut.tune_person("discord:1", weight="learned")
+        self.assertAlmostEqual(gut.net.weight("discord:1"), learned)
+        for bad in ({"end": "sweet"}, {"end": "angry", "nature": 1}, {"end": "sweet", "nature": 4}, {"weight": 1.5},
+                    {"weight": "some"}, {"locked": "yes"}):
+            with self.assertRaises(ValueError):
+                gut.tune_person("discord:1", **bad)
+        gut.tune_person("discord:1", locked=True)
+        theirs = gut.net.vector(FORM, 85, "discord:1")
+        self.teach(gut, 40, feel={"scornful": .9})
+        for day in range(1, 60):  # talking days without them: a locked person does not fade
+            gut.teach("discord:2", "zh", OTHER, {"feel": {"calm": .5}, "mood": 0}, 20, [], at=1.8e9 + day * DAY)
+        gut.sleep()
+        self.assertAlmostEqual(gut.net.weight("discord:1"), learned)
+        self.assertAlmostEqual(gut.net.vector(FORM, 85, "discord:1")["sweet"], theirs["sweet"], places=6)
+        gut.close()
+        again = self.gut()
+        self.assertEqual(again.report()["hands"], {"discord:1": {"nudge": {"sweet": 2.5}, "locked": True}})
+        again.tune_person("discord:1", "sweet", 0)
+        again.tune_person("discord:1", locked=False)
+        self.assertEqual(again.settings["people"], {})
+        again.tune_person("discord:3", "stern", 1)
+        again.forget("discord:3")
+        self.assertEqual(again.settings["people"], {})  # forgotten: what was set for them goes too
+
+    def test_a_side_can_be_locked_and_shows_in_its_share_of_turns(self):
+        gut = self.gut()
+        with self.assertRaises(ValueError):
+            gut.lock_side("病娇")  # not hers yet: it needs a sentence
+        with self.assertRaises(ValueError):
+            gut.lock_side("龙傲天", what="你很狂。")
+        with self.assertRaises(ValueError):
+            gut.lock_side("病娇", often=2, what="你离不开对方。")
+        gut.write_side("御姐", "你从容，不撒娇。", 50.0)
+        gut.lock_side("病娇", often=.25, what="你离不开对方，别人一靠近就紧张。")
+        self.assertEqual(gut.holding(), ["病娇"])
+        rolls = iter([.1, .5, .9, .3] * 10)
+        gut.roll = lambda: next(rolls)
+        shown = [("病娇" in gut.feel(FORM, None, 10, 0, "zh")["told"]) for _ in range(40)]
+        self.assertEqual(sum(shown), 10)  # rolls under .25: one turn in four, and for a stranger too
+        later = G.time.time() + 400 * DAY
+        self.assertEqual(gut.holding(later), ["病娇"])  # no month ends it
+        gut.close()
+        again = self.gut()
+        self.assertEqual(again.report()["side"], {"name": "病娇", "often": .25})
+        again.unlock_side()
+        self.assertEqual((again.settings["side"], again.holding()), (None, ["病娇"]))  # a month in it first, then drawn
+        again.lock_side("御姐")
+        again.drop_side("御姐")
+        self.assertIsNone(again.settings["side"])
+
+    def test_the_command_sets_her_dials_and_locks(self):
+        from mneme_llm.cli import main
+
+        def run(*args):
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                code = main(["gut", "--file", str(self.path), *args])
+            return code, out.getvalue(), err.getvalue().strip()
+        self.assertEqual(run("show")[0], 2)  # no file: nothing is made
+        gut = self.gut()
+        self.teach(gut, 30)
+        gut.close()
+        self.assertEqual(run("set", "--tau", "200", "--sensitivity", "-0.5", "--lock")[0], 0)
+        self.assertEqual(run("tune", "sweet", "--nature", "1.5", "--person", "discord:1")[0], 0)
+        self.assertEqual(run("tune", "sad", "--now", "0.4", "--person", "discord:1")[0], 2)
+        self.assertEqual(run("person", "discord:1", "--weight", "0.3", "--lock")[1].strip(),
+                         '{"nudge": {"sweet": 1.5}, "weight": 0.3, "locked": true}')
+        self.assertEqual(run("side", "病娇", "--lock")[2], "病娇 is not one of her sides yet: give it a sentence (what she does)")
+        code, out, _ = run("side", "病娇", "--lock", "--often", "0.5", "--what", "你离不开对方。")
+        self.assertEqual(json.loads(out)["side"], {"name": "病娇", "often": .5})
+        found = json.loads(run("show")[1])
+        self.assertEqual((found["tau"], found["sensitivity"], found["locked"], found["held"]), (200.0, -.5, True, ["病娇"]))
+        self.assertEqual(run("side", "--unlock")[0], 0)
+        self.assertIsNone(json.loads(run("show")[1])["side"])
+        self.assertEqual(run("person", "discord:1", "--forget")[1].strip(), "forgotten: 30 lessons lost their name")
 
     def test_where_she_is_now_fades_as_she_lives(self):
         gut = self.gut()

@@ -50,16 +50,16 @@ whatever model the host has, so that:
 
 | file | lines | role |
 |---|---|---|
-| `__init__.py` | 522 | `Mneme`, the facade: builds the parts; `aprompt`, `alook`, `aobserve`, `acapture`, `areflect`, `relate`, `alias`, `link`, `erase`, `wipe`, `everyone`, export/import |
+| `__init__.py` | 523 | `Mneme`, the facade: builds the parts; `aprompt`, `alook`, `aobserve`, `acapture`, `areflect`, `relate`, `alias`, `link`, `erase`, `wipe`, `everyone`, export/import |
 | `store.py` | 321 | the SQLite file alone: the schema, locking, transactions, queries over many values, and rebuilding the term indexes when the tokenizer changes |
 | `migrate.py` | 155 | `python -m mneme_llm.migrate`: a file of schema 1 made current, in one transaction |
 | `memory.py` | 724 | notes: the rules of writing, the term index, recall ranking, rendering, profile card, recall log, notes' export/import |
 | `episodes.py` | 647 | what was said, word for word: keeping exchanges, their term index and vectors, retention and rehearsal, the look and the search, rendering, their export/import |
 | `surface.py` | 290 | what was said lately, as real turns: where it starts, what it keeps, the summary that stands for the rest, a person's first prompt |
 | `mood.py` | 371 | mood state, decay, judging questions, guardrails, telling once, moods' export/import |
-| `config.py` | 579 | a companion's config: the defaults, checking each key, TOML in and out, the stored copy per space |
+| `config.py` | 593 | a companion's config: the defaults, checking each key, TOML in and out, the stored copy per space |
 | `prompts.py` | 70 | every instruction given to a model, by name (the built-in defaults) |
-| `relations.py` | 221 | who each person is to the companion: roles, closeness that grows and fades, the mood weight, the prompt line |
+| `relations.py` | 272 | who each person is to the companion: roles, closeness that grows and fades, the mood weight, the prompt line |
 | `aliases.py` | 95 | what each person calls the companion: one short line each, the prompt line |
 | `people.py` | 95 | one person under several subjects (their accounts): links one step deep, and who a subject stands for |
 | `capture.py` | 65 | what the note writer and the profile writer are asked, and reading their replies |
@@ -71,13 +71,13 @@ whatever model the host has, so that:
 | `meaning/calibrate.py` | 159 | each embedding model's floor: measured on a bundled set, refined by the file's own notes |
 | `meaning/vectors.py` | 124 | vectors as the file keeps them, their arithmetic, and `Matrix`: many of them compared at once |
 | `meaning/unify.py` | 176 | meaning tier 2 (removable): glosses and query translation by the host's chat model |
-| `gut.py` | 1143 | what is left of a companion when her memory is wiped and her model swapped: her heart, a table for each person, her slow levels and sides, in a file of its own |
+| `gut.py` | 1271 | what is left of a companion when her memory is wiped and her model swapped: her heart, a table for each person, her slow levels and sides, in a file of its own |
 | `text.py` | 225 | tokenization, scripts, counting tokens, cleaning, checking, clipping and fitting text |
 | `dates.py` | 124 | human dates, talking days, dates found in sentences, times in seconds |
 | `i18n.py` | 257 | every word and sentence shown to a person or a model, in English and Chinese |
 | `tools.py` | 256 | tool definitions for five API styles and the dispatcher |
 | `mcp.py` | 82 | an MCP server over stdio |
-| `cli.py` | 332 | the `mneme-llm` command |
+| `cli.py` | 438 | the `mneme-llm` command |
 
 **Layers.** Dependencies point one way. `text`, `dates`, `i18n`, `prompts`, `providers`, `exchange` and
 `meaning/vectors` import nothing above them, and `store` only `text`; `decide` builds on `providers`, `prompts` and

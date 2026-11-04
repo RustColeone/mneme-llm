@@ -7,8 +7,9 @@ before 1.0, a minor version may change the Python API, and this file says how.
 
 - **Her feelings are 24 ends on 13 bars** (`gut.BARS`), each a strength of its own rather than a share of one: 难过 or
   开心, 担心 or 踏实, 慌乱·崩溃 or 平静, 嫌弃 or 甜蜜, 严厉 or 温柔, 易怒 or 平和, 委屈 or 不服, 羞愧 or 得意, 害羞 or 调皮, 胆小 or
-  大胆, 内向 or 外向, and 吃醋 and 心疼. Both ends of a bar can be strong at once. Her note and her model's reading name one
-  to three with how strongly; the line names at most three. `MOODS` and `NORMAL` are gone; `ENDS`, `CHINESE` and
+  大胆, 内向 or 外向, and 吃醋 and 心疼. Both ends of a bar can be strong at once. Her note scores all 24 (0 to 1), so a
+  quiet feeling teaches as what it is rather than as nothing; her model's reading names one to three with how strongly;
+  the line names at most three. `MOODS` and `NORMAL` are gone; `ENDS`, `CHINESE` and
   `FEELINGS` are new.
 - **Her heart and the people she knows.** One network for who she is with anyone, learning from people at closeness 40 or
   more by closeness tier, and one table for each person, holding only what is different with them, learned from anyone,
@@ -23,6 +24,14 @@ before 1.0, a minor version may change the Python API, and this file says how.
 - **Settings.** `Gut(tau=, zone=)`, `Gut.configure(tau, sensitivity)` (敏感 or 钝感: how hard every moment hits her),
   `Gut.tune(end, now=, nature=)` (where she is lately, fading; a nudge to who she is, never learned away) and
   `Gut.set_age` (young again, forgetting nothing). They outlast `wipe`.
+- **Locks and dials by hand.** `Gut.configure(locked=True)` stops her heart learning and growing up.
+  `Gut.tune_person(subject, end, nature, weight=, locked=)` sets how she is with one person: a nudge with them alone,
+  how much what is different with them counts, and a lock (what they say teaches nothing, and they do not fade).
+  `Gut.lock_side(name, often=, what=)` keeps her in one side for good, shown in that share of her turns, for everyone;
+  `Gut.unlock_side()` draws again. `Relations.lock(subject, closeness)` and `unlock` keep a person's closeness where it
+  is put, kept in the config as `relations.locked`. The `mneme-llm gut` command (`show`, `set`, `tune`, `person`,
+  `side`) and `mneme-llm relate --lock/--unlock` do the same from the command line. Forgetting a person removes what was
+  set for them.
 - **A word she says mostly to one person is theirs** (`OWN`, 80% of its uses): their name or their in-joke shows in her
   line only with them, never to someone new.
 - **Forgetting a person** removes how she is with them, their name from its lessons and the sides only they wanted;
