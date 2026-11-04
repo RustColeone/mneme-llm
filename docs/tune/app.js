@@ -9,7 +9,7 @@
   const SQL_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/'
   const KEPT = 'mneme-llm-tune-language'
 
-  // Words reused from the DSH plugin's panel (dsh-mneme-llm plugin/client.js) keep its keys: 70 of them.
+  // Words reused from the DSH plugin's panel (dsh-mneme-llm plugin/client.js) keep its keys: 66 of them.
   const EN = {
     'page.title': 'Tuner',
     'nav.architecture': 'Architecture',
@@ -155,9 +155,6 @@
       'she was born (the ring). The big stars are people.',
     'map.counts': '{stars} brightest of {rows} · arms from her last {probed} lessons',
     'map.born': '{stars} brightest of {rows} · arms as born until 20 lessons ({probed} so far)',
-    'map.star': '{key}: leans to {end} ({bright})',
-    'map.person': '{who}: {lessons} lessons, {weight}% of how she is with them is theirs',
-    'map.pick': 'Tap or point at a star to see what it is.',
     'map.view': 'View',
     'map.turn': 'Drag to turn it; a few seconds later it turns slowly by itself. The two ends of each bar sit side ' +
       'by side.',
@@ -301,9 +298,6 @@
     'map.caption': '每个点都是她注意到的一件事，朝着它把她引向的那种感觉摆放；点越亮，偏向得越多。这些线是她的臂：她现在每种感觉比出生时（那个环）多了或少了多少。大星星是人。',
     'map.counts': '{rows} 个中最亮的 {stars} 个 · 臂来自她最近的 {probed} 节课',
     'map.born': '{rows} 个中最亮的 {stars} 个 · 臂仍是出生时的样子，直到上满 20 节课（目前 {probed} 节）',
-    'map.star': '{key}：偏向 {end}（{bright}）',
-    'map.person': '{who}：{lessons} 节课，她对这个人的样子里有 {weight}% 是专属于这个人的',
-    'map.pick': '点一下或用手指指向一颗星星，看看它是什么。',
     'map.view': '视图',
     'map.turn': '拖动可以旋转它；几秒后它会自己慢慢转。每一条的两端并排挨在一起。',
     'map.slept': '这是她上次睡觉时的心：之后的 {waiting} 节课还不在里面，她醒来时会重新学一遍。',
@@ -459,7 +453,6 @@
         return
       }
       if (old) old.db.close()
-      if (opened.kind === 'gut') sky.picked = null // (another heart: what was picked is not in it)
       state.files[opened.kind] = { name, bytes: new Uint8Array(bytes), db: opened.db, changes: new Map() }
       say(null)
       try {
@@ -795,29 +788,17 @@
   })
 
   // ---- her star map ---------------------------------------------------------------------------------------------
-  // As the DSH plugin's panel shows it: flat or in 3D (the browser keeps which), a star picked by pointing or a tap; in
-  // 3D it turns by a drag, and slowly by itself a few seconds later while it is in view (not for reduced motion).
+  // As the DSH plugin's panel shows it: flat or in 3D (the browser keeps which); in 3D it turns by a drag, and slowly by
+  // itself a few seconds later while it is in view (not for reduced motion).
   const SKY = 'mneme-llm-tune-map3d'
   const TURNING = 0.12 // radians a second it turns by itself
   const RESTS = 3000 // milliseconds after a drag before it does
-  const sky = { three: false, turn: { yaw: 0.6, pitch: -0.32 }, picked: null, drag: null, rested: 0, stop: null }
+  const sky = { three: false, turn: { yaw: 0.6, pitch: -0.32 }, drag: null, rested: 0, stop: null }
   try { sky.three = localStorage.getItem(SKY) === '3d' } catch {}
 
   function skyLook (canvas) {
     return { dark: Boolean(darkScheme?.matches), ink: getComputedStyle(canvas).color, names: T.ENDS.map(endName),
-      colours: T.ENDS.map(endColour), picked: sky.picked }
-  }
-
-  /** What is picked, in words: a star, a person, or how to pick one. */
-  function pickedWords () {
-    const map = state.map, picked = sky.picked
-    const person = picked?.person !== undefined ? map?.people.find(item => item.subject === picked.person) : null
-    if (person) {
-      return t('map.person', { who: person.subject, lessons: person.lessons, weight: percent(person.weight) })
-    }
-    const star = picked?.key !== undefined ? map?.stars.find(item => item[4] === picked.key) : null
-    if (star) return t('map.star', { key: star[4], end: endName(map.ends[star[3]]), bright: star[2].toFixed(2) })
-    return t('map.pick')
+      colours: T.ENDS.map(endColour) }
   }
 
   function starMap () {
@@ -827,48 +808,30 @@
         { name: state.files.gut?.name ?? '', error: state.mapError })) : hint(t('map.none')))
     }
     const canvas = el('canvas', { class: sky.three ? 'sky turning' : 'sky', role: 'img', 'aria-label': t('map.caption') })
-    const said = el('p', { class: 'sky-pick', 'aria-live': 'polite' }, pickedWords())
-    let drawn = null
     const paint = () => {
       if (!state.map || !canvas.isConnected) return
-      drawn = sky.three ? S.drawRound(canvas, state.map, skyLook(canvas), sky.turn)
-        : S.drawFlat(canvas, state.map, skyLook(canvas))
+      if (sky.three) S.drawRound(canvas, state.map, skyLook(canvas), sky.turn)
+      else S.drawFlat(canvas, state.map, skyLook(canvas))
     }
-    live(canvas, () => {
-      paint()
-      said.textContent = pickedWords()
-    })
-    const pick = event => {
-      if (!drawn) return
-      const box = canvas.getBoundingClientRect()
-      const found = S.nearest(drawn, event.clientX - box.left, event.clientY - box.top)
-      const same = (found?.key ?? found?.person) === (sky.picked?.key ?? sky.picked?.person)
-      if (same) return
-      sky.picked = found ? (found.person !== undefined ? { person: found.person } : { key: found.key }) : null
-      paint()
-      said.textContent = pickedWords()
-    }
+    live(canvas, paint)
     canvas.addEventListener('pointerdown', event => {
-      if (!sky.three) return pick(event)
-      sky.drag = { x: event.clientX, y: event.clientY, moved: 0 }
+      if (!sky.three) return
+      sky.drag = { x: event.clientX, y: event.clientY }
       try { canvas.setPointerCapture(event.pointerId) } catch {} // (a pointer the page no longer holds)
     })
     canvas.addEventListener('pointermove', event => {
       const held = sky.drag
-      if (!sky.three || !held) return pick(event)
+      if (!sky.three || !held) return
       const dx = event.clientX - held.x, dy = event.clientY - held.y
       held.x = event.clientX
       held.y = event.clientY
-      held.moved += Math.abs(dx) + Math.abs(dy)
       sky.turn.yaw += dx * 0.01
       sky.turn.pitch = Math.max(-1.4, Math.min(1.4, sky.turn.pitch + dy * 0.01))
       paint()
     })
-    const up = event => {
-      const held = sky.drag
+    const up = () => {
       sky.drag = null
       sky.rested = Date.now()
-      if (sky.three && held && held.moved < 5 && event.type === 'pointerup') pick(event) // (a tap, not a turn)
     }
     canvas.addEventListener('pointerup', up)
     canvas.addEventListener('pointercancel', up)
@@ -912,7 +875,7 @@
     const birth = map.birth === 'unknown' ? t('map.unknown') : map.birth === 'blank' ? t('map.blank') : null
     return el('section', { class: 'card sky-card' },
       el('div', { class: 'sky-head' }, el('h2', null, t('map.title')), views),
-      canvas, said,
+      canvas,
       sky.three ? hint(t('map.turn')) : null,
       birth ? el('p', { class: map.birth === 'unknown' ? 'sky-note' : 'hint' }, birth) : null,
       hint(counts),

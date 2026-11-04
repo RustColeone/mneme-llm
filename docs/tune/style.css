@@ -212,7 +212,7 @@ input[type="range"]:disabled::-moz-range-thumb { background: var(--muted); box-s
 .sky-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .sky-head h2 { margin: 0; }
 .sky-card .sky { display: block; width: 100%; max-width: 560px; aspect-ratio: 1; margin: 10px auto 4px;
-                 color: var(--ink); touch-action: manipulation; }
+                 color: var(--ink); }
 .sky-card .sky.turning { cursor: grab; touch-action: pan-y; }
 .sky-card .sky.turning:active { cursor: grabbing; }
 .sky-switch { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
@@ -220,6 +220,5 @@ input[type="range"]:disabled::-moz-range-thumb { background: var(--muted); box-s
                      border: 0; padding: 4px 14px; cursor: pointer; }
 .sky-switch button + button { border-left: 1px solid var(--line); }
 .sky-switch button.on { background: var(--accent-soft); color: var(--accent); }
-.sky-pick { margin: 0 0 6px; min-height: 1.5em; text-align: center; font-size: .9rem; overflow-wrap: anywhere; }
 .sky-note { margin: 4px 0 12px; font-size: .88rem; border-left: 3px solid var(--accent); padding-left: 10px; }
 .sky-card .hint { margin: 2px 0 6px; }

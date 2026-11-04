@@ -313,8 +313,8 @@
   }
 
   // ---- drawing ----------------------------------------------------------------------------------------------------
-  // `look`: { dark, ink, names (each end's name, in ENDS order), colours (each end's), label (subject → the name shown),
-  // picked (a star's key or a person's subject, or null) }. Each returns what was drawn where, for picking.
+  // `look`: { dark, ink, names (each end's name, in ENDS order), colours (each end's), label (subject → the name
+  // shown) }.
 
   function canvasOf (canvas) {
     const width = Math.max(120, Math.round(canvas.getBoundingClientRect().width))
@@ -370,21 +370,6 @@
     g.lineWidth = 1
   }
 
-  /** A ring around what is picked, wherever it is drawn now. */
-  function ring (g, drawn, look) {
-    const shown = look.picked && (look.picked.person !== undefined
-      ? drawn.people.find(item => item.person.subject === look.picked.person)
-      : drawn.points.find(item => item.key === look.picked.key))
-    if (!shown) return
-    g.globalAlpha = 1
-    g.strokeStyle = look.ink
-    g.lineWidth = 1.5
-    g.beginPath()
-    g.arc(shown.px, shown.py, (shown.size ?? 3) + 5, 0, 2 * Math.PI)
-    g.stroke()
-    g.lineWidth = 1
-  }
-
   /** The base radius of the flat map: as big as fits, with each end's name at its arm's tip, read outward. */
   function baseRadius (half, arms, widths, gap = 0.12) {
     return Math.min(...arms.map((arm, k) => (half - 4 - widths[k] - 6) / Math.min(LABELS, Math.min(ARM, arm) + gap)))
@@ -432,13 +417,13 @@
       g.restore()
     })
     // the stars, dimmest first
-    const top = topOf(map), points = []
+    const top = topOf(map)
     const place = (x, y) => {
       const far = Math.hypot(x, y), cut = far > ARM ? ARM / far : 1 // (inside the map, whatever her arms)
       return [half + x * cut * R, half + y * cut * R]
     }
     for (let i = map.stars.length - 1; i >= 0; i--) {
-      const [x, y, bright, end, key] = map.stars[i], [px, py] = place(x, y)
+      const [x, y, bright, end] = map.stars[i], [px, py] = place(x, y)
       const lean = Math.min(1, bright / top), size = (0.7 + 2.3 * lean) * scale
       g.fillStyle = colour[end]
       if (look.dark && lean > 0.5) { // (a glow on the dark sky, for the stars that lean most)
@@ -453,7 +438,6 @@
       g.beginPath()
       g.arc(px, py, size, 0, 2 * Math.PI)
       g.fill()
-      points.push({ px, py, star: map.stars[i], key })
     }
     g.globalAlpha = 1
     // the people she knows: one big star each, as big as how much of how she is with them is theirs
@@ -462,9 +446,6 @@
       return { px, py, size: (4 + 8 * Math.min(1, person.weight / T.MOST)) * scale, person }
     })
     for (const item of people) personDot(g, item, look, colour, width, font)
-    const drawn = { points: points.reverse(), people: [...people].reverse() } // (the brightest and the last first)
-    ring(g, drawn, look)
-    return drawn
   }
 
   /** A point of the 3D map seen from where it is turned: across, down the screen, toward the eye, and how much nearer
@@ -534,7 +515,7 @@
       return { k, x, y, z, label: screen(direction.map(value => value * Math.min(LABELS, arm + 0.15))) }
     })
     // the stars, from the back to the front
-    const top = topOf(map), points = []
+    const top = topOf(map)
     const placed = map.stars.map(star => [star, screen(star.slice(5, 8))]).sort((one, other) => one[1][2] - other[1][2])
     for (const [star, [px, py, z, near]] of placed) {
       const lean = Math.min(1, star[2] / top), size = (0.7 + 2.3 * lean) * scale * near, front = depth(z)
@@ -551,7 +532,6 @@
       g.beginPath()
       g.arc(px, py, size, 0, 2 * Math.PI)
       g.fill()
-      points.push({ px, py, star, key: star[4] })
     }
     g.globalAlpha = 1
     // the tips of her arms and the names of her ends, the front ones over the back
@@ -582,30 +562,11 @@
       g.font = `${font}px system-ui, -apple-system, sans-serif`
     }
     g.globalAlpha = 1
-    const drawn = { points: points.reverse(), people: [...people].reverse() } // (the front first, for picking)
-    ring(g, drawn, look)
-    return drawn
-  }
-
-  /** The star or person nearest a point on the map, within a finger's width: {key} or {person: subject}, or null. */
-  function nearest (drawn, x, y) {
-    let best = null, far = 14
-    for (const item of drawn.people) {
-      const d = Math.hypot(item.px - x, item.py - y) - item.size
-      if (d < far) [best, far] = [{ person: item.person.subject, item }, d]
-    }
-    if (best) return best
-    far = 10
-    for (const item of drawn.points) {
-      const d = Math.hypot(item.px - x, item.py - y)
-      if (d < far) [best, far] = [{ key: item.key, item }, d]
-    }
-    return best
   }
 
   return {
     SPREAD, STARS, PROBE, LEAST, SHORTEST, LONGEST, GAIN, APART, TURNS, ANGLES, DIRECTIONS, OLD,
     tags, features, Table, Random, readStarter, isGzip, born, shares, spot, spot3, brightness, strongest, strengths,
-    arms, probeOf, starmap, drawFlat, drawRound, project, placeNames, nearest
+    arms, probeOf, starmap, drawFlat, drawRound, project, placeNames
   }
 })
