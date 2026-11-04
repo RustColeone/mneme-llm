@@ -3,6 +3,13 @@
 All notable changes to mneme-llm are listed here. The project follows [semantic versioning](https://semver.org);
 before 1.0, a minor version may change the Python API, and this file says how.
 
+## Unreleased
+
+- **The tuner draws her star map**, flat or in 3D, as the DeepSeek Harness plugin draws it: her heart as of her last
+  sleep, and a star for each person she knows, as big as how much of how she is with them is theirs. Dropped in beside
+  her files, her starter gives the arms (how far she has grown from it); without it, a heart born from a starter has
+  every arm drawn as born.
+
 ## 0.5.0 (2026-11-04)
 
 - **Her feelings are 24 ends on 13 bars** (`gut.BARS`), each a strength of its own rather than a share of one: 难过 or

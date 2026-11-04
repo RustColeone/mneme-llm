@@ -5,10 +5,11 @@
 (function () {
   'use strict'
   const T = window.Tune
+  const S = window.StarMap
   const SQL_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/'
   const KEPT = 'mneme-llm-tune-language'
 
-  // Words reused from the DSH plugin's panel (dsh-mneme-llm plugin/client.js) keep its keys: 60 of them.
+  // Words reused from the DSH plugin's panel (dsh-mneme-llm plugin/client.js) keep its keys: 70 of them.
   const EN = {
     'page.title': 'Tuner',
     'nav.architecture': 'Architecture',
@@ -22,8 +23,10 @@
       'means she has not fully stopped.',
     'drop.title': 'Drop her files here',
     'drop.pick': 'Choose files',
-    'drop.hint': 'Her gut file and her memory file (SQLite). Which is which is read from the file itself.',
+    'drop.hint': 'Her gut file and her memory file (SQLite), and her starter (.json.gz) for her star map. Which is ' +
+      'which is read from the file itself.',
     'settings.title': 'Her gut',
+    'file.starter': 'Her starter',
     'file.memory': 'Her memory',
     'file.close': 'Close',
     'file.closeConfirm': '{name} has unsaved changes. Close it anyway?',
@@ -33,6 +36,7 @@
     'error.notHers': '{name} is neither a gut file nor a memory file.',
     'error.schema': '{name} has schema {found}; this page reads schema 2. Run python -m mneme_llm.migrate on it first.',
     'error.read': '{name} could not be read: {error}',
+    'error.starter': '{name} could not be read as a starter: {error}',
     'error.sql': 'SQLite could not be loaded ({error}). The page fetches sql.js from cdnjs, so it needs the internet.',
     'error.change': 'Not changed: {error}',
     'error.sensitivity': 'sensitivity is from -1 to 1',
@@ -145,6 +149,24 @@
     'sides.pick': 'Choose a name',
     'sides.write': 'Add',
     needGut: 'Open her gut file to tune her growing up, her feelings and her sides.',
+    'map.title': 'Star map: her heart and the people she knows',
+    'map.caption': 'Each dot is one thing she notices, placed toward the feeling it pulls her to; the brighter, ' +
+      'the more it leans. The lines are her arms: how much more or less of each feeling she has now than when ' +
+      'she was born (the ring). The big stars are people.',
+    'map.counts': '{stars} brightest of {rows} · arms from her last {probed} lessons',
+    'map.born': '{stars} brightest of {rows} · arms as born until 20 lessons ({probed} so far)',
+    'map.star': '{key}: leans to {end} ({bright})',
+    'map.person': '{who}: {lessons} lessons, {weight}% of how she is with them is theirs',
+    'map.pick': 'Tap or point at a star to see what it is.',
+    'map.view': 'View',
+    'map.turn': 'Drag to turn it; a few seconds later it turns slowly by itself. The two ends of each bar sit side ' +
+      'by side.',
+    'map.slept': 'Her heart as of her last sleep: the {waiting} lessons since are not in it yet; she learns them ' +
+      'again when she wakes.',
+    'map.unknown': 'She was born from a starter, which is not open here, so each arm is drawn as she was born. Drop ' +
+      'her starter (the .json.gz file her host gives her) beside her files to see how far she has grown.',
+    'map.blank': 'She was born with no starter: her arms are measured from a blank heart.',
+    'map.none': 'Her heart is not in this file yet: wake her once first.',
     'settings.save': 'Save',
     'settings.discard': 'Discard',
     'settings.unsaved': '{count} unsaved',
@@ -163,8 +185,9 @@
     'intro.stop': '打开文件之前先让她停下来，这样她写下的一切都在这一个文件里。她再次启动之前，用保存下来的文件替换旧文件。如果旁边还有一个名字以 -wal 结尾的文件，说明她还没有完全停下。',
     'drop.title': '把她的文件拖到这里',
     'drop.pick': '选择文件',
-    'drop.hint': '她的直觉文件和记忆文件（SQLite）。哪个是哪个，会从文件本身读出来。',
+    'drop.hint': '她的直觉文件和记忆文件（SQLite），以及画星图用的 starter 文件（.json.gz）。哪个是哪个，会从文件本身读出来。',
     'settings.title': '她的直觉',
+    'file.starter': '她的 starter 文件',
     'file.memory': '她的记忆',
     'file.close': '关闭',
     'file.closeConfirm': '{name} 还有未保存的改动。仍然关闭吗？',
@@ -174,6 +197,7 @@
     'error.notHers': '{name} 既不是直觉文件，也不是记忆文件。',
     'error.schema': '{name} 的 schema 是 {found}，这个页面只读 schema 2。请先对它运行 python -m mneme_llm.migrate。',
     'error.read': '无法读取 {name}：{error}',
+    'error.starter': '无法把 {name} 读取为 starter 文件：{error}',
     'error.sql': '无法加载 SQLite（{error}）。这个页面要从 cdnjs 获取 sql.js，所以需要联网。',
     'error.change': '没有改动：{error}',
     'error.sensitivity': '敏感度在 -1 到 1 之间',
@@ -273,6 +297,19 @@
     'sides.pick': '选择一个名字',
     'sides.write': '添加',
     needGut: '打开她的直觉文件，才能调整她的长大、感觉和属性。',
+    'map.title': '星图：她的心和她认识的人',
+    'map.caption': '每个点都是她注意到的一件事，朝着它把她引向的那种感觉摆放；点越亮，偏向得越多。这些线是她的臂：她现在每种感觉比出生时（那个环）多了或少了多少。大星星是人。',
+    'map.counts': '{rows} 个中最亮的 {stars} 个 · 臂来自她最近的 {probed} 节课',
+    'map.born': '{rows} 个中最亮的 {stars} 个 · 臂仍是出生时的样子，直到上满 20 节课（目前 {probed} 节）',
+    'map.star': '{key}：偏向 {end}（{bright}）',
+    'map.person': '{who}：{lessons} 节课，她对这个人的样子里有 {weight}% 是专属于这个人的',
+    'map.pick': '点一下或用手指指向一颗星星，看看它是什么。',
+    'map.view': '视图',
+    'map.turn': '拖动可以旋转它；几秒后它会自己慢慢转。每一条的两端并排挨在一起。',
+    'map.slept': '这是她上次睡觉时的心：之后的 {waiting} 节课还不在里面，她醒来时会重新学一遍。',
+    'map.unknown': '她生来带着一份 starter 文件，但它没有在这里打开，所以每条臂都画成她出生时的长度。把她的 starter 文件（宿主程序给她的那个 .json.gz）也拖进来，就能看到她长大了多少。',
+    'map.blank': '她出生时没有 starter 文件：她的臂是拿一颗空白的心来比的。',
+    'map.none': '她的心还不在这个文件里：先让她醒来一次。',
     'settings.save': '保存',
     'settings.discard': '放弃',
     'settings.unsaved': '{count} 项未保存',
@@ -309,6 +346,9 @@
     files: {}, // kind → {name, bytes: as opened or last saved, db, changes: Map of what changed}
     base: {}, // kind → the view as opened or last saved, for telling a change undone from one made
     gut: null, memory: null, space: null, status: null,
+    starter: null, // her starter, for her star map: {name, born: her heart as she was born}
+    map: null, // her star map, made again after every change to her gut file
+    mapError: null, // or why it could not be made
     pick: { end: null, person: null, side: null, personEnd: {} }, // what is chosen in each list
     pending: new Map() // sides added here and not written yet (they need a sentence): name → weight
   }
@@ -344,8 +384,39 @@
 
   async function refresh (kind) {
     const file = state.files[kind]
-    if (kind === 'gut') state.gut = file ? await T.gutView(file.db) : null
-    else state.memory = file && state.space !== null ? T.memoryView(file.db, state.space) : null
+    if (kind === 'gut') {
+      state.gut = file ? await T.gutView(file.db) : null
+      await remap()
+    } else state.memory = file && state.space !== null ? T.memoryView(file.db, state.space) : null
+  }
+
+  /** Her star map, from her gut file as it is now and her starter if one is open; a map that cannot be made is
+   * none (the rest of the page goes on without it). */
+  async function remap () {
+    const file = state.files.gut
+    state.mapError = null
+    try {
+      state.map = file ? await S.starmap(file.db, { born: state.starter?.born || null }) : null
+    } catch (error) {
+      console.error(error)
+      state.map = null
+      state.mapError = errorText(error)
+    }
+  }
+
+  /** Her starter: read, and her birth lived again from it, for her star map's arms. Never changed or saved. */
+  function openStarter (name, bytes) {
+    return queue(async () => {
+      try {
+        const born = S.born(await S.readStarter(bytes))
+        state.starter = { name, born }
+        say(null)
+      } catch (error) {
+        say(t('error.starter', { name, error: errorText(error) }), true)
+        return
+      }
+      await remap()
+    }).then(render)
   }
 
   async function baseline (kind) {
@@ -364,6 +435,7 @@
   }
 
   async function openFile (name, bytes) {
+    if (S.isGzip(bytes)) return openStarter(name, bytes)
     let SQL
     try {
       SQL = await sqlReady
@@ -387,6 +459,7 @@
         return
       }
       if (old) old.db.close()
+      if (opened.kind === 'gut') sky.picked = null // (another heart: what was picked is not in it)
       state.files[opened.kind] = { name, bytes: new Uint8Array(bytes), db: opened.db, changes: new Map() }
       say(null)
       try {
@@ -405,6 +478,13 @@
   }
 
   function closeFile (kind) {
+    if (kind === 'starter') {
+      return queue(async () => {
+        state.starter = null
+        await remap()
+        render()
+      })
+    }
     const file = state.files[kind]
     if (!file || (file.changes.size && !window.confirm(t('file.closeConfirm', { name: file.name })))) return
     queue(() => {
@@ -413,7 +493,10 @@
       delete state.base[kind]
       state[kind] = null
       if (kind === 'memory') state.space = null
-      else state.pending.clear()
+      else {
+        state.pending.clear()
+        state.map = null
+      }
       render()
     })
   }
@@ -602,7 +685,13 @@
           { count: file.changes.size }) : ''),
         button(t('file.close'), () => closeFile(kind), { kind: 'quiet' }))
     })
-    const status = opened.length ? null : statusLine()
+    if (state.starter) {
+      opened.push(el('div', { class: 'file' },
+        el('span', { class: 'file-kind' }, t('file.starter')),
+        el('span', { class: 'file-name' }, state.starter.name),
+        button(t('file.close'), () => closeFile('starter'), { kind: 'quiet' })))
+    }
+    const status = KINDS.some(kind => state.files[kind]) ? null : statusLine() // (else in the save bar)
     return el('section', { class: 'files' }, zone, opened.length ? el('div', { class: 'opened' }, opened) : null,
       status)
   }
@@ -704,6 +793,132 @@
     node.title = on ? t('mark.changed') : ''
     node.setAttribute('aria-label', on ? t('mark.changed') : '')
   })
+
+  // ---- her star map ---------------------------------------------------------------------------------------------
+  // As the DSH plugin's panel shows it: flat or in 3D (the browser keeps which), a star picked by pointing or a tap; in
+  // 3D it turns by a drag, and slowly by itself a few seconds later while it is in view (not for reduced motion).
+  const SKY = 'mneme-llm-tune-map3d'
+  const TURNING = 0.12 // radians a second it turns by itself
+  const RESTS = 3000 // milliseconds after a drag before it does
+  const sky = { three: false, turn: { yaw: 0.6, pitch: -0.32 }, picked: null, drag: null, rested: 0, stop: null }
+  try { sky.three = localStorage.getItem(SKY) === '3d' } catch {}
+
+  function skyLook (canvas) {
+    return { dark: Boolean(darkScheme?.matches), ink: getComputedStyle(canvas).color, names: T.ENDS.map(endName),
+      colours: T.ENDS.map(endColour), picked: sky.picked }
+  }
+
+  /** What is picked, in words: a star, a person, or how to pick one. */
+  function pickedWords () {
+    const map = state.map, picked = sky.picked
+    const person = picked?.person !== undefined ? map?.people.find(item => item.subject === picked.person) : null
+    if (person) {
+      return t('map.person', { who: person.subject, lessons: person.lessons, weight: percent(person.weight) })
+    }
+    const star = picked?.key !== undefined ? map?.stars.find(item => item[4] === picked.key) : null
+    if (star) return t('map.star', { key: star[4], end: endName(map.ends[star[3]]), bright: star[2].toFixed(2) })
+    return t('map.pick')
+  }
+
+  function starMap () {
+    const map = state.map
+    if (!map) {
+      return card(t('map.title'), state.mapError ? el('p', { class: 'status error' }, t('error.read',
+        { name: state.files.gut?.name ?? '', error: state.mapError })) : hint(t('map.none')))
+    }
+    const canvas = el('canvas', { class: sky.three ? 'sky turning' : 'sky', role: 'img', 'aria-label': t('map.caption') })
+    const said = el('p', { class: 'sky-pick', 'aria-live': 'polite' }, pickedWords())
+    let drawn = null
+    const paint = () => {
+      if (!state.map || !canvas.isConnected) return
+      drawn = sky.three ? S.drawRound(canvas, state.map, skyLook(canvas), sky.turn)
+        : S.drawFlat(canvas, state.map, skyLook(canvas))
+    }
+    live(canvas, () => {
+      paint()
+      said.textContent = pickedWords()
+    })
+    const pick = event => {
+      if (!drawn) return
+      const box = canvas.getBoundingClientRect()
+      const found = S.nearest(drawn, event.clientX - box.left, event.clientY - box.top)
+      const same = (found?.key ?? found?.person) === (sky.picked?.key ?? sky.picked?.person)
+      if (same) return
+      sky.picked = found ? (found.person !== undefined ? { person: found.person } : { key: found.key }) : null
+      paint()
+      said.textContent = pickedWords()
+    }
+    canvas.addEventListener('pointerdown', event => {
+      if (!sky.three) return pick(event)
+      sky.drag = { x: event.clientX, y: event.clientY, moved: 0 }
+      try { canvas.setPointerCapture(event.pointerId) } catch {} // (a pointer the page no longer holds)
+    })
+    canvas.addEventListener('pointermove', event => {
+      const held = sky.drag
+      if (!sky.three || !held) return pick(event)
+      const dx = event.clientX - held.x, dy = event.clientY - held.y
+      held.x = event.clientX
+      held.y = event.clientY
+      held.moved += Math.abs(dx) + Math.abs(dy)
+      sky.turn.yaw += dx * 0.01
+      sky.turn.pitch = Math.max(-1.4, Math.min(1.4, sky.turn.pitch + dy * 0.01))
+      paint()
+    })
+    const up = event => {
+      const held = sky.drag
+      sky.drag = null
+      sky.rested = Date.now()
+      if (sky.three && held && held.moved < 5 && event.type === 'pointerup') pick(event) // (a tap, not a turn)
+    }
+    canvas.addEventListener('pointerup', up)
+    canvas.addEventListener('pointercancel', up)
+    // drawn once it is on the page and has a size, again when the size changes, and turning by itself in 3D
+    const resized = typeof ResizeObserver === 'function' ? new ResizeObserver(paint) : null
+    resized?.observe(canvas)
+    let frame = null, last = null, painted = 0, seen = true
+    const watched = typeof IntersectionObserver === 'function'
+      ? new IntersectionObserver(entries => { seen = entries.some(entry => entry.isIntersecting) }) : null
+    watched?.observe(canvas)
+    const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    const tick = at => {
+      if (last !== null && seen && !document.hidden && !sky.drag && Date.now() - sky.rested > RESTS) {
+        sky.turn.yaw += TURNING * Math.min(0.1, (at - last) / 1000)
+        if (at - painted >= 33) { // (about 30 a second: it turns slowly)
+          paint()
+          painted = at
+        }
+      }
+      last = at
+      frame = requestAnimationFrame(tick)
+    }
+    if (sky.three && !still && window.requestAnimationFrame) frame = requestAnimationFrame(tick)
+    if (!resized) requestAnimationFrame(paint)
+    sky.stop = () => {
+      resized?.disconnect()
+      watched?.disconnect()
+      if (frame !== null) cancelAnimationFrame(frame)
+    }
+    const choose = three => {
+      if (three === sky.three) return
+      sky.three = three
+      try { localStorage.setItem(SKY, three ? '3d' : '2d') } catch {}
+      render()
+    }
+    const views = el('div', { class: 'sky-switch', role: 'group', 'aria-label': t('map.view') },
+      [false, true].map(three => el('button', { type: 'button', class: sky.three === three ? 'on' : '',
+        'aria-pressed': String(sky.three === three), onclick: () => choose(three) }, three ? '3D' : '2D')))
+    const counts = t(map.probed >= S.LEAST ? 'map.counts' : 'map.born',
+      { stars: map.stars.length, rows: map.rows, probed: map.probed })
+    const birth = map.birth === 'unknown' ? t('map.unknown') : map.birth === 'blank' ? t('map.blank') : null
+    return el('section', { class: 'card sky-card' },
+      el('div', { class: 'sky-head' }, el('h2', null, t('map.title')), views),
+      canvas, said,
+      sky.three ? hint(t('map.turn')) : null,
+      birth ? el('p', { class: map.birth === 'unknown' ? 'sky-note' : 'hint' }, birth) : null,
+      hint(counts),
+      map.waiting ? hint(t('map.slept', { waiting: map.waiting })) : null,
+      hint(t('map.caption')))
+  }
 
   // ---- a list and one editor ------------------------------------------------------------------------------------------
   /** A list to choose from (its own scroll) beside the editor of what is chosen; stacked on a phone. */
@@ -1098,8 +1313,10 @@
     document.documentElement.lang = chinese() ? 'zh-CN' : 'en'
     document.title = `${t('page.title')} · mneme-llm`
     header()
+    sky.stop?.()
+    sky.stop = null
     const parts = [intro(), files()]
-    if (state.gut) parts.push(growing(), sensitivity(), feelings())
+    if (state.gut) parts.push(starMap(), growing(), sensitivity(), feelings())
     if (state.gut || state.memory) parts.push(people())
     if (state.gut) parts.push(sides())
     else if (state.memory) parts.push(el('p', { class: 'hint center' }, t('needGut')))
@@ -1136,6 +1353,6 @@
     }
   })
   sqlReady.catch(error => { say(t('error.sql', { error: errorText(error) }), true); render() })
-  window.tuner = { open: openFile, state } // (for a script, or a look from the console)
+  window.tuner = { open: openFile, state, sky } // (for a script, or a look from the console)
   render()
 })()

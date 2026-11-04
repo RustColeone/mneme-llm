@@ -564,8 +564,8 @@
   return {
     BARS, ENDS, CHINESE, NAMES, TAU, FLOOR, MOST, COUNTS, GROWS, HOLD, ROLES, SCHEMA, TuneError,
     unwal, isSqlite, kindOf, open, rows, gzip, gunzip, getState, putState,
-    settingsOf, level, gutView, configure, setAge, tune, tunePerson, forget, writeSide, sideWeight, dropSide, lockSide,
-    unlockSide,
+    settingsOf, personWeight, level, gutView, configure, setAge, tune, tunePerson, forget, writeSide, sideWeight,
+    dropSide, lockSide, unlockSide,
     checkMemory, spaces, rolesOf, roleOf, locksOf, closenessOf, memoryView, setCloseness, lockCloseness,
     unlockCloseness, setLiking, setFadeDays, setConfig
   }

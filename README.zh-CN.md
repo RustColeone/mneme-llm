@@ -358,7 +358,7 @@ mneme-llm gut side 病娇 --lock --often 0.5 --what "你离不开对方……"  
 
 `gut` 命令会改动文件，所以先让她停下：正在运行的伙伴有自己的一份，会把这里的改动覆盖掉。
 
-同样的调节也在文档站的一个页面上：[调校页](https://rustcoleone.github.io/mneme-llm/tune/)。把她的直觉文件（要调亲近度的话，再加上她的记忆文件）拖进去，调好以后把文件存回来。一切都在浏览器里完成，文件不会上传到任何地方。
+同样的调节也在文档站的一个页面上：[调校页](https://rustcoleone.github.io/mneme-llm/tune/)。把她的直觉文件（要调亲近度的话，再加上她的记忆文件）拖进去，调好以后把文件存回来。它也会画出她的星图，平面或 3D 都可以，和 DeepSeek Harness 插件画的一样；把她的 starter 文件（宿主程序给她的那个 `.json.gz`）也拖进去，臂就会显示她出生以后长大了多少。一切都在浏览器里完成，文件不会上传到任何地方。
 
 `MNEME_LLM_DB`、`MNEME_LLM_SPACE`、`MNEME_LLM_CONFIG` 和
 `MNEME_LLM_DISPLAY_LANGUAGE` 用于设置默认值。

@@ -845,7 +845,7 @@ their size (`MNEME_STRESS=heavy`); then builds the package, runs `twine check --
 | `test_migrate.py` | a real schema 1 file refused untouched and then made current: days in each space's zone, tokens, surfaces, what nothing reads gone, config keys no version knows, indexes rebuilt at the first search, new ids after the old ones, twice changes nothing, a failure leaves it as it was, a much older file, the command |
 | `test_gut.py` | the gut: her heart and each person's table, growing up, fading, the bars and slow levels, settings, a file from 0.4, its pinned numbers, marks, sides growing and going, the two moments a host calls |
 | `test_architecture.py` | the browsable architecture page matches the code |
-| `test_tuner.py` | the tuner page (docs/tune) knows the same bars, ends and side names as the gut |
+| `test_tuner.py` | the tuner page (docs/tune) knows the same bars, ends and side names as the gut; its star map, run in node, lives her birth from a starter and reads what she notices as the gut does |
 | `test_review.py` | one test per finding of every pre-release review (listed in CHANGELOG.md) |
 
 `tests/invariants.py` checks a file against the rules of `docs/FORMAT.md` row by row: one live note per key, no live
