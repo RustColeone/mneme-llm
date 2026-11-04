@@ -1036,7 +1036,33 @@ null
 "worried": 0.0,
 "wronged": 0.0
 },
-null
+null,
+{
+"aching": 0.0,
+"ashamed": 0.0,
+"bold": 0.0,
+"calm": 0.0,
+"cheeky": 0.6,
+"defiant": 0.0,
+"happy": 0.0,
+"hysterical": 0.0,
+"irritable": 0.55,
+"jealous": 0.0,
+"outgoing": 0.0,
+"peaceable": 0.0,
+"proud": 0.0,
+"sad": 0.0,
+"scornful": 0.0,
+"secure": 0.0,
+"shy": 0.0,
+"stern": 0.0,
+"sweet": 0.0,
+"tender": 0.0,
+"timid": 0.0,
+"withdrawn": 0.0,
+"worried": 0.0,
+"wronged": 0.0
+}
 ],
 "weights": [
 0.333333333,

@@ -195,6 +195,7 @@ class Ends(unittest.TestCase):
             self.assertIsNone(G.written(bad))
         self.assertEqual(G.vector('sure {"sad": 1} ok')["sad"], 1.0)
         self.assertEqual(G.vector('{"feel": {"Defiant": 0.7}}')["defiant"], .7)
+        self.assertEqual(G.vector('{"feeling": {"irritable": 0.55, "defiant": 0.7}}')["defiant"], .7)  # as DeepSeek wraps it
         self.assertEqual(len(G.vector('{"sad": 1}')), 24)
         self.assertIsNone(G.vector('{"sad": "x"}'))
 
@@ -806,7 +807,8 @@ def vectors() -> dict:
     out["lines"] = [G.line({"defiant": .7, "happy": .4, "irritable": .2, "sad": .1}, ["喵", "本鲸"], ["lately you are easily shaken"]),
                     G.line({"calm": .9}), G.line({"happy": .6, "calm": .2, "sad": .2})]
     out["written"] = [G.written('{"mood": 9, "feel": {"sad": 2, "calm": 0.5, "angry": 9}}'), G.written('{"feel": {"angry": 1}}')]
-    out["vector"] = [G.vector('{"feel": {"Defiant": 0.7, "sad": 3}}'), G.vector('{"sad": 0}')]
+    out["vector"] = [G.vector('{"feel": {"Defiant": 0.7, "sad": 3}}'), G.vector('{"sad": 0}'),
+                     G.vector('{"feeling": {"irritable": 0.55, "cheeky": 0.6}}')]
     out["mine"] = [G.mine("午饭吃了吗", "吃啦喵 nya", "zh"), G.mine("hi there", "Fine nya 本鲸 😊", "en"), G.mine("元気", "いいにゃ nya", "ja")]
     out["languages"] = [G.language_of(text) for text in ("今天好累", "今日好攰", "おはよう", "hello")]
     out["strength"] = [round(G.strength([(0, True, closeness), (86400, True, closeness), (2 * 86400, False, 60)], 10 * 86400), 9)
