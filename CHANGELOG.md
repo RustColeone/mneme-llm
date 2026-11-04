@@ -3,7 +3,9 @@
 All notable changes to mneme-llm are listed here. The project follows [semantic versioning](https://semver.org);
 before 1.0, a minor version may change the Python API, and this file says how.
 
-## Unreleased
+## 0.6.0 (2026-11-04)
+
+A 14th feeling, trust, and her nature dial as where she stands; the tuner draws her star map.
 
 - **A 14th bar, trust: 猜疑 suspicious or 信任 trusting** (`trust` in `gut.BARS`): what she believes people mean toward
   her. Like every bar it lives in her heart and in each person's table, so she can be born suspicious and still trust
