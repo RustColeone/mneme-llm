@@ -32,6 +32,8 @@ before 1.0, a minor version may change the Python API, and this file says how.
   is put, kept in the config as `relations.locked`. The `mneme-llm gut` command (`show`, `set`, `tune`, `person`,
   `side`) and `mneme-llm relate --lock/--unlock` do the same from the command line. Forgetting a person removes what was
   set for them.
+- **The tuner** (`docs/tune/`, on the docs site): her gut file and memory file dragged into a page, the same dials and
+  locks set there, and the files saved back, all in the browser (sql.js); each part a list with one editor.
 - **A word she says mostly to one person is theirs** (`OWN`, 80% of its uses): their name or their in-joke shows in her
   line only with them, never to someone new.
 - **Forgetting a person** removes how she is with them, their name from its lessons and the sides only they wanted;

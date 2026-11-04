@@ -527,6 +527,10 @@ mneme-llm gut side 病娇 --lock --often 0.5 --what "你离不开对方……"  
 
 The `gut` command changes the file, so stop her first: a running companion keeps its own copy and writes over it.
 
+The same dials are on a page of the docs site, [the tuner](https://rustcoleone.github.io/mneme-llm/tune/): drag in her
+gut file (and her memory file, for closeness), tune her, and save the files back. Everything happens in the browser; the
+files are not uploaded anywhere.
+
 `MNEME_LLM_DB`, `MNEME_LLM_SPACE`, `MNEME_LLM_CONFIG` and `MNEME_LLM_DISPLAY_LANGUAGE` set the defaults.
 
 ## Safety and privacy
