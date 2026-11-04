@@ -23,6 +23,8 @@ before 1.0, a minor version may change the Python API, and this file says how.
 - **Settings.** `Gut(tau=, zone=)`, `Gut.configure(tau, sensitivity)` (敏感 or 钝感: how hard every moment hits her),
   `Gut.tune(end, now=, nature=)` (where she is lately, fading; a nudge to who she is, never learned away) and
   `Gut.set_age` (young again, forgetting nothing). They outlast `wipe`.
+- **A word she says mostly to one person is theirs** (`OWN`, 80% of its uses): their name or their in-joke shows in her
+  line only with them, never to someone new.
 - **Forgetting a person** removes how she is with them, their name from its lessons and the sides only they wanted;
   what they did to her heart stays, and her month in a side goes on.
 - **Fixed:** an objection while she was in a side she was given counted against a side that had grown; a starter that

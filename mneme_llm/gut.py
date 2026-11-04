@@ -411,6 +411,7 @@ CANTONESE = re.compile(r"[嘅咗唔佢哋喺嚟啲冇攰睇講鍾嗰]")
 HAN = re.compile(r"[一-鿿]")
 RUNS = re.compile(r"[一-鿿぀-ヿ]+|[A-Za-z][A-Za-z']*|[\U0001F300-\U0001FAFF☀-➿]")
 CAP, SHOWN = 48, 3  # outputs per language, words in the line
+OWN = .8  # a word with this share of its uses with one person is theirs
 
 
 def language_of(text: str) -> str:
@@ -464,15 +465,16 @@ def distinctive(seen: Counter, total: int, base: Counter, base_total: int, least
 
 class Marks:
     """One table of weights per language, trained in her sleep only. Words are kept per language, so a Japanese habit
-    never lands in English."""
+    never lands in English, and a word she uses mostly with one person (OWN of its uses: their name, their in-joke) is
+    theirs, in her line only with them."""
 
     def __init__(self, base: dict | None = None):
         self.base = base or {}  # language → (Counter of replies holding the word, replies)
-        self.lessons: list[tuple] = []  # (language, form, mood, closeness, words)
+        self.lessons: list[tuple] = []  # (language, form, mood, closeness, words, who taught it)
         self.heads: dict[str, dict] = {}
 
-    def teach(self, language: str, form: dict, mood: int, closeness: float, words: list[str]) -> None:
-        self.lessons.append((language, form, mood, closeness, words))
+    def teach(self, language: str, form: dict, mood: int, closeness: float, words: list[str], subject: str = "") -> None:
+        self.lessons.append((language, form, mood, closeness, words, subject))
 
     def trained(self, seed: int = 0) -> dict[str, dict]:
         heads = {}
@@ -502,11 +504,18 @@ class Marks:
                         b[k] -= step * gradient * .5
                         for key, value in x.items():
                             w.setdefault(key, [0.0] * len(names))[k] -= step * gradient * value
-            heads[language] = {"names": names, "w": w, "b": b}
+            owners = {}
+            for name in names:
+                by = Counter(row[5] for row in rows if name in row[4] and row[5])
+                if by and by.most_common(1)[0][1] >= OWN * sum(by.values()):
+                    owners[name] = by.most_common(1)[0][0]
+            heads[language] = {"names": names, "w": w, "b": b, "owners": owners}
         return heads
 
-    def speaks(self, language: str, form: dict, closeness: float, need=2.0, floor=.35) -> list[str]:
-        """Her words for this moment: at least twice her normal rate, and likely enough."""
+    def speaks(self, language: str, form: dict, closeness: float, need=2.0, floor=.35, subject: str | None = None
+               ) -> list[str]:
+        """Her words for this moment, with this person: at least twice her normal rate, likely enough, and not a word
+        that belongs to someone else."""
         head = self.heads.get(language)
         if not head:
             return []
@@ -518,8 +527,11 @@ class Marks:
                     scores[k] += row[k] * value
         base, base_total = self.base.get(language, (Counter(), 1))
         found = []
+        owners = head.get("owners") or {}
         for name, score in zip(head["names"], scores):
             value = 1 / (1 + math.exp(-max(-30, min(30, score))))
+            if owners.get(name, subject) != subject:
+                continue
             if value >= floor and value / ((base.get(name, 0) + .5) / (base_total + 1)) >= need:
                 found.append((value, name))
         return [name for _, name in sorted(found, reverse=True)[:SHOWN]]
@@ -777,7 +789,7 @@ class Gut:
                 if not kept and (net.lessons in SLEEPS_AT or net.lessons % 100 == 0):
                     net.sleep()
             if closeness >= TEACH_FROM:
-                marks.teach(language, form, mood, closeness, words)
+                marks.teach(language, form, mood, closeness, words, subject)
         missed = any(count in SLEEPS_AT or count % 100 == 0 for count in range(done + 1, net.lessons + 1))
         if not kept or missed:
             net.sleep()
@@ -808,7 +820,7 @@ class Gut:
             if felt is None:
                 return {"told": side, "share": share, "felt": None}
             felt = sensitive(self.tone.lean(felt), self.settings["sensitivity"])
-            words = self.marks.speaks(language, form, closeness) if form else []
+            words = self.marks.speaks(language, form, closeness, subject=subject) if form else []
             told = line(felt, words, self.tone.said())
             return {"told": " ".join(text for text in (told, side) if text), "share": share, "felt": felt}
 
@@ -936,7 +948,7 @@ class Gut:
         with self.lock:
             self.net.teach(subject, form, note["feel"], note["mood"], closeness, ENDS, talking_day(at, self.zone))
             if closeness >= TEACH_FROM:
-                self.marks.teach(language, form, note["mood"], closeness, words)
+                self.marks.teach(language, form, note["mood"], closeness, words, subject)
             with self._open() as db:
                 db.execute("insert into lessons (subject, at, language, form, feel, mood, closeness, words, ends) values "
                            "(?, ?, ?, ?, ?, ?, ?, ?, ?)", (subject, at, language, json.dumps(form, ensure_ascii=False),

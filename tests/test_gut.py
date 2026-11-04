@@ -180,6 +180,17 @@ class Ends(unittest.TestCase):
         self.assertIn("喵", marks.speaks("zh", FORM, 85))
         self.assertEqual(marks.speaks("en", FORM, 85), [])  # a habit stays in its language
 
+    def test_a_word_she_says_mostly_to_one_person_is_theirs(self):
+        marks = G.Marks({"zh": (Counter(), 100)})
+        for index in range(30):
+            marks.teach("zh", FORM, 1, 85, ["阿杰", "喵"] if index % 2 else ["喵"], "jie" if index % 2 else "sis")
+        marks.heads = marks.trained()
+        self.assertEqual(marks.heads["zh"]["owners"], {"阿杰": "jie"})
+        self.assertIn("阿杰", marks.speaks("zh", FORM, 85, subject="jie"))
+        self.assertNotIn("阿杰", marks.speaks("zh", FORM, 85, subject="sis"))
+        self.assertNotIn("阿杰", marks.speaks("zh", FORM, 85))  # someone new
+        self.assertIn("喵", marks.speaks("zh", FORM, 85))
+
     def test_a_word_counts_only_in_its_own_writing(self):
         reply = "That is fine nya. 本鲸觉得 ok 😊"
         self.assertTrue({"nya", "fine", "😊"} <= set(G.mine("hi", reply, "en")))
