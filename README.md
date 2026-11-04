@@ -309,10 +309,10 @@ reached passes the work to the next, and a provider that fails is rested for a m
 ## A gut: what stays when memory is gone
 
 `mneme_llm.gut` keeps what a companion is, apart from what she remembers: wipe her memory or swap her model and she is
-still her. Before she answers, her model reads the message into a small form and a tiny network of her own gives seven
-numbers, one per mood; her model votes seven more with her memory in view, and a balance that moves by itself weighs the
-two. One line of fixed size goes beside the message, so it adds no context however long she lives. After she has
-answered she writes a private note in a call of its own, and that note teaches the network.
+still her. Before she answers, her model reads the message into a small form, and her gut turns it into her feelings;
+her model gives its own reading with her memory in view, and a balance that moves by itself weighs the two. One line of
+fixed size goes beside the message, so it adds no context however long she lives. After she has answered she writes a
+private note in a call of its own, and that note is a lesson.
 
 ```python
 from mneme_llm import Gut, Turn
@@ -326,12 +326,44 @@ async def ask(messages, max_tokens):                       # her own model, thin
 turn = Turn(gut, ask, her_prompt, message, "discord:42")   # her reading starts at once
 line = await turn.feel(earlier_messages, memory_text, closeness, exchanges)   # put this beside the message
 answer = await my_model(with_line(line))
-await turn.learn(earlier_messages, answer)                 # beside the conversation: her note, a lesson, sleep
+await turn.learn(answer)                                   # beside the conversation: her note, a lesson, sleep
 ```
 
 A host needs two moments and nothing else: the message before she answers, and the finished turn after it. It needs no
-dependency, and the rest of the package does not use it. A `starter` file gives her lessons she was born with; without
-one her model decides alone until she has lived. `tests/gut_vectors.json` pins its numbers for ports to other languages.
+dependency, and the rest of the package does not use it. `tests/gut_vectors.json` pins its numbers for ports to other
+languages.
+
+**Feelings.** 24 ends on 13 bars (`gut.BARS`): 难过 sad or 开心 happy, 担心 worried or 踏实 secure, 慌乱·崩溃 hysterical or
+平静 calm, 嫌弃 scornful or 甜蜜 sweet, 严厉 stern or 温柔 tender, 易怒 irritable or 平和 peaceable, 委屈 wronged or 不服
+defiant, 羞愧 ashamed or 得意 proud, 害羞 shy or 调皮 cheeky, 胆小 timid or 大胆 bold, 内向 withdrawn or 外向 outgoing, and
+吃醋 jealous and 心疼 aching on their own. Each end is a strength of its own, so both ends of a bar can be strong at once:
+sweet and scornful is love-hate, defiant and wronged is 嘴硬. The line names at most three; calm, peaceable or secure
+alone says nothing. Each end also has a slow level, lately against usual (`Tone`), which leans the line; two have names,
+SAN (理智值: calm against hysterical) and self-esteem (自尊: proud against ashamed), and the line says so when lately is
+far from usual. Lessons from 0.4 knew seven feelings and teach only those.
+
+**Her heart and the people she knows.** Her heart is one network: who she is with anyone. It learns from people at
+closeness 40 or more, each lesson weighted by closeness, fast while she is young and slowly once she has grown up: the
+same lesson moves her about twenty times as far on her first day as after `5 × tau` lessons (`tau` is 150 by
+default). Each person also has a table of their own, holding only what is different with them, learned from them
+alone, at a steady pace, from anyone. With a person she feels her heart and that difference, which counts more as she
+comes to know them (half at 20 lessons, never more than `MOST`, so her nature always has a say) and fades a little on
+every talking day she spends without them; it comes back as they talk again. Someone new meets her heart. While she is
+young, people change who she is; once grown, mostly how she is with them. A `starter` file gives her a lean she was born
+with; her character's prompt already gives the rest. Every so often she sleeps, settling what the lessons since her
+last sleep taught; nothing older is replayed, so nothing snaps back.
+
+```python
+gut = Gut("her.gut.db", "starter.json.gz", tau=150, zone=her_zone)   # tau and zone: for a new gut
+gut.configure(tau=300, sensitivity=.5)       # grow up slower; 敏感 (1) to 钝感 (-1): how hard every moment hits her
+gut.tune("irritable", nature=-1.5)           # a nudge to who she is, never learned away (0 removes it)
+gut.tune("sad", now=.4)                      # how she is lately, fading back as she lives
+gut.set_age(0)                               # young again, forgetting nothing
+gut.report()["people"], gut.report()["SAN"]  # how much each person counts, her slow levels
+gut.forget("discord:42")                     # how she is with them goes; what they did to her heart stays
+```
+
+A file from 0.4 is lived again under these rules, lesson by lesson, the first time it wakes.
 
 **Sides.** People shape who she is by how they talk to her, and that can outlast her memory. After each reply a short
 reading of the last few messages, with no character and no memory, asks one thing: is this person calling her a kind of

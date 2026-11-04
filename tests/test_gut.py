@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import gzip
 import json
 import sqlite3
 import tempfile
@@ -15,6 +16,7 @@ FORM = {"people": ["coworker"], "gender": ["woman"], "topic": ["lunch"], "event"
         "toward_you": "none"}
 OTHER = {"people": [], "gender": [], "topic": ["rain"], "event": ["rained"], "sender_feels": "tired", "toward_you": "none"}
 JEALOUS = {"jealous": .8, "sweet": .2}
+DAY = 86400
 
 
 class Item:
@@ -22,45 +24,151 @@ class Item:
         self.direction, self.text, self.sender_name, self.kind = direction, text, name, "text"
 
 
-class Parts(unittest.TestCase):
-    def test_seven_numbers_that_add_up(self):
-        felt = G.Net().vector(FORM, 85)
-        self.assertEqual(tuple(felt), G.MOODS)
-        self.assertAlmostEqual(sum(felt.values()), 1.0)
+def lessons(net, subject, feel, count, closeness=85, form=FORM, today=None, known=G.ENDS):
+    for _ in range(count):
+        net.teach(subject, form, feel, 1, closeness, known, today)
 
-    def test_a_lesson_is_a_blend_and_closeness_crosses_the_tags(self):
+
+class Ends(unittest.TestCase):
+    def test_every_end_is_a_strength_of_its_own(self):
+        felt = G.Net().vector(FORM, 85)
+        self.assertEqual(tuple(felt), G.ENDS)
+        self.assertEqual(len(G.ENDS), 24)
+        self.assertTrue(all(.04 < value < .06 for value in felt.values()))  # nothing learned: a trace of each
         net = G.Net()
-        for _ in range(60):
-            net.teach(FORM, JEALOUS, 1, 85)
+        lessons(net, "a", {"sweet": .9, "scornful": .9}, 40)
+        net.sleep()
+        felt = net.vector(FORM, 85)
+        self.assertGreater(min(felt["sweet"], felt["scornful"]), .6)  # both sides of a bar at once: love-hate
+        self.assertLess(felt["happy"], .1)
+
+    def test_the_bars(self):
+        self.assertEqual([bar[0] for bar in G.BARS][:3], ["mood", "security", "composure"])
+        self.assertEqual(G.CHINESE["irritable"], "易怒")
+        self.assertEqual(G.CHINESE["peaceable"], "平和")
+        self.assertEqual(G.CHINESE["tender"], "温柔")
+        self.assertEqual(G.CHINESE["stern"], "严厉")
+        self.assertIn("irritable or peaceable", G.FEELINGS)
+        self.assertTrue(set(G.OLD) <= set(G.ENDS))
+
+    def test_closeness_crosses_the_tags(self):
+        net = G.Net()
+        lessons(net, "a", JEALOUS, 60)
         net.sleep()
         self.assertGreater(net.vector(FORM, 85)["jealous"], .5)
-        self.assertGreater(net.vector(FORM, 85)["sweet"], net.vector(FORM, 85)["calm"])
         self.assertLess(net.vector(OTHER, 10)["jealous"], net.vector(FORM, 85)["jealous"])  # (not for everything)
         self.assertIn("high:people=coworker", G.features(FORM, 85))
+
+    def test_a_lesson_from_0_4_teaches_only_the_seven_it_knew(self):
+        net = G.Net()
+        defiant = net.vector(FORM, 85)["defiant"]
+        lessons(net, "a", {"jealous": .8}, 30, known=G.OLD)
+        net.sleep()
+        self.assertGreater(net.vector(FORM, 85)["jealous"], .5)
+        self.assertAlmostEqual(net.vector(FORM, 85)["defiant"], defiant)  # not told, so not learned as a "no"
+        self.assertLess(net.vector(FORM, 85)["happy"], defiant)  # told: a "no"
+
+    def test_her_heart_grows_up(self):
+        net = G.Net()
+        self.assertAlmostEqual(net.learning(), G.YOUNG)
+        net.age = 5 * G.TAU
+        self.assertAlmostEqual(net.learning(), G.YOUNG * (G.FLOOR + (1 - G.FLOOR) * 2.718281828 ** -5), places=6)
+        moved = []
+        for age in (0, 5 * G.TAU):
+            net = G.Net()
+            net.age = age
+            lessons(net, "a", JEALOUS, 20)
+            net.sleep()
+            moved.append(net.heart.strengths(G.features(FORM, 85))[G.ENDS.index("jealous")])
+        self.assertGreater(moved[0], .5)  # young: twenty lessons make her jealous
+        self.assertLess(moved[1], .25)  # grown: they barely move her heart
+
+    def test_two_people_two_ways_and_someone_new_meets_her_heart(self):
+        net = G.Net()
+        for _ in range(60):
+            net.teach("alice", FORM, {"jealous": .9}, 1, 85)
+            net.teach("bob", FORM, {"calm": .9}, 1, 85)
+        net.sleep()
+        alice, bob, new = (net.vector(FORM, 85, who)["jealous"] for who in ("alice", "bob", "carol"))
+        self.assertGreater(alice, new + .1)
+        self.assertLess(bob, new - .1)
+        self.assertEqual(new, net.vector(FORM, 85)["jealous"])
+        self.assertAlmostEqual(net.weight("alice"), G.MOST)
+
+    def test_someone_not_close_teaches_only_how_she_is_with_them(self):
+        net = G.Net()
+        heart = net.vector(FORM, 85)
+        lessons(net, "stranger", JEALOUS, 60, closeness=10)
+        net.sleep()
+        self.assertEqual(net.vector(FORM, 85), heart)
+        self.assertEqual(net.age, 0)
+        self.assertGreater(net.vector(FORM, 10, "stranger")["jealous"], net.vector(FORM, 10)["jealous"] + .1)
+
+    def test_a_person_she_does_not_talk_to_fades_back_and_comes_back(self):
+        net = G.Net()
+        for day in range(30):
+            lessons(net, "alice", JEALOUS, 2, today=day)
+        full = net.weight("alice")
+        for day in range(30, 120):
+            lessons(net, "bob", {"calm": .9}, 1, today=day)
+        self.assertAlmostEqual(net.weight("alice"), full * (1 - G.PULL) ** 89, places=6)  # (the day still going is not over)
+        self.assertLess(net.weight("alice"), full * .45)
+        lessons(net, "alice", JEALOUS, 40, today=120)
+        self.assertGreater(net.weight("alice"), full * .95)
+        silent = net.weight("bob")
+        lessons(net, "alice", JEALOUS, 1, today=125)  # days nobody talked to her are no days
+        self.assertAlmostEqual(net.weight("bob"), silent * (1 - G.PULL))
+
+    def test_sleep_settles_and_nothing_snaps_back(self):
+        net = G.Net()
+        lessons(net, "a", JEALOUS, 15)
+        awake = net.vector(FORM, 85)["jealous"]
+        net.sleep()
+        self.assertGreater(net.vector(FORM, 85)["jealous"], awake)
+        self.assertEqual(net.waiting, [])
 
     def test_the_balance_moves_by_itself(self):
         net = G.Net()
         self.assertEqual(G.balance(net, 0), 0.0)  # nothing lived: her head alone
-        net.lessons = [None] * 1100
+        net.start([(FORM, JEALOUS, 1, 85)])
+        self.assertTrue(.75 < G.balance(net, 0) < .85)  # a starter counts for something
+        net.age = 1000
         wiped, known = G.balance(net, 0), G.balance(net, 200)
         self.assertGreater(wiped, .85)  # memory wiped: the gut leads
         self.assertTrue(.4 < known < .55)  # both full: about even
 
     def test_the_line_keeps_its_size(self):
-        felt = {"jealous": .4, "sweet": .3, "tender": .2, "happy": .1}
-        told = G.line(felt, ["喵", "本鲸"])
-        self.assertIn("somewhat jealous, somewhat sweet, a little tender", told)
-        self.assertNotIn("happy", told)
+        felt = {"defiant": .7, "happy": .4, "irritable": .2, "sad": .1}
+        told = G.line(felt, ["喵", "本鲸"], ["lately you are easily shaken"])
+        self.assertIn("very defiant, quite happy, a little irritable, lately you are easily shaken", told)
+        self.assertNotIn("sad", told)
         self.assertIn("you keep saying 喵, 本鲸", told)
-        self.assertEqual(G.line({"calm": .9}), "")  # calm says nothing
+        self.assertEqual(G.line({"calm": .9, "peaceable": .5}), "")  # an ordinary moment says nothing
+        self.assertIn("very calm, quite proud", G.line({"calm": .9, "proud": .5}))
 
-    def test_her_tone_moves_slowly_and_leans(self):
+    def test_her_slow_levels_move_slowly_and_lean(self):
         tone = G.Tone()
+        for _ in range(300):
+            tone.feed({"sad": .1, "calm": .5})
+        self.assertAlmostEqual(tone.lean({"sad": .1})["sad"], .1)  # one way of asking: nothing off
         for _ in range(112):  # two weeks
-            tone.feed({"sad": 1.0})
-        self.assertAlmostEqual(tone.v["sad"], .5, delta=.03)
-        self.assertGreater(tone.lean(G.NORMAL)["sad"], G.NORMAL["sad"])
-        self.assertAlmostEqual(sum(tone.lean(G.NORMAL).values()), 1.0)
+            tone.feed({"sad": 1.0, "calm": .5})
+        self.assertAlmostEqual(tone.lately["sad"], .55, delta=.05)
+        self.assertGreater(tone.lean({"sad": .1})["sad"], .25)
+        self.assertEqual(tone.said(), [])
+        for _ in range(200):
+            tone.feed({"hysterical": .9, "ashamed": .8})
+        self.assertEqual(tone.said(), ["lately you are easily shaken", "lately you think little of yourself"])
+        self.assertLess(tone.level("composure"), 0)
+        again = G.Tone(json.loads(json.dumps(tone.kept())))
+        self.assertEqual(again.lean({"sad": .1}), tone.lean({"sad": .1}))
+
+    def test_sensitivity_is_how_hard_it_hits(self):
+        felt = {"sad": .3, "happy": 0.0}
+        self.assertEqual(G.sensitive(felt, 0), felt)
+        self.assertGreater(G.sensitive(felt, 1)["sad"], .45)
+        self.assertLess(G.sensitive(felt, -1)["sad"], .2)
+        self.assertEqual(G.sensitive(felt, 1)["happy"], 0.0)
 
     def test_a_word_of_hers_not_an_echo(self):
         marks = G.Marks({"zh": (Counter(), 100)})
@@ -80,20 +188,15 @@ class Parts(unittest.TestCase):
         self.assertIn("にゃ", G.mine("hi", "いいにゃ nya", "ja"))
         self.assertNotIn("nya", G.mine("hi", "いいにゃ nya", "ja"))
 
-    def test_her_normal_is_her_own(self):
-        self.assertAlmostEqual(G.usual([({}, {"sad": 1.0}, 0, 85), ({}, {"sad": .5, "calm": .5}, 0, 85)])["sad"], .75)
-        self.assertIsNone(G.usual([({}, "sad", 0, 85)]))
-        tone = G.Tone(normal={**G.NORMAL, "worried": .3})
-        self.assertAlmostEqual(tone.lean({**G.NORMAL, "worried": .3})["worried"], .3 / sum({**G.NORMAL, "worried": .3}.values()))
-
     def test_notes_and_votes_are_read_strictly(self):
-        self.assertEqual(G.written('{"mood": 9, "feel": {"sad": 2, "calm": 2, "angry": 9}}'),
-                         {"feel": {"calm": .5, "sad": .5}, "mood": 2})
-        for bad in ("", "no", '{"mood": 1}', '{"feel": {"angry": 1}}', '{"feel": 3}'):
+        self.assertEqual(G.written('{"mood": 9, "feel": {"sad": 2, "calm": 0.5, "angry": 9}}'),
+                         {"feel": {"calm": .5, "sad": 1.0}, "mood": 2})
+        for bad in ("", "no", '{"mood": 1}', '{"feel": {"angry": 1}}', '{"feel": 3}', '{"feel": {"sad": 0}}'):
             self.assertIsNone(G.written(bad))
         self.assertEqual(G.vector('sure {"sad": 1} ok')["sad"], 1.0)
+        self.assertEqual(G.vector('{"feel": {"Defiant": 0.7}}')["defiant"], .7)
+        self.assertEqual(len(G.vector('{"sad": 1}')), 24)
         self.assertIsNone(G.vector('{"sad": "x"}'))
-
 
 
 class Kept(unittest.TestCase):
@@ -102,22 +205,25 @@ class Kept(unittest.TestCase):
         self.path = Path(self._tmp.name) / "gut" / "her.db"
         self.addCleanup(self._tmp.cleanup)
 
-    def gut(self):
-        gut = G.Gut(self.path)
+    def gut(self, starter=None):
+        gut = G.Gut(self.path, starter)
         gut.wake()
         self.addCleanup(gut.close)
         return gut
 
-    def teach(self, gut, count, subject="discord:1", closeness=85):
+    def teach(self, gut, count, subject="discord:1", closeness=85, feel=JEALOUS):
         for _ in range(count):
-            gut.teach(subject, "zh", FORM, {"feel": JEALOUS, "mood": 1}, closeness, ["喵"])
+            gut.teach(subject, "zh", FORM, {"feel": feel, "mood": 1}, closeness, ["喵"])
 
-    def test_strangers_teach_nothing(self):
+    def test_someone_not_close_teaches_how_she_is_with_them_not_her_heart(self):
         gut = self.gut()
-        self.assertFalse(gut.teach("x", "zh", FORM, {"feel": JEALOUS, "mood": 1}, 39.9, []))
-        self.assertEqual(gut.report()["lessons"], 0)
+        self.assertFalse(gut.teach("x", "zh", FORM, {"feel": JEALOUS, "mood": 1}, 39.9, ["喵"]))
+        found = gut.report()
+        self.assertEqual((found["lessons"], found["age"]), (1, 0))
+        self.assertEqual(found["people"]["x"]["lessons"], 1)
+        self.assertEqual(gut.marks.lessons, [])  # nor her words
         self.teach(gut, 1, closeness=40)
-        self.assertEqual(gut.report()["lessons"], 1)
+        self.assertEqual(gut.report()["age"], 1)
 
     def test_she_sleeps_at_20_and_50_and_every_100(self):
         gut = self.gut()
@@ -127,31 +233,43 @@ class Kept(unittest.TestCase):
     def test_she_wakes_as_she_went_to_sleep_with_what_came_after(self):
         gut = self.gut()
         self.teach(gut, 30)
+        self.teach(gut, 10, "discord:2", feel={"calm": .9})
         gut.sleep()
         self.teach(gut, 5)
-        felt = gut.net.vector(FORM, 85)
+        felt, theirs = gut.net.vector(FORM, 85), gut.net.vector(FORM, 85, "discord:2")
         gut.close()
         again = self.gut()
-        self.assertEqual(again.report()["lessons"], 35)
+        self.assertEqual(again.report()["lessons"], 45)
         for name, value in again.net.vector(FORM, 85).items():
-            self.assertAlmostEqual(value, felt[name], places=6)
+            self.assertAlmostEqual(value, felt[name], places=9)
+        for name, value in again.net.vector(FORM, 85, "discord:2").items():
+            self.assertAlmostEqual(value, theirs[name], places=9)
         self.assertEqual(again.marks.heads.keys(), gut.marks.heads.keys())
 
-    def test_a_person_can_be_forgotten(self):
+    def test_a_person_can_be_forgotten_and_what_is_done_is_done(self):
         gut = self.gut()
+        gut.write_side("御姐", "你从容。")
+        held = gut.holding()
         self.teach(gut, 30, "discord:1")
-        for _ in range(2):
-            gut.teach("discord:2", "zh", OTHER, {"feel": {"sad": 1.0}, "mood": 0}, 85, [])
+        self.teach(gut, 2, "discord:2", feel={"sad": 1.0})
         gut.language("discord:1", {"language": "ja"}, "x")
         gut.sleep()
-        self.assertGreater(gut.net.vector(FORM, 85)["jealous"], .5)
+        heart = gut.net.vector(FORM, 85)
         self.assertEqual(gut.forget("discord:1"), 30)
-        self.assertEqual(gut.report()["lessons"], 2)
+        self.assertEqual(gut.report()["lessons"], 32)
         self.assertNotIn("discord:1", gut.languages)
-        self.assertLess(gut.net.vector(FORM, 85)["jealous"], .1)
+        self.assertNotIn("discord:1", gut.report()["people"])
+        felt = gut.net.vector(FORM, 85)
+        self.assertEqual(felt, heart)
+        self.assertGreater(felt["jealous"], .3)  # what they did to her heart stays
+        self.assertEqual(gut.net.vector(FORM, 85, "discord:1"), felt)  # and they meet it as someone new
+        self.assertEqual(gut.holding(), held)  # her month in a side goes on
         with contextlib.closing(sqlite3.connect(self.path)) as db:
-            rows = db.execute("select count(*) from lessons where subject = 'discord:1'").fetchone()
-        self.assertEqual(rows[0], 0)
+            named = db.execute("select subject, count(*) from lessons group by subject order by subject").fetchall()
+        self.assertEqual(named, [("", 30), ("discord:2", 2)])
+        gut.close()
+        again = self.gut()
+        self.assertNotIn("discord:1", again.report()["people"])
 
     def test_she_answers_in_the_last_language_when_a_message_is_too_short(self):
         gut = self.gut()
@@ -161,32 +279,115 @@ class Kept(unittest.TestCase):
         self.assertEqual(gut.language("b", None, "今天好累"), "zh")  # no reading: only then the characters decide
         self.assertEqual(gut.language("a", {"language": "en"}, "x"), "en")
 
-    def test_a_lean_starter_is_only_a_beginning(self):
+    def starter(self, ends=None):
         starter = self.path.parent.parent / "starter.json.gz"
-        import gzip
+        data = {"rows": [[FORM, "jealous", 1, 85]] * 30 + [[OTHER, "none", 0, 85]] * 30,
+                "words": {"zh": {"n": 60, "words": {"的": 40}}}}
+        if ends:
+            data["rows"] = [[FORM, {"defiant": .9}, 1, 85]] * 30 + [[OTHER, {"calm": .9}, 0, 85]] * 30
+            data["ends"] = ends
         with gzip.open(starter, "wt", encoding="utf-8") as file:
-            json.dump({"rows": [[FORM, "jealous", 1, 85]] * 30 + [[OTHER, "none", 0, 85]] * 30,
-                       "words": {"zh": {"n": 60, "words": {"的": 40}}}}, file)
-        gut = G.Gut(self.path, starter)
-        gut.wake()
-        self.addCleanup(gut.close)
-        self.assertGreater(gut.net.vector(FORM, 85)["jealous"], .5)
-        self.assertGreater(gut.net.vector(OTHER, 85)["calm"], .5)  # `none` is calm: seven numbers
+            json.dump(data, file)
+        return starter
+
+    def test_a_starter_is_a_lean_and_only_a_beginning(self):
+        starter = self.starter()
+        gut = self.gut(starter)
+        felt, other = gut.net.vector(FORM, 85), gut.net.vector(OTHER, 85)
+        self.assertGreater(felt["jealous"], other["jealous"] + .1)
+        self.assertGreater(other["calm"], felt["calm"] + .1)  # `none` is calm
+        self.assertAlmostEqual(felt["defiant"], G.squash(G.BLANK), places=6)  # a starter from 0.4 knew seven
         self.assertEqual(gut.marks.base["zh"][1], 60)
-        self.assertLess(gut.report()["starter"], .61)
-        self.assertEqual(gut.report()["born"], 60)
-        felt = gut.net.vector(FORM, 85)
+        self.assertEqual(gut.report()["age"], 0)
         gut.close()
-        again = G.Gut(self.path, starter)
-        again.wake()
-        self.addCleanup(again.close)
-        self.assertEqual(again.report()["born"], 60)
-        self.assertAlmostEqual(again.net.vector(FORM, 85)["jealous"], felt["jealous"], places=6)
+        again = self.gut(starter)
+        self.assertAlmostEqual(again.net.vector(FORM, 85)["jealous"], felt["jealous"], places=9)
+
+    def test_a_starter_knows_the_ends_it_says(self):
+        gut = self.gut(self.starter(list(G.ENDS)))
+        self.assertGreater(gut.net.vector(FORM, 85)["defiant"], gut.net.vector(OTHER, 85)["defiant"] + .1)
+
+    def test_a_broken_starter_says_so(self):
+        broken = self.path.parent.parent / "broken.json.gz"
+        broken.write_bytes(b"not gzip")
+        with self.assertRaises(ValueError):
+            G.Gut(self.path, broken).wake()
+        self.gut(self.path.parent.parent / "none.json.gz")  # no file: a blank gut
+
+    def test_a_file_from_0_4_is_lived_again(self):
+        self.path.parent.mkdir(parents=True)
+        with contextlib.closing(sqlite3.connect(self.path)) as db, db:
+            db.executescript("""
+                create table lessons (id integer primary key, subject text not null, at real not null,
+                    language text not null, form text not null, feel text not null, mood integer not null,
+                    closeness real not null, words text not null);
+                create table state (key text primary key, value blob not null);""")
+            for index in range(30):
+                db.execute("insert into lessons (subject, at, language, form, feel, mood, closeness, words) values "
+                           "(?, ?, 'zh', ?, ?, 1, 85, '[]')", ("discord:1", 1.8e9 + index * 3600, json.dumps(FORM),
+                                                              json.dumps({"jealous": .8, "sweet": .2})))
+            db.execute("insert into state values ('net', ?)", (gzip.compress(b'{"w": {}, "b": [0,0,0,0,0,0,0], "lessons": 30}'),))
+            db.execute("insert into state values ('tone', ?)", (gzip.compress(b'{"sad": 0.5}'),))
+        gut = self.gut()
+        found = gut.report()
+        self.assertEqual((found["lessons"], found["age"], found["people"]["discord:1"]["lessons"]), (30, 30, 30))
+        self.assertGreater(gut.net.vector(FORM, 85)["jealous"], .5)
+        self.assertAlmostEqual(gut.net.vector(FORM, 85)["defiant"], G.squash(G.BLANK), places=6)
+        with contextlib.closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual({row[0] for row in db.execute("select key from state")}, {"heart"})
+            self.assertEqual(db.execute("select distinct ends from lessons").fetchall(), [(7,)])
+        gut.teach("discord:1", "zh", FORM, {"feel": {"defiant": .9}, "mood": 1}, 85, [])
+        with contextlib.closing(sqlite3.connect(self.path)) as db:
+            self.assertEqual(db.execute("select ends from lessons order by id desc limit 1").fetchone(), (24,))
+
+    def test_settings_are_hers_and_stay(self):
+        gut = self.gut()
+        self.assertEqual(gut.configure(tau=300, sensitivity=.5), {"tau": 300.0, "sensitivity": .5, "nudge": {}})
+        for bad in ({"tau": 0}, {"tau": True}, {"sensitivity": 2}):
+            with self.assertRaises(ValueError):
+                gut.configure(**bad)
+        gut.tune("irritable", nature=-2)
+        with self.assertRaises(ValueError):
+            gut.tune("angry", now=.3)
+        with self.assertRaises(ValueError):
+            gut.tune("irritable", nature=4)
+        self.assertLess(gut.net.vector(FORM, 85)["irritable"], .01)
+        self.teach(gut, 3)
+        gut.close()
+        again = self.gut()
+        self.assertEqual(again.settings, {"tau": 300.0, "sensitivity": .5, "nudge": {"irritable": -2.0}})
+        self.assertEqual(again.net.tau, 300.0)
+        self.assertLess(again.net.vector(FORM, 85)["irritable"], .01)
+        again.tune("irritable", nature=0)
+        self.assertEqual(again.settings["nudge"], {})
+        again.wipe()
+        self.assertEqual(again.settings["tau"], 300.0)  # a wipe takes what she learned, not her settings
+        self.assertEqual(again.report()["lessons"], 0)
+
+    def test_where_she_is_now_fades_as_she_lives(self):
+        gut = self.gut()
+        gut.tune("sad", now=.5)
+        self.assertAlmostEqual(gut.tone.lean({"sad": .1})["sad"], .6)
+        vote = dict.fromkeys(G.ENDS, 0.0)
+        for _ in range(112):
+            gut.feel(FORM, vote, 85, 3, "zh")
+        self.assertAlmostEqual(gut.tone.lean({"sad": .1})["sad"], .35, delta=.03)
+
+    def test_an_age_can_be_set_young_again_forgetting_nothing(self):
+        gut = self.gut()
+        self.teach(gut, 300)
+        gut.sleep()
+        felt = gut.net.vector(FORM, 85)
+        self.assertLess(gut.report()["learning"], .25)
+        gut.set_age(0)
+        self.assertEqual((gut.report()["age"], gut.report()["learning"]), (0, 1.0))
+        self.assertEqual(gut.net.vector(FORM, 85), felt)
+        gut.close()
+        self.assertEqual(self.gut().report()["age"], 0)
 
 
 ANSWERS = {"read": json.dumps({**FORM, "language": "en"}), "vote": json.dumps(JEALOUS), "note": json.dumps({"mood": 1, "feel": JEALOUS}),
            "shape": '{"side": null}', "grow": '{"name": "小绿茶", "what": "你先夸她，再（委屈地）让她显得不如你。"}'}
-DAY = 86400
 
 
 class Model:
@@ -216,26 +417,40 @@ class Turns(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self.gut.close)
         self.model = Model()
 
-    def turn(self, said="had lunch with a coworker"):
-        return G.Turn(self.gut, self.model, "You are her.", said, "discord:1")
+    def turn(self, said="had lunch with a coworker", subject="discord:1"):
+        return G.Turn(self.gut, self.model, "You are her.", said, subject)
 
     async def test_a_turn_from_the_message_to_a_lesson(self):
         turn = self.turn()
         line = await turn.feel([{"role": "user", "content": "earlier"}], "Notes about them.", 85, 3)
-        self.assertIn("mostly jealous", line)
+        self.assertIn("jealous", line)
         self.assertIn("傲娇", line)
         self.assertIn("Reply in English.", line)
         vote = next(messages for kind, messages in self.model.asked if kind == "vote")
         self.assertIn("Notes about them.", vote[-1]["content"])
+        self.assertIn("irritable or peaceable", vote[-1]["content"])
         self.assertEqual(next(messages for kind, messages in self.model.asked if kind == "read")[1]["content"], turn.said)
         self.assertEqual((await turn.learn("Oh, a coworker."))["feel"], {"sweet": .2, "jealous": .8})
         self.assertEqual(self.gut.report()["lessons"], 1)
+        self.assertEqual(self.gut.report()["people"]["discord:1"]["lessons"], 1)
         note = next(messages for kind, messages in self.model.asked if kind == "note")
         self.assertIn("Right now you feel", note[0]["content"])  # the line stays in view of her note
 
+    async def test_she_feels_each_person_her_own_way(self):
+        for _ in range(60):
+            for who, feel in (("discord:1", {"jealous": .9}), ("discord:2", {"calm": .9})):
+                if self.gut.teach(who, "en", FORM, {"feel": feel, "mood": 1}, 85, []):
+                    self.gut.sleep()
+        one, two = (self.gut.feel(FORM, None, 85, 3, "en", who)["felt"] for who in ("discord:1", "discord:2"))
+        self.assertGreater(one["jealous"], two["jealous"] + .3)
+        self.assertGreater(two["calm"], one["calm"] + .3)
+        self.model.fail = {"vote"}
+        self.assertIn("very jealous", await self.turn().feel([], "", 85, 3))
+        self.assertNotIn("you feel", await self.turn(subject="discord:2").feel([], "", 85, 3))  # calm alone: ordinary
+
     async def test_she_answers_when_a_call_fails(self):
         self.model.fail = {"read"}
-        self.assertIn("mostly jealous", await self.turn().feel([], "", 85, 3))  # her head alone
+        self.assertIn("very jealous", await self.turn().feel([], "", 85, 3))  # her head alone
         self.model.fail = {"vote"}
         self.assertIn("Reply in English.", await self.turn().feel([], "", 85, 3))
         self.model.fail = {"read", "vote"}
@@ -246,7 +461,7 @@ class Turns(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(setattr, G, "TIME_LIMIT", limit)
         self.model.hold["read"] = asyncio.Event()
         turn = self.turn()
-        self.assertIn("mostly jealous", await turn.feel([], "", 85, 3))
+        self.assertIn("very jealous", await turn.feel([], "", 85, 3))
         self.model.hold["read"].set()
         self.assertIsNotNone(await turn.learn("reply"))
         self.assertEqual(self.gut.report()["lessons"], 1)
@@ -565,25 +780,34 @@ def vectors() -> dict:
     forms = [{"people": ["coworker"], "gender": ["woman"], "topic": ["lunch"], "event": ["ate"], "sender_feels": "happy", "toward_you": "none"},
              {"people": [], "gender": [], "topic": ["rain", "Bus"], "event": ["got wet"], "sender_feels": "tired", "toward_you": "asking"},
              {"people": ["mother"], "gender": ["woman"], "topic": ["health"], "event": ["fell"], "sender_feels": "worried", "toward_you": "affection"}]
-    feels = [{"jealous": .7, "sweet": .3}, {"tender": 1.0}, {"worried": .6, "sad": .4}]
+    feels = [{"jealous": .7, "sweet": .3}, {"tender": 1.0, "defiant": .4}, {"worried": .6, "sad": .4, "aching": .5}]
     rounded = lambda value: {key: round(item, 9) for key, item in value.items()}
     out = {"tags": [G.tags(form) for form in forms],
-           "features": [rounded(G.features(form, closeness)) for form in forms for closeness in (10, 40, 85)]}
+           "features": [rounded(G.features(form, closeness)) for form in forms for closeness in (10, 40, 85)],
+           "ends": list(G.ENDS), "feelings": G.FEELINGS}
     net = G.Net()
+    net.start([(forms[index % 3], feels[index % 3], index % 3 - 1, (85, 50, 20)[index % 3]) for index in range(12)], G.OLD)
     for index in range(30):
-        form = forms[index % 3]
-        net.teach(form, feels[index % 3], index % 3 - 1, (85, 50, 41)[index % 3])
-    out["after 30 lessons"] = [rounded(net.vector(form, closeness)) for form in forms for closeness in (10, 85)]
+        net.teach("abc"[index % 3], forms[index % 3], feels[index % 3], index % 3 - 1, (85, 50, 20)[index % 3], G.ENDS, index // 4)
+        if index == 19:
+            net.sleep()
+    out["after 30 lessons"] = [rounded(net.vector(form, closeness, who)) for form in forms for closeness in (10, 85) for who in (None, "a", "c")]
+    out["weights"] = [round(net.weight(who), 9) for who in "abcd"]
+    out["learning"] = round(net.learning(), 9)
     out["balance"] = [round(G.balance(net, exchanges), 9) for exchanges in (0, 5, 200)]
     tone = G.Tone()
+    tone.shift["proud"] = .3
     for index in range(50):
-        tone.feed(feels[index % 3])
-    out["tone"] = rounded(tone.v)
-    out["lean"] = rounded(tone.lean(G.NORMAL))
-    out["lines"] = [G.line({"jealous": .4, "sweet": .3, "tender": .2, "happy": .1}, ["喵", "本鲸"]), G.line({"calm": .9}),
-                    G.line({"happy": .6, "calm": .2, "sad": .2})]
+        tone.feed(feels[index % 3], (0, .5)[index % 2])
+    out["tone"] = {"lately": rounded(tone.lately), "usual": rounded(tone.usual), "shift": rounded(tone.shift)}
+    out["lean"] = rounded(tone.lean(dict.fromkeys(G.ENDS, .1)))
+    out["said"] = tone.said()
+    out["sensitive"] = [rounded(G.sensitive({"sad": .3, "happy": .7}, sensitivity)) for sensitivity in (-1, -.5, .5, 1)]
+    out["lines"] = [G.line({"defiant": .7, "happy": .4, "irritable": .2, "sad": .1}, ["喵", "本鲸"], ["lately you are easily shaken"]),
+                    G.line({"calm": .9}), G.line({"happy": .6, "calm": .2, "sad": .2})]
+    out["written"] = [G.written('{"mood": 9, "feel": {"sad": 2, "calm": 0.5, "angry": 9}}'), G.written('{"feel": {"angry": 1}}')]
+    out["vector"] = [G.vector('{"feel": {"Defiant": 0.7, "sad": 3}}'), G.vector('{"sad": 0}')]
     out["mine"] = [G.mine("午饭吃了吗", "吃啦喵 nya", "zh"), G.mine("hi there", "Fine nya 本鲸 😊", "en"), G.mine("元気", "いいにゃ nya", "ja")]
-    out["written"] = [G.written('{"mood": 9, "feel": {"sad": 2, "calm": 2, "angry": 9}}'), G.written('{"feel": {"angry": 1}}')]
     out["languages"] = [G.language_of(text) for text in ("今天好累", "今日好攰", "おはよう", "hello")]
     out["strength"] = [round(G.strength([(0, True, closeness), (86400, True, closeness), (2 * 86400, False, 60)], 10 * 86400), 9)
                        for closeness in (40, 60, 85, 100)]

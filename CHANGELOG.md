@@ -3,6 +3,33 @@
 All notable changes to mneme-llm are listed here. The project follows [semantic versioning](https://semver.org);
 before 1.0, a minor version may change the Python API, and this file says how.
 
+## 0.5.0 (unreleased)
+
+- **Her feelings are 24 ends on 13 bars** (`gut.BARS`), each a strength of its own rather than a share of one: 难过 or
+  开心, 担心 or 踏实, 慌乱·崩溃 or 平静, 嫌弃 or 甜蜜, 严厉 or 温柔, 易怒 or 平和, 委屈 or 不服, 羞愧 or 得意, 害羞 or 调皮, 胆小 or
+  大胆, 内向 or 外向, and 吃醋 and 心疼. Both ends of a bar can be strong at once. Her note and her model's reading name one
+  to three with how strongly; the line names at most three. `MOODS` and `NORMAL` are gone; `ENDS`, `CHINESE` and
+  `FEELINGS` are new.
+- **Her heart and the people she knows.** One network for who she is with anyone, learning from people at closeness 40 or
+  more by closeness tier, and one table for each person, holding only what is different with them, learned from anyone,
+  read on top of her heart and counting more as she knows them (`COUNTS`, `MOST`). A talking day without someone fades
+  them back toward her heart (`PULL`); talking again brings them back. `Gut.feel` takes the subject; `Turn` passes it.
+- **She grows up.** A lesson moves her heart about twenty times as far on her first day as once grown (`tau`, 150
+  lessons, grown at five times it). Sleep settles the lessons since her last sleep and replays nothing older, so a sleep
+  no longer takes back what she learned; her starter is a lean, trained gently, not replayed.
+- **Slow levels against her own usual.** `Tone` keeps `lately` and `usual` from the same readings, so nothing is off by
+  the difference between two ways of asking; SAN (calm against hysterical) and self-esteem (proud against ashamed) go
+  into the line when lately is far from usual.
+- **Settings.** `Gut(tau=, zone=)`, `Gut.configure(tau, sensitivity)` (敏感 or 钝感: how hard every moment hits her),
+  `Gut.tune(end, now=, nature=)` (where she is lately, fading; a nudge to who she is, never learned away) and
+  `Gut.set_age` (young again, forgetting nothing). They outlast `wipe`.
+- **Forgetting a person** removes how she is with them, their name from its lessons and the sides only they wanted;
+  what they did to her heart stays, and her month in a side goes on.
+- **Fixed:** an objection while she was in a side she was given counted against a side that had grown; a starter that
+  cannot be read is now an error, not a blank gut.
+- **Migration:** a gut file from 0.4 is lived again under these rules the first time it wakes; its lessons and starter
+  teach only the seven feelings they knew.
+
 ## 0.4.0 (2026-11-03)
 
 - **The gut (CMP): what stays of a companion when her memory is wiped and her model is swapped.** `mneme_llm.gut`: `Gut`

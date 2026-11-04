@@ -71,7 +71,7 @@ whatever model the host has, so that:
 | `meaning/calibrate.py` | 159 | each embedding model's floor: measured on a bundled set, refined by the file's own notes |
 | `meaning/vectors.py` | 124 | vectors as the file keeps them, their arithmetic, and `Matrix`: many of them compared at once |
 | `meaning/unify.py` | 176 | meaning tier 2 (removable): glosses and query translation by the host's chat model |
-| `gut.py` | 886 | what is left of a companion when her memory is wiped and her model swapped: a small network in a file of its own |
+| `gut.py` | 1143 | what is left of a companion when her memory is wiped and her model swapped: her heart, a table for each person, her slow levels and sides, in a file of its own |
 | `text.py` | 225 | tokenization, scripts, counting tokens, cleaning, checking, clipping and fitting text |
 | `dates.py` | 124 | human dates, talking days, dates found in sentences, times in seconds |
 | `i18n.py` | 257 | every word and sentence shown to a person or a model, in English and Chinese |
@@ -760,7 +760,7 @@ full), its prompts and its sentences: 200 keys at this version. Each value is JS
 | A model or a person makes itself someone's creator, or closer | Roles and closeness are the host's code's to set: no tool sets them, and talking grows closeness by a point a day at most, within the role's band. |
 | Secrets end up in memory | The writer is told never to record passwords, keys or codes. A person's own `remember` call is not filtered. |
 | Text leaves the machine | Only through what you turn on: note texts, exchanges and queries to the embeddings API, and whatever your own model is given. `embed=False` with a local model keeps everything local. |
-| A person asks to be forgotten | `Mneme.erase(subject)` removes every row about them (notes, vectors, recall log, profile, every exchange with its index and vectors, the surface, the first prompt, mood, timeline, role, alias, links); `purge` removes hidden and replaced notes and their vectors. By design, a gut keeps what it learned apart from the memory file: `Gut.forget` takes back what a person taught it. |
+| A person asks to be forgotten | `Mneme.erase(subject)` removes every row about them (notes, vectors, recall log, profile, every exchange with its index and vectors, the surface, the first prompt, mood, timeline, role, alias, links); `purge` removes hidden and replaced notes and their vectors. By design, a gut keeps what it learned apart from the memory file: `Gut.forget` removes how she is with that person, their name from its lessons and the sides only they wanted; what they did to her heart stays. |
 
 By design, not covered: filtering what a person explicitly asks the companion to remember (a host that wants it
 filters before `remember`), and refusing every instruction a note could carry (the header and the one-line rule
@@ -841,7 +841,7 @@ their size (`MNEME_STRESS=heavy`); then builds the package, runs `twine check --
 | `test_episodes.py` | keeping exchanges word for word, the shown form, observe keeping what the person started, the look (words, meaning, budget, more by relevance alone, ranked once, the header in both languages), fading and rehearsal (by search and by meaning, once a talking day, the spread), reading back within a budget, batches, the same ranking without numpy, a slow embedder, the tools, forget, erase, links, export and import, another process's vectors |
 | `test_surface.py` | bounds, turns (hers by name or role, a group, in the order said, always the newest), a slice reading little, letting go, an erase, clear or link while the summary is written, a clear and an exchange kept after it, ids never reused, the first prompt (kept, set, sent, dropped for good, a companion who spoke first), the look with its search, everyone, wipe, joins, export and import, its limits |
 | `test_migrate.py` | a real schema 1 file refused untouched and then made current: days in each space's zone, tokens, surfaces, what nothing reads gone, config keys no version knows, indexes rebuilt at the first search, new ids after the old ones, twice changes nothing, a failure leaves it as it was, a much older file, the command |
-| `test_gut.py` | the gut: the network and its pinned numbers, marks, tone, sides growing and going, the two moments a host calls |
+| `test_gut.py` | the gut: her heart and each person's table, growing up, fading, the bars and slow levels, settings, a file from 0.4, its pinned numbers, marks, sides growing and going, the two moments a host calls |
 | `test_architecture.py` | the browsable architecture page matches the code |
 | `test_review.py` | one test per finding of every pre-release review (listed in CHANGELOG.md) |
 

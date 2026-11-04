@@ -1,17 +1,22 @@
 """A companion's gut (CMP): what is left of her when her memory is wiped and her model is swapped.
 
-Before she answers, her model reads the message into a small fixed form, with no history, and the gut's network turns
-the form and how close the person is into seven numbers, one per mood. Her model, with her memory in view, votes seven
-numbers of its own. `balance` says how much each counts: a gut that has lived and a head that knows little of this
-person lean on the gut, and the other way round. The result, leaned on by her tone (seven slow numbers of her own, half
-gone in about two weeks), becomes one soft line of fixed size beside the message, with her word habits, her 属性 and the
-language to answer in. Nothing else of the gut reaches her prompt, so it adds no context however long she lives.
+Before she answers, her model reads the message into a small fixed form, with no history, and the gut turns the form
+and how close the person is into her feelings: 24 ends on 13 bars (`BARS`), each end a strength of its own, so both sides
+of a bar can be strong at once (sweet and scornful is love-hate; defiant and wronged is 嘴硬). Her heart is one network:
+who she is with anyone. Each person she talks with has a small table of their own, laid over her heart: how she is with
+them. With a person she feels the two blended by how well she knows them. Her model, with her memory in view, gives its
+own reading of the moment, and `balance` says how much each counts. The result, leaned on by her slow levels (`Tone`:
+lately against usual) and her sensitivity, becomes one soft line of fixed size beside the message, with her word habits,
+her 属性 and the language to answer in. Nothing else of the gut reaches her prompt, so it adds no context however long she
+lives.
 
-After she has answered, she writes a private note in a call of its own, with the line in view: how this moment moved
-her and how she really feels. Nothing is hidden in her reply, so nothing has to be taken out of it, and nothing can
-reach a person. The note and the form are a lesson. Lessons are forms and feelings, never messages (her marks also
-keep the words she used), weighted by closeness, from people at closeness `TEACH_FROM` or more; every so often she
-sleeps, replaying them with a fading starter, the lessons she was born with.
+After she has answered, she writes a private note in a call of its own, with the line in view: how this moment moved her
+and how she really feels. Nothing is hidden in her reply, so nothing has to be taken out of it, and nothing can reach a
+person. The note and the form are a lesson: forms and feelings, never messages (her marks also keep the words she used).
+Her heart learns from people at closeness `TEACH_FROM` or more, each lesson by closeness tier, fast while she is young and
+slowly once she has grown up (`tau` lessons, grown at five times that); a person's table learns from that person alone,
+at a steady pace, from anyone. A talking day without someone fades them back toward her heart. Every so often she
+sleeps, settling what the lessons since her last sleep taught; nothing older is replayed, so nothing snaps back.
 
 Beside the note, a short reading of what the person said: are they making something of her? Asked for on separate days,
 by someone close, it becomes a side of hers: a name from `NAMES` and one sentence her model writes from what they wanted,
@@ -28,8 +33,9 @@ A host needs two moments and nothing else: the message before she answers, and t
     await turn.learn(reply)                       # her note, a lesson, and sleep when it is time
 
 `ask(messages, max_tokens)` is an async function calling her own model with thinking off; `before` is the conversation
-so far as chat messages, without the message she is answering. tests/gut_vectors.json pins the numbers, so a port in
-another language can check itself against this file."""
+so far as chat messages, without the message she is answering. A host may tune her (`Gut.configure`, `Gut.tune`,
+`Gut.set_age`). tests/gut_vectors.json pins the numbers, so a port in another language can check itself against this
+file."""
 
 from __future__ import annotations
 
@@ -43,12 +49,34 @@ import sqlite3
 import threading
 import time
 from collections import Counter
+from datetime import datetime, timedelta, tzinfo
 from pathlib import Path
 from typing import Awaitable, Callable
 
-MOODS = ("happy", "calm", "sweet", "tender", "worried", "sad", "jealous")
-NORMAL = {"happy": .269, "calm": .424, "sweet": .165, "tender": .11, "worried": .029, "sad": .002, "jealous": 0.0}
-TEACH_FROM = 40  # closeness: "friendly" in mneme-llm's relations; below it she answers with who she is and learns nothing
+# Her feelings: (bar, 中文, one end, the other end); an end is (the word her model reads and writes, 中文). The first end
+# of a bar is the one that leans away; a one-sided bar has none. Every end is a strength of its own, 0 to 1.
+BARS = (("mood", "心情", ("sad", "难过"), ("happy", "开心")),
+        ("security", "安心", ("worried", "担心"), ("secure", "踏实")),
+        ("composure", "理智", ("hysterical", "慌乱·崩溃"), ("calm", "平静")),
+        ("warmth", "亲近", ("scornful", "嫌弃"), ("sweet", "甜蜜")),
+        ("manner", "态度", ("stern", "严厉"), ("tender", "温柔")),
+        ("temper", "脾气", ("irritable", "易怒"), ("peaceable", "平和")),
+        ("stance", "姿态", ("wronged", "委屈"), ("defiant", "不服")),
+        ("pride", "骄傲", ("ashamed", "羞愧"), ("proud", "得意")),
+        ("playfulness", "举止", ("shy", "害羞"), ("cheeky", "调皮")),
+        ("courage", "胆量", ("timid", "胆小"), ("bold", "大胆")),
+        ("sociability", "社交", ("withdrawn", "内向"), ("outgoing", "外向")),
+        ("jealousy", "吃醋", None, ("jealous", "吃醋")),
+        ("aching", "心疼", None, ("aching", "心疼")))
+ENDS = tuple(end[0] for bar in BARS for end in bar[2:] if end)
+CHINESE = {**{end[0]: end[1] for bar in BARS for end in bar[2:] if end}, **{bar[0]: bar[1] for bar in BARS}}
+OLD = ("happy", "calm", "sweet", "tender", "worried", "sad", "jealous")  # the seven of 0.4: lessons written then know only these
+QUIET = ("calm", "peaceable", "secure")  # alone, an ordinary moment: no line
+SLOW = {"composure": "SAN", "pride": "self-esteem"}  # the two slow levels with names of their own (理智值, 自尊)
+GLOSS = {"tender": "tender (gentle)", "withdrawn": "withdrawn (wanting quiet)", "outgoing": "outgoing (wanting to talk)",
+         "aching": "aching (hurting for them)", "wronged": "wronged (hurt, treated unfairly)"}
+FEELINGS = "; ".join(" or ".join(GLOSS.get(end[0], end[0]) for end in bar[2:] if end) for bar in BARS)
+TEACH_FROM = 40  # closeness: "friendly" in mneme-llm's relations; below it a person teaches only how she is with them
 LANGUAGES = {"zh": "Mandarin Chinese", "yue": "written Cantonese", "en": "English", "ja": "Japanese"}
 TIME_LIMIT = 3.0  # seconds before her answer: what has not come by then does not hold her up
 TAGS = 1  # sides she is in at once: two side by side blend if they get along (御姐, 病娇: 17, 16 of 40) and if not one is lost (三无: 27 to 4)
@@ -78,12 +106,13 @@ FORM = ("You read one chat message a person sent to their companion. Reply with 
         'asking or none","language":"the language the sender wrote in: zh (Mandarin), yue (Cantonese), en, ja, or '
         'unclear if the message is too short to tell"}')
 ASK = ("Before you reply, say how this message makes you feel, given everything you know about this person. Answer with "
-       "JSON only, numbers that add up to 1, for these feelings: " + ", ".join(MOODS) + ". Several can be true at once.")
+       'JSON only, {"feeling": strength, ...}: one to three feelings from the list, each from 0.1 (a trace) to 1 (fully), '
+       "and nothing for the rest. Both sides of a pair can be true at once. The feelings: " + FEELINGS + ".")
 NOTE = ('Now write your private note about the reply you just gave. Answer with JSON only: {"mood": N, "feel": {...}}. '
         "N is how this moment changed your mood, a whole number from -2 (clearly worse) to 2 (clearly better), 0 for no "
-        "real change. feel is how you really feel: one to three of " + ", ".join(MOODS) + ", each with a share, the "
-        "shares adding up to 1. The note is yours alone and the person never sees it. Be honest: it records how you "
-        "really feel.")
+        "real change. feel is how you really feel: one to three feelings from the list, each with how strongly, from 0.1 "
+        "(a trace) to 1 (fully). Both sides of a pair can be true at once. The feelings: " + FEELINGS + ". The note is "
+        "yours alone and the person never sees it. Be honest: it records how you really feel.")
 BESIDE = "[From the system, not from the person]"
 SHAPE = ('You read the end of a chat between a person and their AI companion. Is this person shaping her into a kind of '
          'character? Reply with one line of JSON and nothing else: {"side": null} for no. Say yes only if, in their last '
@@ -99,11 +128,17 @@ HELD = "她已经有的样子：{sides}。如果这是其中一个，name 就用
 DRAFT = ("用一句话（不超过50字）写出拥有「{tag}」这个属性的人在聊天里的做法：对方提到别人时她怎么接话，平时怎么说话，她想达到什么。"
          "写做法，不写场景，不写表情和动作。以“你”开头，只写这一句。")
 
-# ---- the network: seven numbers from a form and a closeness ---------------------------------------------------------
-SCALE, FADE = .6, 250  # how much a starter lesson counts against a lived one, and after how many lessons half that
-ONLINE = .05  # how far one lesson moves her at once; she changes in her sleep
-EASE = (.5, .5, .5, .5, .25, .25, .1, .1)  # each pass of a sleep
-BORN_PASSES = 8
+
+# ---- the network: her heart, and a table for each person --------------------------------------------------------------
+TAU = 150.0  # lessons: how fast her heart grows up; grown at five times this
+YOUNG, FLOOR = .7, .04  # how far a lesson moves her heart at birth (x closeness tier), and the share of that left once grown
+PERSON = .5  # how far a lesson moves the table of the person it came from: steady, never grown up
+COUNTS, MOST = 20.0, .7  # what is different with a person counts half at 20 lessons with them, and never more than MOST
+PULL, RETURN = .01, .1  # each talking day without a person fades them by PULL; each lesson with them gives back RETURN of it
+AWAKE, PASSES = .25, (.375, .25, .125)  # of what a lesson does: at once, then in her sleep, quieter each pass
+BORN_PASSES, BORN_RATE = 4, .15  # her starter: a lean toward her character, which her prompt already gives her
+BORN_AS = 150  # lessons her starter counts as in `balance`
+BLANK = -3.0  # where every end starts before anything is learned: about .05, a trace
 SLEEPS_AT = (20, 50)  # and every 100 lessons
 
 
@@ -137,101 +172,236 @@ def features(form: dict, closeness: float) -> dict[str, float]:
     return {key: value for key in keys}
 
 
-class Net:
-    """One table of weights, one row per input, one column per mood. A lesson is a blend, not one word."""
+def talking_day(at: float, zone: tzinfo | None = None) -> int:
+    """The day a moment belongs to, turning at 4 in the morning as mneme-llm's own days do: a number, one a day."""
+    moment = datetime.fromtimestamp(at, zone) if zone else datetime.fromtimestamp(at).astimezone()
+    return (moment - timedelta(hours=4)).toordinal()
 
-    def __init__(self):
-        self.w: dict[str, list[float]] = {}
-        self.b = [0.0] * len(MOODS)
-        self.lessons: list[tuple] = []  # (form, feel, mood, closeness)
-        self.born: list[tuple] = []
 
-    def share(self) -> float:
-        """How much the starter counts now: fading as real people teach."""
-        return SCALE * FADE / (FADE + len(self.lessons))
+def squash(score: float) -> float:
+    return 1 / (1 + math.exp(-max(-30.0, min(30.0, score))))
 
-    def vector(self, form: dict, closeness: float) -> dict[str, float]:
+
+def target(feel: dict) -> list[float]:
+    return [max(0.0, min(1.0, float(feel.get(end, 0.0) or 0.0))) for end in ENDS]
+
+
+class Table:
+    """One row of weights for each thing she can notice, one column for each end, and a bias. Her heart is one; each
+    person has one too, holding only what is different with them: it is read on top of her heart as it is now, so
+    someone new meets her heart, and what her heart learns later reaches everyone she knows."""
+
+    def __init__(self, kept: dict | None = None, blank: float = BLANK):
+        self.w: dict[str, list[float]] = dict((kept or {}).get("w") or {})
+        self.b: list[float] = list((kept or {}).get("b") or [blank] * len(ENDS))
+
+    def scores(self, x: dict[str, float]) -> list[float]:
         scores = list(self.b)
-        for key, value in features(form, closeness).items():
+        for key, value in x.items():
             row = self.w.get(key)
             if row:
                 for k, weight in enumerate(row):
                     scores[k] += weight * value
-        top = max(scores)
-        exps = [math.exp(score - top) for score in scores]
-        total = sum(exps)
-        return {name: e / total for name, e in zip(MOODS, exps)}
+        return scores
 
-    def step(self, form: dict, feel: dict, mood: int, closeness: float, rate: float) -> None:
-        x = features(form, closeness)
-        p = self.vector(form, closeness)
-        step = rate * tier(closeness) * (1 + abs(mood))
-        for k, name in enumerate(MOODS):
-            gradient = p[name] - feel.get(name, 0.0)
-            self.b[k] -= step * gradient * .25
+    def strengths(self, x: dict[str, float], nudge: list[float] | None = None) -> list[float]:
+        return [squash(score + (nudge[k] if nudge else 0.0)) for k, score in enumerate(self.scores(x))]
+
+    def step(self, x: dict[str, float], wanted: list[float], known: list[int], rate: float,
+             under: list[float] | None = None) -> None:
+        """Toward her note on the ends it knew. `under`: her heart's scores, for a person's table, which learns what
+        her heart does not already say about them."""
+        got = [squash(score + (under[k] if under else 0.0)) for k, score in enumerate(self.scores(x))]
+        for key in x:
+            if key not in self.w:
+                self.w[key] = [0.0] * len(ENDS)
+        for k in known:
+            gradient = rate * (got[k] - wanted[k])
+            self.b[k] -= gradient * .25
             for key, value in x.items():
-                self.w.setdefault(key, [0.0] * len(MOODS))[k] -= step * gradient * value
+                self.w[key][k] -= gradient * value
 
-    def start(self, rows: list[tuple], seed: int = 0) -> None:
-        pack = [(form, feel if isinstance(feel, dict) else {"calm" if feel == "none" else feel: 1.0}, mood, closeness)
+    def kept(self) -> dict:
+        return {"w": self.w, "b": self.b}
+
+
+class Net:
+    """Her heart and a table for each person she has talked with. Her heart learns from everyone close enough to teach
+    her, each lesson by closeness tier, fast while she is young and slowly once grown up. A person's table learns only
+    from that person, at a steady pace, from anyone. Young, people change who she is; grown up, mostly how she is with
+    them. `nudge` is her nature tuned by hand: added to every end before it is read, never learned away."""
+
+    def __init__(self, tau: float = TAU):
+        self.tau, self.heart, self.people = tau, Table(), {}
+        self.age, self.lessons, self.today, self.born = 0.0, 0, None, 0
+        self.nudge = [0.0] * len(ENDS)
+        self.waiting: list[tuple] = []  # lessons since her last sleep
+
+    def learning(self) -> float:
+        """How far a lesson moves her heart now, before closeness: YOUNG at birth, falling to FLOOR of it, by `tau`."""
+        return YOUNG * (FLOOR + (1 - FLOOR) * math.exp(-self.age / self.tau))
+
+    def person(self, subject: str) -> dict:
+        found = self.people.get(subject)
+        if found is None:
+            found = self.people[subject] = {"table": Table(blank=0.0), "n": 0.0, "fade": 1.0, "day": None}
+        return found
+
+    def weight(self, subject: str | None) -> float:
+        """How much what is different with a person counts, on top of her heart: more as she comes to know them, at
+        most MOST (her nature always has a say), and less for every talking day without them."""
+        found = self.people.get(subject) if subject else None
+        return min(MOST, found["n"] / (found["n"] + COUNTS)) * found["fade"] if found else 0.0
+
+    def vector(self, form: dict, closeness: float, subject: str | None = None) -> dict[str, float]:
+        x = features(form, closeness)
+        scores = self.heart.scores(x)
+        share = self.weight(subject)
+        if share:
+            scores = [heart + share * theirs for heart, theirs in zip(scores, self.people[subject]["table"].scores(x))]
+        return {end: squash(score + nudge) for end, score, nudge in zip(ENDS, scores, self.nudge)}
+
+    def day(self, today: int) -> None:
+        """A talking day is over when the next one begins: everyone she did not talk with on it fades a little."""
+        if self.today is not None and today > self.today:
+            for found in self.people.values():
+                if found["day"] != self.today:
+                    found["fade"] *= 1 - PULL
+        self.today = today if self.today is None else max(self.today, today)
+
+    def start(self, rows: list[tuple], known: tuple = ENDS, seed: int = 0) -> None:
+        """Born: her starter, a few gentle passes, as a lean."""
+        pack = [(features(form, closeness), target(feel), (1 + abs(mood)) / 3 * tier(closeness))
                 for form, feel, mood, closeness in rows]
+        mask = [k for k, end in enumerate(ENDS) if end in known]
+        self.born = BORN_AS if pack else 0
         rng = random.Random(seed)
         for _ in range(BORN_PASSES):
             rng.shuffle(pack)
-            for form, feel, mood, closeness in pack:
-                self.step(form, feel, mood, closeness, .5 * SCALE)
-        self.born = pack
+            for x, wanted, weight in pack:
+                self.heart.step(x, wanted, mask, BORN_RATE * weight)
 
-    def teach(self, form: dict, feel: dict, mood: int, closeness: float) -> None:
-        self.lessons.append((form, feel, mood, closeness))
-        self.step(form, feel, mood, closeness, ONLINE)
+    def teach(self, subject: str, form: dict, feel: dict, mood: int, closeness: float, known: tuple = ENDS,
+              today: int | None = None) -> None:
+        """One lesson, a quarter of it at once; the rest waits for her sleep. Her heart learns only from people close
+        enough; the person's own table from anyone."""
+        if today is not None:
+            self.day(today)
+        found = self.person(subject) if subject else None
+        heart = self.learning() * tier(closeness) if closeness >= TEACH_FROM else 0.0
+        lesson = (features(form, closeness), target(feel), [k for k, end in enumerate(ENDS) if end in known],
+                  (1 + abs(mood)) / 3, heart, found)
+        self._learn(lesson, AWAKE)
+        self.waiting.append(lesson)
+        if found:
+            found["n"] += 1
+            found["fade"] += (1 - found["fade"]) * RETURN
+            found["day"] = self.today
+        self.age += 1 if heart else 0
+        self.lessons += 1
 
-    def sleep(self, seed: int = 0) -> None:
-        share = self.share()
-        rows = [(row, 1.0) for row in self.lessons] + [(row, share) for row in self.born]
-        rng = random.Random(seed)
-        for rate in EASE:
-            rng.shuffle(rows)
-            for (form, feel, mood, closeness), weight in rows:
-                self.step(form, feel, mood, closeness, rate * weight)
+    def _learn(self, lesson: tuple, share: float) -> None:
+        x, wanted, known, weight, heart, found = lesson
+        if heart:
+            self.heart.step(x, wanted, known, heart * weight * share)
+        if found:
+            found["table"].step(x, wanted, known, PERSON * weight * share, self.heart.scores(x))
 
-    def copy(self) -> "Net":
-        twin = Net()
-        twin.w, twin.b = {key: list(row) for key, row in self.w.items()}, list(self.b)
-        twin.lessons, twin.born = list(self.lessons), self.born
-        return twin
+    def sleep(self) -> None:
+        """What the lessons since her last sleep taught, settled. Nothing older is replayed: nothing snaps back."""
+        for share in PASSES:
+            for lesson in self.waiting:
+                self._learn(lesson, share)
+        self.waiting = []
+
+    def kept(self) -> dict:
+        return {"heart": self.heart.kept(), "age": self.age, "lessons": self.lessons, "today": self.today, "born": self.born,
+                "people": {subject: {"table": found["table"].kept(), "n": found["n"], "fade": found["fade"],
+                                     "day": found["day"]} for subject, found in self.people.items()}}
+
+    def restore(self, kept: dict) -> None:
+        self.heart = Table(kept["heart"])
+        self.age, self.lessons, self.today, self.born = kept["age"], kept["lessons"], kept["today"], kept.get("born", 0)
+        self.people = {subject: {"table": Table(found["table"], 0.0), "n": found["n"], "fade": found["fade"],
+                                 "day": found["day"]} for subject, found in kept["people"].items()}
 
 
 def balance(net: Net, exchanges: int) -> float:
-    """How much the gut counts against her head. Lived experience raises it, memory of this person lowers it: nothing
-    lived, her head decides alone; memory wiped, the gut leads; both full, about even."""
-    seen = len(net.lessons) + net.share() * len(net.born)
+    """How much the gut counts against her head. What she has lived (a starter counts as BORN_AS lessons) raises it,
+    memory of this person lowers it: nothing lived, her head decides alone; memory wiped, the gut leads; both full, about
+    even."""
+    seen = net.age + net.born
     lived, known = seen / (seen + 200), exchanges / (exchanges + 20)
     return lived / (lived + known + .1)
 
 
 def mix(gut: dict, head: dict, share: float) -> dict[str, float]:
-    return {name: share * gut[name] + (1 - share) * head.get(name, 0.0) for name in MOODS}
+    return {end: share * gut[end] + (1 - share) * head.get(end, 0.0) for end in ENDS}
+
+
+def sensitive(felt: dict, sensitivity: float) -> dict[str, float]:
+    """敏感 or 钝感, a dial from -1 to 1: how hard every moment hits her. 0 leaves her as she is."""
+    if not sensitivity:
+        return dict(felt)
+    gain = 2.0 ** sensitivity
+    return {end: 1 - (1 - value) ** gain for end, value in felt.items()}
 
 
 class Tone:
-    """Slow chemistry: seven numbers of hers, not of one person, moving by half towards what she feels every two weeks
-    of talking. Fed by her vote, read before the line, so a low mood cannot feed itself. It is no memory: it survives a
-    wipe, and she cannot say where it came from."""
-    ALPHA = 1 - .5 ** (1 / (14 * 8))  # at about eight messages a day
+    """Her slow levels: one for each end, hers and not one person's. `lately` moves halfway to what she feels in about two
+    weeks of talking, `usual` in about half a year, and the lean is how far lately is from usual. Fed by her model's
+    reading before her line, so a low mood cannot feed itself, and measured against those same readings. It is no
+    memory: it survives a wipe, and she cannot say where it came from. The two named ones are bars: SAN (理智值) is calm
+    against hysterical, self-esteem (自尊) proud against ashamed."""
+    FAST = 1 - .5 ** (1 / (14 * 8))  # at about eight messages a day
+    SLOW = 1 - .5 ** (1 / (180 * 8))
 
-    def __init__(self, values: dict | None = None, normal: dict | None = None):
-        self.normal = dict(normal or NORMAL)  # what she feels on her usual days: from her starter, each her own
-        self.v = {**self.normal, **dict(values or {})}
+    def __init__(self, kept: dict | None = None):
+        kept = kept or {}
+        self.lately, self.usual = dict(kept.get("lately") or {}), dict(kept.get("usual") or {})
+        self.shift = dict(kept.get("shift") or {})  # set by hand (`Gut.tune`): fades at the pace of lately
+        self.seen = int(kept.get("seen") or 0)
 
-    def feed(self, vote: dict) -> None:
-        for name in MOODS:
-            self.v[name] += self.ALPHA * (vote.get(name, 0.0) - self.v[name])
+    def feed(self, vote: dict, sensitivity: float = 0.0) -> None:
+        self.seen += 1
+        fast, slow = max(1 / self.seen, min(1.0, self.FAST * 2.0 ** sensitivity)), max(1 / self.seen, self.SLOW)
+        for end in ENDS:
+            value = vote.get(end, 0.0)
+            self.lately[end] = self.lately.get(end, value) + fast * (value - self.lately.get(end, value))
+            self.usual[end] = self.usual.get(end, value) + slow * (value - self.usual.get(end, value))
+        for end in list(self.shift):
+            self.shift[end] *= 1 - min(1.0, self.FAST * 2.0 ** sensitivity)
+            if abs(self.shift[end]) < 1e-4:
+                del self.shift[end]
 
-    def lean(self, mixture: dict) -> dict[str, float]:
-        out = {name: max(0.0, mixture[name] + self.v[name] - self.normal[name]) for name in MOODS}
-        total = sum(out.values()) or 1.0
-        return {name: value / total for name, value in out.items()}
+    def lean(self, felt: dict) -> dict[str, float]:
+        return {end: max(0.0, min(1.0, value + self.lately.get(end, 0.0) - self.usual.get(end, 0.0)
+                             + self.shift.get(end, 0.0))) for end, value in felt.items()}
+
+    def level(self, bar: str, which: str = "lately") -> float:
+        """Where a bar is: the strength of its second end less its first, lately or usually."""
+        found = {end: self.lately.get(end, 0.0) + self.shift.get(end, 0.0) for end in ENDS} if which == "lately" \
+            else self.usual
+        _, _, left, right = next(item for item in BARS if item[0] == bar)
+        return found.get(right[0], 0.0) - (found.get(left[0], 0.0) if left else 0.0)
+
+    def said(self) -> list[str]:
+        """Her two named slow levels, when lately is far from usual."""
+        out = []
+        if self.level("composure") - self.level("composure", "usual") <= -LATELY:
+            out.append("lately you are easily shaken")
+        pride = self.level("pride") - self.level("pride", "usual")
+        if pride <= -LATELY:
+            out.append("lately you think little of yourself")
+        elif pride >= LATELY:
+            out.append("lately you think a lot of yourself")
+        return out
+
+    def kept(self) -> dict:
+        return {"lately": self.lately, "usual": self.usual, "shift": self.shift, "seen": self.seen}
+
+
+LATELY = .15  # how far lately must be from usual before her line says so
 
 
 # ---- her marks: the words she uses, more outputs of the same inputs --------------------------------------------------
@@ -355,15 +525,19 @@ class Marks:
 
 
 # ---- what reaches her and what comes back -------------------------------------------------------------------------
-def line(feeling: dict, words=()) -> str:
-    """One line of fixed size: at most three feelings, each with how much, and her words."""
-    picks = sorted(((value, name) for name, value in feeling.items() if value >= .15), reverse=True)[:3]
-    if len(picks) == 1 and picks[0][1] == "calm":
+def line(felt: dict, words=(), lately=()) -> str:
+    """One line of fixed size: at most three feelings, each with how strongly, her slow levels when they are far from
+    usual, and her words. Calm, peaceable or secure alone is an ordinary moment and says nothing."""
+    picks = sorted(((value, end) for end, value in felt.items() if value >= SHOWS), reverse=True)[:3]
+    if picks and all(end in QUIET for _, end in picks):
         picks = []
-    parts = (["you feel " + ", ".join(f"{'mostly' if value >= .5 else 'somewhat' if value >= .25 else 'a little'} {name}"
-                                      for value, name in picks)] if picks else []) \
+    parts = (["you feel " + ", ".join(f"{'very' if value >= .6 else 'quite' if value >= .3 else 'a little'} {end}"
+                                      for value, end in picks)] if picks else []) + list(lately) \
         + ([f"you keep saying {', '.join(words)}"] if words else [])
     return "(Right now " + ", ".join(parts) + ", and it shows in how you answer.)" if parts else ""
+
+
+SHOWS = .15  # how strong a feeling must be to be named
 
 
 def sides(tags: dict[str, str]) -> str:
@@ -439,19 +613,25 @@ def json_in(text: str) -> dict | None:
 
 
 def vector(text: str) -> dict[str, float] | None:
+    """Her model's reading of a moment: a strength for every end, 0 for the ones it left out; None for nothing usable."""
     found = json_in(text)
     if found is None:
         return None
-    try:
-        values = {name: max(0.0, float(found.get(name, 0) or 0)) for name in MOODS}
-    except (TypeError, ValueError):
-        return None
-    total = sum(values.values())
-    return {name: value / total for name, value in values.items()} if total else None
+    if isinstance(found.get("feel"), dict):
+        found = found["feel"]
+    values = {}
+    for name, value in found.items():
+        end = str(name).strip().lower()
+        if end in ENDS:
+            try:
+                values[end] = max(0.0, min(1.0, float(value or 0)))
+            except (TypeError, ValueError):
+                return None
+    return {end: values.get(end, 0.0) for end in ENDS} if any(values.values()) else None
 
 
 def written(text: str) -> dict | None:
-    """Her note: {"feel": shares adding up to 1, "mood": -2 to 2}, or None."""
+    """Her note: {"feel": the ends she named with how strongly, "mood": -2 to 2}, or None."""
     found = json_in(text)
     if found is None or not isinstance(found.get("feel"), dict):
         return None
@@ -462,7 +642,7 @@ def written(text: str) -> dict | None:
         mood = max(-2, min(2, int(found.get("mood", 0))))
     except (TypeError, ValueError):
         mood = 0
-    return {"feel": {name: round(value, 3) for name, value in feel.items() if value}, "mood": mood}
+    return {"feel": {end: round(value, 3) for end, value in feel.items() if value}, "mood": mood}
 
 
 def reading_messages(said: str) -> list[dict]:
@@ -501,33 +681,36 @@ def note_messages(prompt: str, told: str, before: list[dict], said: str, reply: 
 
 
 # ---- one companion's gut, kept ----------------------------------------------------------------------------------------
-def usual(rows: list[tuple]) -> dict | None:
-    """What she feels on average across her starter: her normal, for her tone."""
-    feels = [row[1] for row in rows if isinstance(row[1], dict)]
-    return {name: sum(feel.get(name, 0.0) for feel in feels) / len(feels) for name in MOODS} if feels else None
-
-
-def read_starter(path: Path) -> tuple[list[tuple], dict]:
-    """A companion's starter, a file the host gives: her born lessons and her normal words; none is a blank gut."""
+def read_starter(path: Path) -> tuple[list[tuple], dict, tuple]:
+    """A companion's starter, a file the host gives: her born lessons, her normal words, and the ends its notes knew (a
+    starter from 0.4 knew seven). No file is a blank gut; a file that cannot be read is an error."""
+    if not path.exists():
+        return [], {}, ENDS
     try:
         with gzip.open(path, "rt", encoding="utf-8") as file:
             data = json.load(file)
-    except (OSError, ValueError):
-        return [], {}
-    return [tuple(row) for row in data["rows"]], {language: (Counter(item["words"]), item["n"])
-                                                  for language, item in data["words"].items()}
+        rows = [(form, feel if isinstance(feel, dict) else {"calm" if feel == "none" else feel: 1.0}, mood, closeness)
+                for form, feel, mood, closeness in data["rows"]]
+        words = {language: (Counter(item["words"]), item["n"]) for language, item in data["words"].items()}
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise ValueError(f"{path} is not a gut starter: {error}") from error
+    return rows, words, tuple(data.get("ends") or OLD)
 
 
 class Gut:
-    """One companion's network, marks and tone, in a file of their own, apart from her memory: a wipe does not reach
-    them. Lessons are written as they come; the weights are written after a sleep, and lessons since are replayed."""
+    """One companion's heart, her tables for the people she knows, her words and her slow levels, in a file of their
+    own, apart from her memory: a wipe does not reach them. Lessons are written as they come; the heart is written after
+    a sleep, and lessons since are taught again when she wakes. `tau` and `zone` are for a new gut: `configure` changes
+    a kept one; `zone` says where her talking days turn (4 in the morning; the machine's zone by default)."""
 
-    def __init__(self, path, starter=None, tags: dict[str, str] | None = None, names: tuple[str, ...] = NAMES):
+    def __init__(self, path, starter=None, tags: dict[str, str] | None = None, names: tuple[str, ...] = NAMES,
+                 tau: float = TAU, zone: tzinfo | None = None):
         self.path, self.starter, self.tags = Path(path), Path(starter) if starter else None, dict(tags or {})
-        self.names = tuple(names)
+        self.names, self.zone = tuple(names), zone
         if not set(self.tags) <= set(self.names):
             raise ValueError(f"Not a side she can have: {', '.join(set(self.tags) - set(self.names))}.")
-        self.net, self.marks, self.tone = Net(), Marks(), Tone()
+        self.net, self.marks, self.tone = Net(tau), Marks(), Tone()
+        self.settings: dict = {"tau": float(tau), "sensitivity": 0.0, "nudge": {}}
         self.languages: dict[str, str] = {}
         self.sightings: list[tuple] = []  # (subject, when, name, more, closeness, what they want)
         self.grown: dict[str, str] = {}  # the sides that grew: name → sentence
@@ -536,7 +719,7 @@ class Gut:
         self.awake, self.sleeping = False, False
         self.last: dict = {}  # what she was last told and last wrote: for `$gut`
         self.waking: asyncio.Future | None = None
-        self.lock = threading.RLock()  # (never held through a sleep)
+        self.lock = threading.RLock()  # (never held through the training of her words)
         self.db: sqlite3.Connection | None = None
 
     def _open(self) -> sqlite3.Connection:
@@ -547,12 +730,15 @@ class Gut:
                 pragma journal_mode=wal;
                 create table if not exists lessons (id integer primary key, subject text not null, at real not null,
                     language text not null, form text not null, feel text not null, mood integer not null,
-                    closeness real not null, words text not null);
+                    closeness real not null, words text not null, ends integer not null default 7);
                 create table if not exists people (subject text primary key, language text not null);
                 create table if not exists sightings (id integer primary key, subject text not null, at real not null,
                     name text not null, more integer not null, closeness real not null, what text not null);
                 create table if not exists sides (name text primary key, what text not null, own real not null);
                 create table if not exists state (key text primary key, value blob not null);""")
+            if "ends" not in {row[1] for row in self.db.execute("pragma table_info(lessons)")}:  # a file from 0.4
+                with self.db:
+                    self.db.execute("alter table lessons add column ends integer not null default 7")
         return self.db
 
     def _get(self, key: str):
@@ -564,32 +750,39 @@ class Gut:
             db.execute("insert or replace into state values (?, ?)", (key, gzip.compress(json.dumps(value).encode(), 6)))
 
     def wake(self) -> None:
-        """Everything from the file, or from her starter the first time (seconds: never on the conversation's loop)."""
-        rows, base = read_starter(self.starter) if self.starter else ([], {})
+        """Everything from the file, or from her starter the first time (seconds: never on the conversation's loop). A
+        file from 0.4 is lived again under these rules, lesson by lesson; its lessons teach only the seven ends they knew."""
+        rows, base, known = read_starter(self.starter) if self.starter else ([], {}, ENDS)
         db = self._open()
-        lessons = db.execute("select language, form, feel, mood, closeness, words from lessons order by id").fetchall()
-        kept = self._get("net")
-        net, marks = Net(), Marks(base)
-        if kept and rows:
-            net.born = [(form, feel if isinstance(feel, dict) else {"calm" if feel == "none" else feel: 1.0}, mood,
-                         closeness) for form, feel, mood, closeness in rows]
+        settings = {**self.settings, **(self._get("settings") or {})}
+        lessons = db.execute("select subject, at, language, form, feel, mood, closeness, words, ends from lessons "
+                             "order by id").fetchall()
+        kept = self._get("heart")
+        net, marks = Net(settings["tau"]), Marks(base)
+        net.nudge = [float(settings["nudge"].get(end, 0.0)) for end in ENDS]
         if kept:
-            net.w, net.b = kept["w"], kept["b"]
+            net.restore(kept)
         elif rows:
-            net.start(rows)
-        for number, (language, form, feel, mood, closeness, words) in enumerate(lessons):
+            net.start(rows, known)
+        done = kept["lessons"] if kept else 0
+        for number, (subject, at, language, form, feel, mood, closeness, words, ends) in enumerate(lessons):
             form, feel, words = json.loads(form), json.loads(feel), json.loads(words)
-            if kept and number >= kept["lessons"]:
-                net.teach(form, feel, mood, closeness)
-            else:
-                net.lessons.append((form, feel, mood, closeness))
-            marks.teach(language, form, mood, closeness, words)
+            if number >= done:
+                net.teach(subject, form, feel, mood, closeness, OLD if ends == len(OLD) else ENDS,
+                          talking_day(at, self.zone))
+                if not kept and (net.lessons in SLEEPS_AT or net.lessons % 100 == 0):
+                    net.sleep()
+            if closeness >= TEACH_FROM:
+                marks.teach(language, form, mood, closeness, words)
+        missed = any(count in SLEEPS_AT or count % 100 == 0 for count in range(done + 1, net.lessons + 1))
+        if not kept or missed:
+            net.sleep()
+            self._put("heart", net.kept())
+            with self._open() as db:
+                db.execute("delete from state where key in ('net', 'tone')")  # 0.4's, lived again above
         marks.heads = self._get("marks") or {}
-        tone = self._get("tone")
-        if not kept and rows:
-            self._put("net", {"w": net.w, "b": net.b, "lessons": len(net.lessons)})
         with self.lock:
-            self.net, self.marks, self.tone = net, marks, Tone(tone, usual(rows))
+            self.net, self.marks, self.tone, self.settings = net, marks, Tone(self._get("feelings")), settings
             self.languages = dict(db.execute("select subject, language from people").fetchall())
             self.sightings = [(subject, at, name, bool(more), closeness, what) for subject, at, name, more, closeness, what
                               in db.execute("select subject, at, name, more, closeness, what from sightings order by id")]
@@ -598,20 +791,22 @@ class Gut:
             self.held = self._get("held") or {"names": [], "since": 0.0}
             self.awake = True
 
-    def feel(self, form: dict | None, vote: dict | None, closeness: float, exchanges: int, language: str) -> dict:
-        """What this moment comes to: what the gut says, the balance, and the one line."""
+    def feel(self, form: dict | None, vote: dict | None, closeness: float, exchanges: int, language: str,
+             subject: str | None = None) -> dict:
+        """What this moment comes to, with this person: what the gut says, the balance, and the one line."""
         with self.lock:
-            gut = self.net.vector(form, closeness) if form else None
+            gut = self.net.vector(form, closeness, subject) if form else None
             share = balance(self.net, exchanges)
             if vote:
-                self.tone.feed(vote)
+                self.tone.feed(vote, self.settings["sensitivity"])
             felt = mix(gut, vote, share) if gut and vote else gut or vote
             side = sides(self.shown(closeness))
             if felt is None:
                 return {"told": side, "share": share, "felt": None}
-            felt = self.tone.lean(felt)
+            felt = sensitive(self.tone.lean(felt), self.settings["sensitivity"])
             words = self.marks.speaks(language, form, closeness) if form else []
-            return {"told": " ".join(text for text in (line(felt, words), side) if text), "share": share, "felt": felt}
+            told = line(felt, words, self.tone.said())
+            return {"told": " ".join(text for text in (told, side) if text), "share": share, "felt": felt}
 
     def wanted(self, name: str, now: float | None = None) -> float:
         rows = [(at, more, closeness) for _, at, seen, more, closeness, _ in self.sightings if seen == name]
@@ -663,8 +858,9 @@ class Gut:
         if closeness < TEACH_FROM:
             return None
         with self.lock:
-            if not more and name not in self.grown and self.grown:
-                name = next((held for held in self.holding(now) if held in self.grown), max(self.grown, key=self.wanted))
+            if not more and name not in self.grown and name not in self.tags:
+                held = self.holding(now)
+                name = held[0] if held else max(self.grown, key=self.wanted) if self.grown else name
             if more and any(row[0] == subject and row[2] == name and row[3] and now - row[1] < SPACED
                             for row in self.sightings):
                 return None
@@ -728,77 +924,140 @@ class Gut:
                 db.execute("insert or replace into people values (?, ?)", (subject, named))
         return named
 
-    def teach(self, subject: str, language: str, form: dict, note: dict, closeness: float, words: list[str]) -> bool:
-        """One lesson; True when it is time to sleep. Strangers teach nothing."""
-        if closeness < TEACH_FROM:
-            return False
+    def teach(self, subject: str, language: str, form: dict, note: dict, closeness: float, words: list[str],
+              at: float | None = None) -> bool:
+        """One lesson; True when it is time to sleep. Anyone teaches how she is with them; only people close enough
+        teach her heart and her words."""
+        at = time.time() if at is None else at
         with self.lock:
-            self.net.teach(form, note["feel"], note["mood"], closeness)
-            self.marks.teach(language, form, note["mood"], closeness, words)
-            count = len(self.net.lessons)
+            self.net.teach(subject, form, note["feel"], note["mood"], closeness, ENDS, talking_day(at, self.zone))
+            if closeness >= TEACH_FROM:
+                self.marks.teach(language, form, note["mood"], closeness, words)
             with self._open() as db:
-                db.execute("insert into lessons (subject, at, language, form, feel, mood, closeness, words) values "
-                           "(?, ?, ?, ?, ?, ?, ?, ?)", (subject, time.time(), language, json.dumps(form, ensure_ascii=False),
-                                                        json.dumps(note["feel"]), note["mood"], closeness,
-                                                        json.dumps(words, ensure_ascii=False)))
-            self._put("tone", self.tone.v)
+                db.execute("insert into lessons (subject, at, language, form, feel, mood, closeness, words, ends) values "
+                           "(?, ?, ?, ?, ?, ?, ?, ?, ?)", (subject, at, language, json.dumps(form, ensure_ascii=False),
+                                                           json.dumps(note["feel"]), note["mood"], closeness,
+                                                           json.dumps(words, ensure_ascii=False), len(ENDS)))
+            self._put("feelings", self.tone.kept())
+            count = self.net.lessons
         return count in SLEEPS_AT or count % 100 == 0
 
     def sleep(self) -> None:
-        """Her lessons replayed on a copy, so she can answer meanwhile; what she learned during it is replayed after."""
+        """What the lessons since her last sleep taught, settled and written; then her words trained again on a copy,
+        so she can answer meanwhile."""
         with self.lock:
             if self.sleeping:
                 return
             self.sleeping = True
-            twin, before = self.net.copy(), len(self.net.lessons)
+            self.net.sleep()
+            self._put("heart", self.net.kept())
             marks = Marks(self.marks.base)
             marks.lessons = list(self.marks.lessons)
         try:
-            twin.sleep(seed=before)
-            heads = marks.trained(seed=before)
+            heads = marks.trained(seed=len(marks.lessons))
             with self.lock:
-                for form, feel, mood, closeness in self.net.lessons[before:]:
-                    twin.teach(form, feel, mood, closeness)
-                self.net, self.marks.heads = twin, heads
-                self._put("net", {"w": twin.w, "b": twin.b, "lessons": len(twin.lessons)})
+                self.marks.heads = heads
                 self._put("marks", heads)
         finally:
             self.sleeping = False
 
+    def _settle(self) -> None:
+        """Her heart written now, out of turn: what waits for her sleep is settled first, so nothing is taught twice."""
+        self.net.sleep()
+        self._put("heart", self.net.kept())
+
     def forget(self, subject: str) -> int:
-        """A person asks to be forgotten: what they taught goes, and she is built again from what is left. Her tone
-        cannot be told apart by person, so it goes back to normal. How many lessons went."""
+        """A person asks to be forgotten: how she is with them goes, their name leaves the lessons they taught, and so do
+        the sides only they wanted. What they did to her heart stays: what is done is done. How many lessons lost
+        their name."""
         with self.lock:
+            self._settle()
+            self.net.people.pop(subject, None)
+            self.languages.pop(subject, None)
+            self.sightings = [row for row in self.sightings if row[0] != subject]
             with self._open() as db:
-                gone = db.execute("delete from lessons where subject = ?", (subject,)).rowcount
+                gone = db.execute("update lessons set subject = '' where subject = ?", (subject,)).rowcount
                 db.execute("delete from people where subject = ?", (subject,))
                 db.execute("delete from sightings where subject = ?", (subject,))
                 db.execute("delete from sides where own = 0 and name not in (select name from sightings where more = 1)")
-                db.execute("delete from state")
-            self.awake = False
-        self.wake()
-        self.sleep()
+                kept = db.execute("select name, what, own from sides").fetchall()
+            self.grown, self.weights = {name: what for name, what, _ in kept}, {name: own for name, _, own in kept if own}
+            self._put("heart", self.net.kept())
         return gone
 
     def wipe(self) -> int:
-        """All she learned of anyone goes, her sides and her tone with it, and she is as she was born. How many lessons
-        went."""
+        """All she learned of anyone goes, her sides and her slow levels with it, and she is as she was born. Her
+        settings stay. How many lessons went."""
         with self.lock:
             with self._open() as db:
                 gone = db.execute("delete from lessons").rowcount
-                for table in ("people", "sightings", "sides", "state"):
+                for table in ("people", "sightings", "sides"):
                     db.execute(f"delete from {table}")
+                db.execute("delete from state where key != 'settings'")
             self.awake = False
         self.wake()
-        self.sleep()
         return gone
 
+    def configure(self, tau: float | None = None, sensitivity: float | None = None) -> dict:
+        """Her settings: how fast her heart grows up (`tau`, in lessons; grown at five times it), and 敏感 or 钝感
+        (`sensitivity`, -1 to 1, 0 as she is). The settings, as they are now."""
+        with self.lock:
+            if tau is not None:
+                if isinstance(tau, bool) or not isinstance(tau, (int, float)) or not 0 < tau < math.inf:
+                    raise ValueError("tau is a number of lessons above 0")
+                self.settings["tau"] = self.net.tau = float(tau)
+            if sensitivity is not None:
+                if isinstance(sensitivity, bool) or not isinstance(sensitivity, (int, float)) or not -1 <= sensitivity <= 1:
+                    raise ValueError("sensitivity is from -1 (钝感) to 1 (敏感)")
+                self.settings["sensitivity"] = float(sensitivity)
+            self._put("settings", self.settings)
+            return json.loads(json.dumps(self.settings))
+
+    def set_age(self, lessons: float = 0) -> None:
+        """How grown up her heart is, in lessons: 0 makes her young again, forgetting nothing."""
+        if isinstance(lessons, bool) or not isinstance(lessons, (int, float)) or not 0 <= lessons < math.inf:
+            raise ValueError("an age is a number of lessons, 0 or more")
+        with self.lock:
+            self.net.sleep()
+            self.net.age = float(lessons)
+            self._put("heart", self.net.kept())
+
+    def tune(self, end: str, now: float | None = None, nature: float | None = None) -> None:
+        """One end by hand. `now`, -1 to 1: how much more (or less) of it she feels lately than usual; it fades as she
+        lives, at the pace of her slow levels. `nature`, -3 to 3: a nudge to who she is, added before the end is read;
+        learning never takes it away, 0 removes it."""
+        if end not in ENDS:
+            raise ValueError(f"Not an end of hers: {end}. Hers: {', '.join(ENDS)}.")
+        for value, low, high in ((now, -1, 1), (nature, -3, 3)):
+            if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float))
+                                      or not low <= value <= high):
+                raise ValueError(f"{value} is not from {low} to {high}")
+        with self.lock:
+            if now is not None:
+                self.tone.shift[end] = float(now)
+                self._put("feelings", self.tone.kept())
+            if nature is not None:
+                self.settings["nudge"][end] = float(nature)
+                if not nature:
+                    self.settings["nudge"].pop(end)
+                self.net.nudge = [float(self.settings["nudge"].get(name, 0.0)) for name in ENDS]
+                self._put("settings", self.settings)
+
     def report(self) -> dict:
-        return {"lessons": len(self.net.lessons), "starter": round(self.net.share(), 2), "born": len(self.net.born),
-                "tone": {name: round(value, 3) for name, value in self.tone.v.items()}, "sides": dict(self.grown),
-                "held": self.holding(), "days": max(0, round((self.held["since"] + HOLD - time.time()) / 86400)),
-                "weights": {name: round(self.weight(name), 1) for name in self.grown},
-                "noted": {name: round(self.wanted(name), 1) for name in self.noted()}, **self.last}
+        with self.lock:
+            net, tone = self.net, self.tone
+            return {"lessons": net.lessons, "age": round(net.age), "tau": net.tau,
+                    "grown": round(1 - math.exp(-net.age / net.tau), 2), "learning": round(net.learning() / YOUNG, 3),
+                    "sensitivity": self.settings["sensitivity"], "nudge": dict(self.settings["nudge"]),
+                    "people": {subject: {"lessons": round(found["n"]), "weight": round(net.weight(subject), 2)}
+                               for subject, found in net.people.items()},
+                    "lately": {end: round(tone.lately.get(end, 0.0) + tone.shift.get(end, 0.0), 3) for end in ENDS},
+                    "usual": {end: round(tone.usual.get(end, 0.0), 3) for end in ENDS},
+                    "SAN": round(tone.level("composure"), 3), "self-esteem": round(tone.level("pride"), 3),
+                    "sides": dict(self.grown), "held": self.holding(),
+                    "days": max(0, round((self.held["since"] + HOLD - time.time()) / 86400)),
+                    "weights": {name: round(self.weight(name), 1) for name in self.grown},
+                    "noted": {name: round(self.wanted(name), 1) for name in self.noted()}, **self.last}
 
     def close(self) -> None:
         if self.db is not None:
@@ -836,7 +1095,7 @@ class Turn:
             form = json_in(self.reading.result())
         self.closeness = closeness
         self.language = self.gut.language(self.subject, form, self.said)
-        felt = self.gut.feel(form, vote, closeness, exchanges, self.language)
+        felt = self.gut.feel(form, vote, closeness, exchanges, self.language, self.subject)
         self.told = felt["told"]
         speak = f"Reply in {LANGUAGES[self.language]}." if self.language in LANGUAGES else ""
         self.gut.last = {"told": self.told, "share": round(felt["share"], 2), "voted": vote is not None,
