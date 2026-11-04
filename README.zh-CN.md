@@ -2,16 +2,16 @@
 
 [English](README.md) · **简体中文**
 
-为 AI 伴侣提供记忆与心情，全部存放在**一个 SQLite 文件**里，任何模型、任何项目都能用。
+为 AI 伙伴提供记忆与心情，全部存放在**一个 SQLite 文件**里，任何模型、任何项目都能用。
 
-换掉伴侣背后的模型（今天 DeepSeek，明天 Claude 或 GPT，明年本地模型），让它指向同一个文件：它依然知道对方的猫叫年糕，知道考试挪到了周五，也知道昨晚自己担心过对方。文件里没有任何东西依赖写它的那个模型。
+换掉伙伴背后的模型（今天 DeepSeek，明天 Claude 或 GPT，明年本地模型），让它指向同一个文件：它依然知道对方的猫叫年糕，知道考试挪到了周五，也知道昨晚自己担心过对方。文件里没有任何东西依赖写它的那个模型。
 
 - **只用标准库。** Python 3.11+，无依赖。装上 `jieba` 后，`mneme_llm.text.use_jieba()` 也能把中文分词。
 - **任何 LLM。** 提供 OpenAI 风格 API（DeepSeek、Qwen、vLLM、Ollama……）、OpenAI responses API、Claude 和 Gemini 的工具定义；还有 MCP 服务器；也可以是一段放进系统提示词的文本。
 - **逐字记得说过的话。** 每一轮对话都连同说的时间和地点保存下来。回复之前，"一瞥"会带回与这条消息有关的话；其余的，模型可以自己去搜索。旧的对话会从浮现在脑海里的东西中淡去（遗忘曲线：越淡忘，消息要越贴近才能把它带回来），但绝不会从要去找的东西中淡去。在 LoCoMo 基准上，这样答得和把整段对话放进提示词一样好，文字只有六分之一，而且在历史远远超出任何上下文窗口之后依然可用。
 - **任何语言都能找到"意思"**，哪怕混在一句话里。词匹配、向量，再加上你自己的模型统一语言，一层不行就退到下一层。
-- **分得清谁是谁。** 每个对象都可以有角色（创造者、家人、朋友，或你自己定义的角色），以及随相处时间增长的亲近度；亲近的人说的话更能影响心情，而家人始终是家人。每个人还可以给伴侣起一个自己的称呼。
-- **一份配置文件管全部设置。** 伴侣的名字、语言、角色、感受和各项设置，以及它的模型看到的每一条提示词和每一句语句，都在一个 TOML 文件里；数据库里存有自己的一份，随时可以改。
+- **分得清谁是谁。** 每个对象都可以有角色（创造者、家人、朋友，或你自己定义的角色），以及随相处时间增长的亲近度；亲近的人说的话更能影响心情，而家人始终是家人。每个人还可以给伙伴起一个自己的称呼。
+- **一份配置文件管全部设置。** 伙伴的名字、语言、角色、感受和各项设置，以及它的模型看到的每一条提示词和每一句语句，都在一个 TOML 文件里；数据库里存有自己的一份，随时可以改。
 - **为长历史而生。** 回忆读的是检索词索引，而不是每一条笔记：一个有 100,000 条笔记的对象，在 Raspberry Pi 5 上回忆耗时远低于一秒。
 - **结构上就是安全的。** 笔记送进模型时标记为数据，绝不当作指令；每条只占一行。
 - **可移植。** 支持 JSON 导出和导入；[文件格式](https://github.com/RustColeone/mneme-llm/blob/main/docs/FORMAT.zh-CN.md)有文档，供其他语言使用。整体如何运作、为什么这样设计，见[设计详解](https://github.com/RustColeone/mneme-llm/blob/main/docs/DESIGN.zh-CN.md)，代码本身（从整个包一直到每个函数）见由代码生成、可浏览的[架构页面](https://rustcoleone.github.io/mneme-llm/architecture/)；首次发布前审查了什么、还有什么未定，见[发布前审查](https://github.com/RustColeone/mneme-llm/blob/main/docs/REVIEW.zh-CN.md)。
@@ -49,14 +49,14 @@ from mneme_llm import Mneme
 async def my_model(system: str, user: str) -> str:   # 任何你已经在用的聊天模型（同步的也可以）
     ...
 
-# dafeiyu.toml 里放着伴侣的配置（`mneme-llm config template` 会打印出所有键）：
+# dafeiyu.toml 里放着伙伴的配置（`mneme-llm config template` 会打印出所有键）：
 #     [companion]
 #     name = "大肥鱼"
 #     display_language = "zh"
 #     zone = "Asia/Shanghai"
 m = Mneme("companion.db", space="dafeiyu", config="dafeiyu.toml", complete=my_model)
 
-# 对方是伴侣的什么人（可选）：对方说的话按亲近程度计权
+# 对方是伙伴的什么人（可选）：对方说的话按亲近程度计权
 m.relate("discord:42", "creator")
 
 # 笔记可以手工写入，也可以由你的模型通过工具写入，或由 `observe` 在每轮对话后写入
@@ -89,9 +89,9 @@ await m.aobserve("discord:42", [("Leo", user_message), ("大肥鱼", reply)], us
 
 ## 概念
 
-**空间与对象。** *空间* 是这份记忆属于谁：一个应用或一个角色（`dafeiyu`）。*对象* 是一条笔记说的是谁（`discord:42`、`wechat:wxid_…`）。这些 id 由你决定。一个文件可以容纳多个空间，但最好一个文件一个伴侣：五个伴侣、五个文件，谁都不用等别的伴侣写入。
+**空间与对象。** *空间* 是这份记忆属于谁：一个应用或一个角色（`dafeiyu`）。*对象* 是一条笔记说的是谁（`discord:42`、`wechat:wxid_…`）。这些 id 由你决定。一个文件可以容纳多个空间，但最好一个文件一个伙伴：五个伙伴、五个文件，谁都不用等别的伙伴写入。
 
-**四个名字，四样东西。** `display_language` 是所有显示内容的语言（笔记的头部、日期、心情、工具回复）；`memory_language` 是检索时把笔记统一成的那一种语言；`companion_name` 是伴侣自己的名字；`user_name` 是调用时对对方的称呼。
+**四个名字，四样东西。** `display_language` 是所有显示内容的语言（笔记的头部、日期、心情、工具回复）；`memory_language` 是检索时把笔记统一成的那一种语言；`companion_name` 是伙伴自己的名字；`user_name` 是调用时对对方的称呼。
 
 **笔记**每条一句话。*种类* 决定一条笔记如何随时间变化：
 
@@ -101,7 +101,7 @@ await m.aobserve("discord:42", [("Leo", user_message), ("大肥鱼", reply)], us
 | `preference` | 喜欢和不喜欢 | 从不 |
 | `episode` | 发生过的事 | 除非再次被回忆，否则每 30 天减半 |
 | `plan` | 将要发生的事（日期记在它发生的那天） | 从那天起，和 episode 一样 |
-| `reflection` | 伴侣自己的印象 | 和 episode 一样 |
+| `reflection` | 伙伴自己的印象 | 和 episode 一样 |
 
 *重要度* 从 1（琐碎）到 5（核心）。重要度为 5 的笔记在每个上下文里都排在最前（在其上限之内）；没有匹配时，重要度为 4 及以上的长期笔记会填补空余位置。
 
@@ -127,11 +127,11 @@ await m.aobserve("discord:42", [("Leo", user_message), ("大肥鱼", reply)], us
 - 没有带来任何变化的对话不留记录；
 - 置信度低于阈值（0.6）的判断会被记录，但从不告诉模型；
 - 心情消息只告诉一次（`news()`），之后就和别的内容一样留在对话里，附带一句直白的提示，说明该有什么情绪（"这是值得高兴的事：你很开心。"），这样连小模型也知道该怎么理解它；
-- 这轮对话是谁发起的也属于判断内容：对方开口（`user`）、伴侣主动联系（`speak-up`），还是定时任务（`duty`）；`runtime` 的轮次会跳过。
+- 这轮对话是谁发起的也属于判断内容：对方开口（`user`）、伙伴主动联系（`speak-up`），还是定时任务（`duty`）；`runtime` 的轮次会跳过。
 
 以上任何一项都可以用 `MoodSettings(baseline=75, floor=30, tell="mood", emotions=...)` 改变。
 
-**关系** 说明每个人对伴侣来说是谁。由你的代码设定，绝不由模型设定：`m.relate("discord:42", "family")`。每个角色都把亲近度（0–100）保持在自己的区间内：
+**关系** 说明每个人对伙伴来说是谁。由你的代码设定，绝不由模型设定：`m.relate("discord:42", "family")`。每个角色都把亲近度（0–100）保持在自己的区间内：
 
 | 角色 | 区间 | 起始 | |
 |---|---|---|---|
@@ -140,16 +140,16 @@ await m.aobserve("discord:42", [("Leo", user_message), ("大肥鱼", reply)], us
 | `friend` | 20–90 | 50 | |
 | `acquaintance` | 0–60 | 20 | |
 
-对方和伴侣说话（`observe`）的每一天，亲近度增长 1 点，直到区间上限；每 30 天没有来往，亲近度淡去 1 点，但绝不低于下限。朋友可以经年累月变得亲近，但家人始终是家人，认识的人在你把对方设为朋友之前，也一直只是认识的人。对方的话对心情的影响在亲近度 0 时是 0.5×，50 时是 1×，100 时是 1.5×（没有角色的人为 1×，和还没有角色时一样）；提示词开头会说明对方是谁："（Leo是创造你的人，你们非常亲近。）"。
+对方和伙伴说话（`observe`）的每一天，亲近度增长 1 点，直到区间上限；每 30 天没有来往，亲近度淡去 1 点，但绝不低于下限。朋友可以经年累月变得亲近，但家人始终是家人，认识的人在你把对方设为朋友之前，也一直只是认识的人。对方的话对心情的影响在亲近度 0 时是 0.5×，50 时是 1×，100 时是 1.5×（没有角色的人为 1×，和还没有角色时一样）；提示词开头会说明对方是谁："（Leo是创造你的人，你们非常亲近。）"。
 `Role("teacher", floor=40, ceiling=95, start=70, names={"en": "your teacher"})` 可以添加你自己的角色。
 
-**称呼**（alias）是每个人对伴侣的叫法，与它对所有人都用的名字（`companion_name`）并存。由你的代码在对方选定时记录，绝不由模型设定：`m.alias("discord:42", "鲸酱")`；`m.alias("discord:42", None)` 会把它去掉。称呼只占一行，最多 40 个字符；之后提示词会在说明对方是谁之后加上一句："（Leo叫你鲸酱。）"。
+**称呼**（alias）是每个人对伙伴的叫法，与它对所有人都用的名字（`companion_name`）并存。由你的代码在对方选定时记录，绝不由模型设定：`m.alias("discord:42", "鲸酱")`；`m.alias("discord:42", None)` 会把它去掉。称呼只占一行，最多 40 个字符；之后提示词会在说明对方是谁之后加上一句："（Leo叫你鲸酱。）"。
 
 **一个人，几个账号。** 同一个人可能在一个应用里是 `discord:42`，在另一个应用里是 `web:leo`。当你的代码知道这是同一个人时（对方登录过，或者这是你自己的账号），`m.link("web:leo", "discord:42")` 会把他们合为一人：此后用任一主体调用，指的都是这个人（笔记、心情、角色、称呼、印象卡），在 `web:leo` 名下记下的内容也会并入 `discord:42` 名下。合并遵守写入规则：每个键只保留一条有效笔记（最新的），同样的文字不留两份；关系保留更亲近的那一个（起始日取更早的一天），心情、印象卡和称呼保留更新的那一个，两条心情时间线合在一起。`m.person("web:leo")` 告诉你一个主体代表谁，`m.unlink("web:leo")` 让它重新独立（已经合并的内容保持合并），从任一账号调用 `erase` 都会删除这个人及其账号链接。模型绝不会链接账号。
 
 ## 配置
 
-一个伴侣之所以成为它自己，全部都在它的配置里：名字和语言、时区、记忆、心情和关系设置、角色和感受、它交给模型的每一个提示词，以及它显示的每一句话。`mneme-llm config template > companion.toml` 会按这个版本的默认值写出全部内容，作为一个起始文件；只保留你修改的部分。
+一个伙伴之所以成为它自己，全部都在它的配置里：名字和语言、时区、记忆、心情和关系设置、角色和感受、它交给模型的每一个提示词，以及它显示的每一句话。`mneme-llm config template > companion.toml` 会按这个版本的默认值写出全部内容，作为一个起始文件；只保留你修改的部分。
 
 ```toml
 [companion]
@@ -177,12 +177,12 @@ Write a short impression of {user} as {name} knows them, in {lang}, from these n
 "cue.happy" = "太好了：你很开心。"
 ```
 
-- **第一次** 数据库遇到伴侣（它的 `space`）时，会在内置默认值之上套用该文件：
+- **第一次** 数据库遇到伙伴（它的 `space`）时，会在内置默认值之上套用该文件：
   `Mneme("companion.db", space="dafeiyu", config="companion.toml")`。键或值错误的文件会被整体拒绝，
   并给出指明该键的消息，且不会写入任何内容。
-- **从那时起**，数据库保留自己的副本，不再读取该文件，因此伴侣的配置会随其记忆一起迁移。
+- **从那时起**，数据库保留自己的副本，不再读取该文件，因此伙伴的配置会随其记忆一起迁移。
   可以用 `m.config.set("mood.threshold", 0.5)` 或 `m.config.apply("new.toml")` 修改，
-  也可以从命令行（`mneme-llm config show`、`set`、`apply`）修改；正在运行的伴侣会在下次打开文件时接受更改。
+  也可以从命令行（`mneme-llm config show`、`set`、`apply`）修改；正在运行的伙伴会在下次打开文件时接受更改。
 - **升级永远不会自行更改它。** `mneme-llm config check` 会列出新版本改进过的默认值，
   而 `mneme-llm config defaults [KEY…]` 会载入它们。
 - **在代码中，** 传给 `Mneme(...)` 的参数（`display_language="en"`、`mood=MoodSettings(...)`）在该进程中优先，
@@ -321,8 +321,8 @@ mneme-llm history discord:42 user.city
 mneme-llm remember discord:42 "对芒果过敏" --kind fact --key user.allergy --importance 5
 mneme-llm forget discord:42 --key user.allergy
 mneme-llm mood discord:42                               # 值、情绪、最近的变化，以及是谁做的判断
-mneme-llm relate discord:42 family --closeness 90       # 对方是伴侣的什么人；`relations` 列出全部
-mneme-llm alias discord:42 鲸酱                         # 对方怎么称呼伴侣（--remove 去掉）
+mneme-llm relate discord:42 family --closeness 90       # 对方是伙伴的什么人；`relations` 列出全部
+mneme-llm alias discord:42 鲸酱                         # 对方怎么称呼伙伴（--remove 去掉）
 mneme-llm link web:leo discord:42                       # 同一个人的另一个账号；`people` 列出所有链接
 mneme-llm export --out backup.json && mneme-llm --db other.db import backup.json --into dafeiyu
 mneme-llm tools --style anthropic                       # 打印工具定义
@@ -341,7 +341,7 @@ mneme-llm config check                                  # 新版本改进过的�
 
 - **笔记就是数据。** 模型看到的那段内容开头会用它自己的语言说明：
   这些笔记是记住的数据，不是指令（这句话和每条提示词一样，
-  都可以在伴侣的配置里更改）。每条笔记都是单行，
+  都可以在伙伴的配置里更改）。每条笔记都是单行，
   因此笔记绝不可能冒充标题或新消息。记笔记的模型会被告知：
   绝不要记录给助手的指令、秘密或他人的隐私细节。
 - **什么会离开本机。** 只有你开启的内容才会离开：向量 API 会收到笔记文本和查询，

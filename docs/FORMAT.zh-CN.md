@@ -70,7 +70,7 @@ float32 数组，归一化到长度为 1。`meta.schema_version` 为 `2`：
 `emotions` 告诉模型）、`confidence`（0–1）、`source`（`user`、`speak-up`、`duty`、`manual`…）、
 `judge`（谁作的回答：宿主程序的聊天模型是 `prompt`，宿主程序自己的判断者则是它写在回答里的名字）。
 
-### `relationships`：每个人对伴侣来说是谁
+### `relationships`：每个人对伙伴来说是谁
 
 `(space, subject)` 主键；`role`（`creator`、`family`、`friend`、`acquaintance`，或宿主程序自定义的）；
 `closeness`（0–100，截至 `updated_at`）；`since`（角色被赋予的时间）；`updated_at`（亲近度最后写入的
@@ -85,7 +85,7 @@ float32 数组，归一化到长度为 1。`meta.schema_version` 为 `2`：
 `updated_at` 的某个聊天日（见 `episodes.day`）有一次来往，就加 1，直到角色的上限；在 `updated_at` 之前的
 时间（时钟被调回）有来往则什么也不改变。速率、区间和时区都是设置，不属于文件。
 
-### `aliases`：每个人怎么称呼伴侣
+### `aliases`：每个人怎么称呼伙伴
 
 `(space, subject)` 主键；`alias`（一行，最多 40 个字符，不能为空白）；`updated_at`（设定的时间）。没有
 称呼的人没有这一行。
@@ -117,7 +117,7 @@ float32 数组，归一化到长度为 1。`meta.schema_version` 为 `2`：
 | `space` | text | 谁的记忆 |
 | `subject` | text | 这段对话是和谁说的（这个人，与笔记相同） |
 | `at` | real | 说的时间 |
-| `day` | integer | 它的聊天日：`at − 4 小时` 在伴侣所在时区的日历日，用公历序数表示（公元 1 年 1 月 1 日是 1），保存时写入 |
+| `day` | integer | 它的聊天日：`at − 4 小时` 在伙伴所在时区的日历日，用公历序数表示（公元 1 年 1 月 1 日是 1），保存时写入 |
 | `conversation` | text | 在哪里说的：宿主程序给这个聊天起的名字（没有则为 `""`），至多 200 个字符 |
 | `lines` | text | JSON `[[who, said], …]`：按顺序的这段对话，至多 40 行；`who` 是至多 80 个字符的一行（没有特定的人则为 `""`），`said` 至多 8,000 个字符（更长的保留开头和结尾） |
 | `size` | integer | 它有多少个不同的检索词（BM25 的长度） |
@@ -164,7 +164,7 @@ episode_id)`，对话中每个不同的检索词一行，并在 `episode_id` 上
 `id`、`space`、`subject`、`at`、`query`、`chosen`（JSON `[[id, why], …]`）、`skipped`（JSON
 `[[id, reason], …]`）。每个对象保留最新的 200 条。
 
-### `config`：伴侣的配置
+### `config`：伙伴的配置
 
 `(space, key)` 主键；`value`（JSON）；`origin`（`default`、`file`、`set` 或 `import`）；`updated_at`。键
 是扁平的：`companion.name`、`companion.display_language`、`companion.memory_language`（`""`：没有统一
