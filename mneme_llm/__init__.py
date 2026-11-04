@@ -32,7 +32,7 @@ from .gut import Gut, Turn
 from .i18n import Words, say
 from .meaning import Embeddings, Meaning, OpenAIEmbeddings
 from .memory import KINDS, Memory, Note, Recall
-from .mood import Emotion, Mood, MoodEvent, MoodSettings
+from .mood import LEVELS, Emotion, Mood, MoodEvent, MoodSettings
 from .people import People
 from .providers import Unavailable, run
 from .relations import Relations, Relationship, Role
@@ -125,7 +125,7 @@ class Mneme:
                          companion_name=self.companion_name, display_language=words, prompts=self.prompts,
                          people=self.people, clock=clock)
         self.relations = Relations(self.store, space, roles=own.roles() if roles is STORED else roles,
-                                   growth=own.get("relations.growth"),
+                                   liking=own.get("relations.liking"),
                                    fade_days=own.get("relations.fade_days"), zone=zone, display_language=words,
                                    people=self.people, clock=clock)
         self.aliases = Aliases(self.store, space, display_language=words, people=self.people, clock=clock)
@@ -335,7 +335,7 @@ class Mneme:
         when (`at`, now when not given) and where (`conversation`) it was said, and then embedded. One decision
         request answers both the mood questions and "worth remembering?", so the note writer is only called when
         there is something to write. Notes, too, are only taken from exchanges the person started, and such an
-        exchange is a day of contact for their closeness. The mood moves by how close the person is (`relate`).
+        exchange moves their closeness by how it moved her mood. The mood moves by how close the person is (`relate`).
         `complete` gives this call a chat model in place of the one given at start. If the note writer fails, the
         mood is still applied and the failure is in `Observation.error`.
         """
@@ -351,7 +351,8 @@ class Mneme:
         event = (self.mood.apply_answers(subject, answers, exchange, source=source, user_name=user_name,
                                          weight=self.relations.weight(subject)) if judge_mood else None)
         if source == "user":
-            self.relations.seen(subject)
+            change = answers.get("mood_change") if judge_mood else None
+            self.relations.seen(subject, change.mean(LEVELS) if change else None)
             if keep:
                 self.surface.noticed(subject, lines)
         notes, worth, error = [], answers.get(WORTH_NAME), ""

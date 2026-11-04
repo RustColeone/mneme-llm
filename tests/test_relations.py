@@ -72,22 +72,35 @@ class RoleTests(unittest.TestCase):
 
 
 class ClosenessTests(unittest.TestCase):
-    def test_it_grows_once_a_day_up_to_the_ceiling(self):
+    def test_it_moves_with_how_she_takes_them_and_slows_near_the_edge(self):
         clock = Clock()
         m = mneme(clock)
-        m.relate("amy", "friend", closeness=88)
-        m.relations.seen("amy")  # the day the role was given
-        self.assertEqual(m.relations.get("amy").closeness, 88)
-        clock.days(1)
-        m.relations.seen("amy")
-        m.relations.seen("amy")  # twice in a day counts once
-        self.assertAlmostEqual(m.relations.get("amy").closeness, 89, places=1)
-        for _ in range(5):
-            clock.days(1)
-            m.relations.seen("amy")
-        self.assertEqual(m.relations.get("amy").closeness, 90)  # a friend's ceiling
-        self.assertIsNone(m.relations.seen("stranger"))  # no role is given by talking
+        m.relate("amy", "friend", closeness=50)
+        m.relations.seen("amy", 0)  # a talk that left her as she was
+        m.relations.seen("amy")  # nothing judged
+        self.assertEqual(m.relations.get("amy").closeness, 50)
+        m.relations.seen("amy", 2)  # she loved it: .25 a level, times the 40 of 70 still open above
+        self.assertAlmostEqual(m.relations.get("amy").closeness, 50 + .25 * 2 * 40 / 70)
+        for _ in range(1000):
+            m.relations.seen("amy", 2)
+        self.assertGreater(m.relations.get("amy").closeness, 89.9)
+        self.assertLessEqual(m.relations.get("amy").closeness, 90)  # a friend's ceiling
+        m.relate("mum", "family", closeness=62)
+        for _ in range(100):
+            m.relations.seen("mum", -2)
+        self.assertGreaterEqual(m.relations.get("mum").closeness, 60)  # family stays family
+        self.assertIsNone(m.relations.seen("stranger", 2))  # no role is given by talking
         self.assertIsNone(m.relations.get("stranger"))
+
+    def test_someone_who_keeps_upsetting_her_drifts_off(self):
+        m = mneme()
+        m.relate("lin", "friend", closeness=50)
+        m.relate("jie", "friend", closeness=50)
+        for _ in range(240):  # a month of chat
+            m.relations.seen("lin", -.5)
+            m.relations.seen("jie", .5)
+        self.assertLess(m.relations.get("lin").closeness, 40)
+        self.assertTrue(60 < m.relations.get("jie").closeness < 70)
 
     def test_it_fades_without_contact_down_to_the_floor_but_never_for_the_creator(self):
         clock = Clock()
@@ -101,8 +114,8 @@ class ClosenessTests(unittest.TestCase):
         self.assertEqual({r.subject: round(r.closeness) for r in m.relations.all()},
                          {"leo": 95, "mum": 60, "amy": 20})
         clock.days(1)
-        m.relations.seen("amy")  # a visit after years: from the floor, one point
-        self.assertAlmostEqual(m.relations.get("amy").closeness, 21)
+        m.relations.seen("amy", 1)  # a good visit after years: from the floor
+        self.assertAlmostEqual(m.relations.get("amy").closeness, 20.25)
 
     def test_closeness_sets_the_weight_and_the_words(self):
         m = mneme()
@@ -133,15 +146,19 @@ class CompanionTests(unittest.TestCase):
         self.assertAlmostEqual(moved["leo"] / moved["nobody"], 1.5)  # closeness 100
         self.assertAlmostEqual(moved["bob"] / moved["nobody"], 0.7)  # closeness 20
 
-    def test_talking_is_a_day_of_contact_and_reaching_out_is_not(self):
+    def test_a_talk_she_liked_brings_them_closer_and_reaching_out_does_not(self):
         clock = Clock()
-        m = mneme(clock, complete=judge)
+        m = mneme(clock, complete=judge)  # every exchange: a little better
         m.relate("amy", "friend")
         clock.days(1)
         m.observe("amy", "the companion said hello", source="speak-up", capture=False)
-        self.assertEqual(round(m.relations.get("amy").closeness), 50)
+        before = m.relations.get("amy").closeness
+        self.assertAlmostEqual(before, 50 - 1 / 30)  # only a day's fading
         m.observe("amy", [("amy", "hi!")], user_name="amy", capture=False)
-        self.assertEqual(round(m.relations.get("amy").closeness), 51)
+        after = m.relations.get("amy").closeness
+        self.assertTrue(before < after <= before + .25 * (90 - before) / 70 + 1e-9)  # a level of 1 at most
+        m.observe("amy", [("amy", "hi again")], user_name="amy", capture=False, mood=False)  # not judged
+        self.assertAlmostEqual(m.relations.get("amy").closeness, after)
 
     def test_the_prompt_says_who_they_are_before_the_notes(self):
         m = mneme()
@@ -196,21 +213,6 @@ class CommandTests(unittest.TestCase):
         self.assertIn("(leo is your creator; you are very close.)", self.run_cli("context", "leo")[1])
         self.assertEqual(self.run_cli("relate", "amy", "--remove")[1], "removed")
         self.assertEqual(self.run_cli("relate", "amy", "--remove")[1], "(no role)")
-
-
-class TalkingDayTests(unittest.TestCase):
-    def test_closeness_grows_once_a_talking_day_not_once_past_midnight(self):
-        evening = datetime(2026, 3, 1, 23, tzinfo=timezone.utc).timestamp()
-        clock = [evening]
-        m = Mneme(":memory:", "t", embed=False, memory_language=None, zone=timezone.utc, clock=lambda: clock[0])
-        m.relate("amy", "friend", closeness=50)
-        m.relations.seen("amy")
-        clock[0] += 2 * 3600  # 1 a.m.: still the evening's day
-        m.relations.seen("amy")
-        self.assertLess(m.relations.get("amy").closeness, 50.5)
-        clock[0] += 4 * 3600  # 5 a.m.: a new one
-        m.relations.seen("amy")
-        self.assertGreater(m.relations.get("amy").closeness, 50.5)
 
 
 if __name__ == "__main__":

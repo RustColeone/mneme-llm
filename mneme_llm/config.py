@@ -62,7 +62,7 @@ def _defaults() -> dict[str, Any]:
         "memory.surface_days": surface.DAYS, "memory.surface_floor": surface.FLOOR, "memory.surface_cap": surface.CAP,
         "memory.surface_window": surface.WINDOW,
         **{f"mood.{f.name}": _plain(getattr(mood, f.name)) for f in fields(MoodSettings) if f.name != "emotions"},
-        "relations.growth": 1.0, "relations.fade_days": 30.0,
+        "relations.liking": 0.25, "relations.growth": 1.0, "relations.fade_days": 30.0,
         "roles": [_role_row(role) for role in ROLES],
         "emotions": [{"key": e.key, "lowers": e.lowers, "names": dict(e.names)} for e in EMOTIONS],
     }
@@ -269,7 +269,8 @@ RULES = {
     "mood.step": _number(0, 50), "mood.gain": _number(0, 100), "mood.threshold": _number(0, 1),
     "mood.tell": _one_of("event", "mood", "off"), "mood.weights": _numbers(0, 10),
     "mood.skip": _words,
-    "relations.growth": _number(0, 100), "relations.fade_days": _number(0, 1_000_000),
+    "relations.liking": _number(0, 100), "relations.growth": _number(0, 100),
+    "relations.fade_days": _number(0, 1_000_000),
     "roles": _roles, "emotions": _emotions,
 }
 

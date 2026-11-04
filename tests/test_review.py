@@ -879,27 +879,30 @@ class RelationsReviewTests(unittest.TestCase):
         self.assertEqual({r.subject: r.closeness for r in later.relations.all()}, {"mum": 70.0, "amy": 80.0})
         later.relate("mum", "family")  # saying it again raises nothing
 
-    def test_saying_the_same_role_again_keeps_the_days_growth(self):
+    def test_saying_the_same_role_again_keeps_what_she_came_to_feel(self):
         clock = [1_760_000_000.0]
         m = plain(clock=lambda: clock[0])
         m.relate("amy", "friend")
+        wanted = 50.0
         for _ in range(5):
             clock[0] += 86400
             m.relate("amy", "friend")  # as a host might at every start
-            m.relations.seen("amy")
-        self.assertAlmostEqual(m.relations.get("amy").closeness, 55 - 5 / 30)  # a point a day, less a day's fading
+            m.relations.seen("amy", 2)
+            wanted -= 1 / 30  # a day's fading
+            wanted += .25 * 2 * (90 - wanted) / 70
+        self.assertAlmostEqual(m.relations.get("amy").closeness, wanted)
 
-    def test_a_clock_set_back_grows_nothing_twice(self):
+    def test_a_clock_set_back_changes_nothing(self):
         clock = [1_760_000_000.0]
         m = plain(clock=lambda: clock[0])
         m.relate("amy", "friend")
         clock[0] += 86400
-        m.relations.seen("amy")
-        clock[0] -= 2 * 86400  # back across midnight, then forward again
-        m.relations.seen("amy")
-        clock[0] += 2 * 86400 + 60
-        m.relations.seen("amy")
-        self.assertAlmostEqual(m.relations.get("amy").closeness, 51 - 1 / 30, places=3)  # one day's growth only
+        m.relations.seen("amy", 1)
+        once = m.relations.get("amy").closeness
+        clock[0] -= 2 * 86400  # back across midnight
+        m.relations.seen("amy", 1)
+        self.assertEqual(m.relations.get("amy", clock[0] + 2 * 86400).closeness, once)
+        self.assertAlmostEqual(once, 50 - 1 / 30 + .25 * (90 - (50 - 1 / 30)) / 70)
 
     def test_import_keeps_a_time_of_zero_and_one_creator_whatever_the_order(self):
         m = plain()

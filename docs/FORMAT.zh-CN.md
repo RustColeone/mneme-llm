@@ -169,7 +169,7 @@ episode_id)`，对话中每个不同的检索词一行，并在 `episode_id` 上
 `(space, key)` 主键；`value`（JSON）；`origin`（`default`、`file`、`set` 或 `import`）；`updated_at`。键
 是扁平的：`companion.name`、`companion.display_language`、`companion.memory_language`（`""`：没有统一
 语言）、`companion.zone`（`""`、`UTC+8` 或 IANA 名称）、`memory.*`、`mood.*`（心情的设置）、
-`relations.growth` 和 `relations.fade_days`、`roles` 和 `emotions`（各是一个对象列表，完整给出）、
+`relations.liking`、`relations.growth`（旧文件里的，不再使用）和 `relations.fade_days`、`roles` 和 `emotions`（各是一个对象列表，完整给出）、
 `prompts.<name>`（给模型的提示词）和 `messages.<language>.<key>`（显示的语句）。`mneme-llm config template`
 会打印每个键及其默认值；`docs/DESIGN.md` 第 12 节给出了规则。
 

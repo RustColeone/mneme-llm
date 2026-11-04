@@ -174,8 +174,8 @@ The newest 200 per subject are kept.
 
 `(space, key)` primary key; `value` (JSON); `origin` (`default`, `file`, `set` or `import`); `updated_at`. Keys
 are flat: `companion.name`, `companion.display_language`, `companion.memory_language` (`""`: no unifying language),
-`companion.zone` (`""`, `UTC+8`, or an IANA name), `memory.*`, `mood.*` (the mood's settings), `relations.growth`
-and `relations.fade_days`, `roles` and `emotions` (each a list of objects, in full), `prompts.<name>` (an
+`companion.zone` (`""`, `UTC+8`, or an IANA name), `memory.*`, `mood.*` (the mood's settings), `relations.liking`,
+`relations.growth` (read from older files, no longer used) and `relations.fade_days`, `roles` and `emotions` (each a list of objects, in full), `prompts.<name>` (an
 instruction to a model) and `messages.<language>.<key>` (a sentence shown). `mneme-llm config template` prints
 every key with its default; `docs/DESIGN.md`, section 12, gives the rules.
 

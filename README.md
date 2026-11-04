@@ -204,9 +204,12 @@ so an unsure judge moves it little. The rules come from
 | `friend` | 20–90 | 50 | |
 | `acquaintance` | 0–60 | 20 | |
 
-Closeness grows by a point on each day the person talks to the companion (`observe`), up to the top of the band,
-and fades by a point for every 30 days without them, never below the bottom. A friend can grow close over the
-years, but family stays family, and an acquaintance stays one until you call them a friend. A person's words move
+Closeness moves with how the companion takes the person. Each exchange they start (`observe`) moves it by how it
+moved her mood, as the judge reads it from −2 to +2: `relations.liking` points a level (0.25) when the band has all
+its room that way, less as it nears the top or the bottom. A person she enjoys comes close over weeks, one who keeps
+upsetting her drifts off, and a talk that leaves her as she was moves nothing. It fades by a point for every 30 days
+without them, never below the bottom of the band. Family stays family, and an acquaintance stays one until you call
+them a friend. A person's words move
 the mood by 0.5× at closeness 0, 1× at 50 and 1.5× at 100 (1× for a person with no role, as before roles
 existed), and the prompt opens by saying who they are: "(Leo is your creator; you are very close.)".
 `Role("teacher", floor=40, ceiling=95, start=70, names={"en": "your teacher"})` adds a role of your own.

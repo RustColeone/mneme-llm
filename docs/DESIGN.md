@@ -603,11 +603,13 @@ per `(space, subject)` in `relationships`.
 | `friend` | 20–90 | 50 | |
 | `acquaintance` | 0–60 | 20 | |
 
-Closeness grows by `growth` (1 point) on the first exchange of a talking day, in the companion's zone, that the person
-started (`Relations.seen`, called by `aobserve`), up to the band's ceiling. It fades by a point per `fade_days`
-(30) without contact, computed when read, down to the band's floor. So the people the companion talks with grow
-close over time, but family never falls below 60, and an acquaintance never rises above 60 until the host calls
-them a friend. Closeness is read within the band as the host has it now, so a narrowed band holds the people
+Closeness moves with each exchange the person started (`Relations.seen`, called by `aobserve` with the mood judge's
+level for it, −2 to +2): by `liking` (0.25) points a level, times the share of the band still open in that
+direction, so it slows near the ceiling or the floor. An exchange left unjudged, or one that left her as she was,
+moves nothing. It fades by a point per `fade_days` (30) without contact, computed when read, down to the band's
+floor. So the people the companion enjoys come close and the ones who keep upsetting her drift off, but family never
+falls below 60, and an acquaintance never rises above 60 until the host calls them a friend. `relations.growth`, the
+point a day of 0.4, is still read from older files and no longer used. Closeness is read within the band as the host has it now, so a narrowed band holds the people
 already in it. A contact at a time before the last one (a clock set back) changes nothing. Giving a role sets
 closeness to the role's start; giving the same role again, without a closeness, changes nothing (a host may say it
 at every start). A closeness off the band, an unknown role or a second creator raises `ValueError`. A host's own
@@ -830,7 +832,7 @@ their size (`MNEME_STRESS=heavy`); then builds the package, runs `twine check --
 | `test_mood.py` | decay, guardrails, floors and source weights, expected-value judging, framing by source, telling once and by threshold, the cue of what to feel, telling modes, Chinese descriptions |
 | `test_observe.py` | one request for mood and capture, the gate, speak-ups taking no notes, the writer's rules, the injection header and one-line notes, Chinese tool replies, term indexes rebuilt when the tokenizer changes, `py.typed` |
 | `test_tools.py` | tool definitions in every style, the dispatcher and its errors, quota messages, the MCP session, capture and reflection, the facade, a judge of the host's own and one that fails, the CLI round trip |
-| `test_relations.py` | roles and their bands, one creator, a host's own role, growth once a talking day up to the ceiling, fading down to the floor (never for the creator), the mood weight, the prompt line in both languages, erase, export and import, the CLI |
+| `test_relations.py` | roles and their bands, one creator, a host's own role, closeness moving with each liked or disliked exchange and slowing near the edge, fading down to the floor (never for the creator), the mood weight, the prompt line in both languages, erase, export and import, the CLI |
 | `test_aliases.py` | an alias set, replaced and removed, the prompt line in both languages, one short line, its own space, erase, export and import under the same rule, the CLI |
 | `test_people.py` | either account meaning the same person in every part, joining what each kept (keys, duplicates, the closer role, the newer mood, card and alias, both timelines), the person's own winning a tie, links one step deep, unlinking, erase from any account, export and import, the CLI |
 | `test_calibrate.py` | the set placing the floor, a model that cannot separate it, a given floor, once per model per file, an older set, a failed measurement, two recalls at once, the file refining it and the limit on that |
@@ -930,8 +932,8 @@ they left. A day turns at 4 in the morning, so a late night is still today, in e
 
 ## 18. Known limits and next steps
 
-- **The relationship numbers are first values.** The bands, a point a day and a point a month are chosen, not
-  measured; `Relations(growth=, fade_days=)` and roles of your own change them.
+- **The relationship numbers are first values.** The bands, 0.25 a level of liking and a point a month are chosen,
+  not measured; `Relations(liking=, fade_days=)` and roles of your own change them.
 - **The floor's set is small.** 32 topics in six languages place it; a model much weaker in one language than in
   the others gets a floor that suits the others. The file's own notes refine it, by 0.1 at most.
 - **Glosses for old notes.** Notes written before unify was turned on get glosses only when a query falls to it,

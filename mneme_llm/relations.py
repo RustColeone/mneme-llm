@@ -1,12 +1,14 @@
-"""Who each person is to the companion: a role, and a closeness from 0 to 100 that moves with time spent together.
+"""Who each person is to the companion: a role, and a closeness from 0 to 100 that moves with how she takes them.
 
     role        set by the host, never by a model: creator (one per space, and the bond never fades), family,
                 friend, acquaintance, or a role of the host's own. Each role keeps closeness within its band, so
                 family never falls below 60 however much time passes, and an acquaintance never rises above 60
                 until the host calls them a friend
-    closeness   grows by one point on each talking day (`dates.talking_day`) the person talks to the companion, up to
-                the role's ceiling, and fades by one point for every 30 days without them, down to its floor (computed
-                when read, and always within the role's band as the host has it now)
+    closeness   moves with each exchange the person starts, by how it moved her (the mood judge's level, -2 to 2):
+                `liking` points a level when the band has all its room that way, less as it nears the edge, so a
+                person she enjoys comes close and one who keeps upsetting her drifts off; a talk that leaves her as
+                she was moves nothing. It fades by one point for every 30 days without them, down to the role's floor
+                (computed when read, and always within the role's band as the host has it now)
     weight      how much the person's words move the mood: 0.5 at closeness 0, 1.0 at 50, 1.5 at 100. A person
                 with no role counts 1.0, as everyone did before roles existed
     telling     `line()` says it for the system prompt ("(Leo is your creator; you are very close.)")
@@ -68,12 +70,12 @@ class Relationship:
 
 
 class Relations(Speaks, Resolves):
-    def __init__(self, store: Store, space: str, *, roles: tuple[Role, ...] = ROLES, growth: float = 1.0,
+    def __init__(self, store: Store, space: str, *, roles: tuple[Role, ...] = ROLES, liking: float = .25,
                  fade_days: float = 30.0, zone: tzinfo | None = None, display_language: str | Words = "en",
                  people: People | None = None, clock: Callable[[], float] = time.time):
         self.store, self.space, self.roles = store, space, {role.key: role for role in roles}
         self.people = people
-        self.growth, self.fade_days, self.zone = growth, fade_days, zone
+        self.liking, self.fade_days, self.zone = liking, fade_days, zone
         self.words, self.clock = Words.of(display_language), clock
 
     # ---- reading -------------------------------------------------------------------------------------
@@ -136,18 +138,21 @@ class Relations(Speaks, Resolves):
                 "(?, ?, ?, ?, ?, ?)", (self.space, subject, role, float(closeness), since, updated))
         return Relationship(subject, role, float(closeness), since, updated)
 
-    def seen(self, subject: str) -> Relationship | None:
-        """A contact: the first one on a talking day (in the companion's zone) grows closeness by `growth`. A person
-        with no role is left without one. A clock that went back changes nothing (time never moves backwards here)."""
+    def seen(self, subject: str, liked: float | None = None) -> Relationship | None:
+        """An exchange the person started. `liked` is how it moved her (the mood judge's level, -2 to 2): closeness
+        moves by `liking` points a level, times the share of the band still open that way, so it slows near the
+        edge. Nothing judged, nothing moves. A person with no role is left without one. A clock that went back
+        changes nothing (time never moves backwards here)."""
         with self.writing(subject) as subject:
             now = self.clock()
             present = self.get(subject, now)
-            if present is None or now <= present.updated_at:
+            if present is None or now < present.updated_at:
                 return present
             kind = self._role(present.role)
             closeness = present.closeness
-            if dates.talking_day(present.updated_at, self.zone) < dates.talking_day(now, self.zone):
-                closeness = max(closeness, min(closeness + self.growth, kind.ceiling))  # never lowered by a visit
+            if liked and math.isfinite(liked) and kind.ceiling > kind.floor:
+                room = (kind.ceiling - closeness if liked > 0 else closeness - kind.floor) / (kind.ceiling - kind.floor)
+                closeness = min(kind.ceiling, max(kind.floor, closeness + self.liking * liked * room))
             self.store.execute("update relationships set closeness = ?, updated_at = ? where space = ? and "
                                "subject = ?", (closeness, now, self.space, subject))
         return Relationship(subject, present.role, closeness, present.since, now)

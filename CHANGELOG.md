@@ -27,6 +27,10 @@ before 1.0, a minor version may change the Python API, and this file says how.
   line only with them, never to someone new.
 - **Forgetting a person** removes how she is with them, their name from its lessons and the sides only they wanted;
   what they did to her heart stays, and her month in a side goes on.
+- **Closeness moves with how she takes a person,** not with the calendar: each exchange they start moves it by the mood
+  judge's level for it, `relations.liking` (0.25) points a level times the room left in the band that way. A talk
+  that leaves her as she was moves nothing; fading without contact is as before. `Relations(growth=)` is now
+  `Relations(liking=)`, and `relations.growth` is read from older files but no longer used.
 - **Fixed:** an objection while she was in a side she was given counted against a side that had grown; a starter that
   cannot be read is now an error, not a blank gut.
 - **Migration:** a gut file from 0.4 is lived again under these rules the first time it wakes; its lessons and starter
