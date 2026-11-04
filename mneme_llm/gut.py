@@ -106,8 +106,9 @@ FORM = ("You read one chat message a person sent to their companion. Reply with 
         'asking or none","language":"the language the sender wrote in: zh (Mandarin), yue (Cantonese), en, ja, or '
         'unclear if the message is too short to tell"}')
 ASK = ("Before you reply, say how this message makes you feel, given everything you know about this person. Answer with "
-       "JSON only: an object naming one to three feelings from the list, each with how strongly, from 0.1 (a trace) to 1 "
-       "(fully), and nothing for the rest. Both sides of a pair can be true at once. The feelings: " + FEELINGS + ".")
+       "JSON only: one flat object whose keys are one to three feelings from the list and whose values are how strongly, "
+       "from 0.1 (a trace) to 1 (fully), and nothing for the rest. Both sides of a pair can be true at once. The "
+       "feelings: " + FEELINGS + ".")
 NOTE = ('Now write your private note about the reply you just gave. Answer with JSON only: {"mood": N, "feel": {...}}. '
         "N is how this moment changed your mood, a whole number from -2 (clearly worse) to 2 (clearly better), 0 for no "
         "real change. feel is how you really feel: one to three feelings from the list, each with how strongly, from 0.1 "
@@ -618,7 +619,10 @@ def vector(text: str) -> dict[str, float] | None:
     if found is None:
         return None
     if not any(str(name).strip().lower() in ENDS for name in found):  # {"feeling": {...}}: a model's own wrapping
-        found = next((value for value in found.values() if isinstance(value, dict)), found)
+        found = next((value for value in found.values() if isinstance(value, (dict, list))), found)
+    if isinstance(found, list):  # [{"feeling": "calm", "strength": 0.7}, ...]
+        found = {str(item.get("feeling", item.get("name"))): item.get("strength", item.get("intensity"))
+                 for item in found if isinstance(item, dict)}
     values = {}
     for name, value in found.items():
         end = str(name).strip().lower()
