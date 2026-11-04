@@ -71,7 +71,7 @@ whatever model the host has, so that:
 | `meaning/calibrate.py` | 159 | each embedding model's floor: measured on a bundled set, refined by the file's own notes |
 | `meaning/vectors.py` | 124 | vectors as the file keeps them, their arithmetic, and `Matrix`: many of them compared at once |
 | `meaning/unify.py` | 176 | meaning tier 2 (removable): glosses and query translation by the host's chat model |
-| `gut.py` | 1279 | what is left of a companion when her memory is wiped and her model swapped: her heart, a table for each person, her slow levels and sides, in a file of its own |
+| `gut.py` | 1284 | what is left of a companion when her memory is wiped and her model swapped: her heart, a table for each person, her slow levels and sides, in a file of its own |
 | `text.py` | 225 | tokenization, scripts, counting tokens, cleaning, checking, clipping and fitting text |
 | `dates.py` | 124 | human dates, talking days, dates found in sentences, times in seconds |
 | `i18n.py` | 257 | every word and sentence shown to a person or a model, in English and Chinese |

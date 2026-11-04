@@ -42,7 +42,7 @@
     'error.sensitivity': 'sensitivity is from -1 to 1',
     'error.age': 'an age is a number of lessons, 0 or more',
     'error.noHeart': 'her heart is not in this file yet: wake her once first',
-    'error.nature': 'nature is from -3 to 3',
+    'error.nature': 'nature is from -6 to 6',
     'error.now': 'now is from -1 to 1',
     'error.weight': 'a weight is from 0 to 1',
     'error.often': 'how often is from 0 to 1',
@@ -75,8 +75,10 @@
     'settings.dull': 'thick-skinned',
     'settings.keen': 'sensitive',
     'settings.tunes': 'Each feeling, by hand',
-    'settings.tunesHint': 'Nature (-3 to 3) nudges who she is: learning never takes it away, and 0 removes it. Now ' +
-      '(-1 to 1) is how much more or less of it she feels lately than usual: it fades as she lives.',
+    'settings.tunesHint': 'Nature (-6 to 6) is where she stands on a feeling, as if she had been born so: 3 is ' +
+      'about even, 6 is fully. What she lives moves her on from there (slowly once she is grown; a locked heart keeps ' +
+      'it), and 0 removes it. Now (-1 to 1) is how much more or less of it she feels lately than usual: it fades as ' +
+      'she lives.',
     'settings.nature': 'nature',
     'settings.now': 'now',
     'bars.title': 'Lately against usual',
@@ -119,7 +121,8 @@
     'person.weightLearned': 'learned: {weight}%',
     'people.lock': 'Lock how she is with them: what they say teaches nothing, and they do not fade',
     'people.tunes': 'Each feeling, with them alone',
-    'people.tunesHint': 'A nudge to each feeling with this person only, on top of her nature (-3 to 3; 0 removes it).',
+    'people.tunesHint': 'A nudge to each feeling with this person only, on top of all she is and has learned with ' +
+      'them; it stays (-6 to 6; 0 removes it).',
     'person.nudged': 'Nudged with them:',
     'people.forget': 'Forget them',
     'people.forgetConfirm': 'Forget {who}? How she is with them goes, and so do the sides only they wanted. What ' +
@@ -200,7 +203,7 @@
     'error.sensitivity': '敏感度在 -1 到 1 之间',
     'error.age': '年龄是课的节数，0 或以上',
     'error.noHeart': '这个文件里还没有她的心：先让她醒来一次',
-    'error.nature': '天性在 -3 到 3 之间',
+    'error.nature': '天性在 -6 到 6 之间',
     'error.now': '现在在 -1 到 1 之间',
     'error.weight': '比重在 0 到 1 之间',
     'error.often': '出现频率在 0 到 1 之间',
@@ -228,7 +231,7 @@
     'settings.dull': '钝感',
     'settings.keen': '敏感',
     'settings.tunes': '每种感觉，逐个调',
-    'settings.tunesHint': '天性（-3 到 3）会微微推一推她本来的样子：学习永远不会把它拿走，填 0 就是去掉它。现在（-1 到 1）是她最近比平常多或少感受到这种感觉的程度：它会随着她的生活慢慢变淡。',
+    'settings.tunesHint': '天性（-6 到 6）是她在这种感受上站的位置，就像她生来如此：3 大约持平，6 是完全如此。她经历的事会让她从那里慢慢移开（长大后更慢；锁住她的心，它就留在那里），填 0 就是去掉它。现在（-1 到 1）是她最近比平常多或少感受到这种感觉的程度：它会随着她的生活慢慢变淡。',
     'settings.nature': '天性',
     'settings.now': '现在',
     'bars.title': '最近对比平常',
@@ -267,7 +270,7 @@
     'person.weightLearned': '学到的：{weight}%',
     'people.lock': '锁住她和这个人相处的样子：这个人说的话什么也不教，也不会淡去',
     'people.tunes': '每一种感受，只对这个人',
-    'people.tunesHint': '只针对这个人，给每种感受加一点偏移，叠加在她的天性之上（-3 到 3；0 表示移除）。',
+    'people.tunesHint': '只针对这个人，给每种感受加一点偏移，叠加在她本来的样子和她与这个人相处中学到的一切之上，并且一直保留（-6 到 6；0 表示移除）。',
     'person.nudged': '已微调：',
     'people.forget': '忘记这个人',
     'people.forgetConfirm': '忘记{who}？她和这个人相处的样子会消失，只有这个人想要的属性也会消失；这个人在她心里留下的影响还在。',
@@ -960,7 +963,7 @@
           return `${t('lately', { value: signed(found.lately) })} · ${t('usual', { value: signed(found.usual) })}`
         })),
       barView(bar),
-      slider({ label: t('settings.nature'), value: now.nature, low: -3, high: 3, step: 0.1, wide: true,
+      slider({ label: t('settings.nature'), value: now.nature, low: -6, high: 6, step: 0.1, wide: true,
         show: value => signed(value, 1), onChange: nature => edit('gut', `nature:${chosen}`,
           db => T.tune(db, chosen, { nature }), { same: () => ends()[chosen].nature === baseEnds()[chosen].nature }) }).node,
       slider({ label: t('settings.now'), value: now.now, low: -1, high: 1, step: 0.05, wide: true,
@@ -1100,7 +1103,7 @@
     T.BARS.map(([name, , left, right]) => el('optgroup', { label: barName(name) },
       [left, right].filter(Boolean).map(([end]) => el('option', { value: end, selected: end === pickedEnd },
         endName(end))))))
-    const nudge = slider({ label: t('settings.nature'), value: Number(found.nudge[pickedEnd] || 0), low: -3, high: 3,
+    const nudge = slider({ label: t('settings.nature'), value: Number(found.nudge[pickedEnd] || 0), low: -6, high: 6,
       step: 0.1, wide: true, show: value => signed(value, 1),
       onChange: nature => edit('gut', personKey(subject, `nudge:${pickedEnd}`),
         db => T.tunePerson(db, subject, { end: pickedEnd, nature }),

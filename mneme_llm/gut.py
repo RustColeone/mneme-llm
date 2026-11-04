@@ -146,6 +146,7 @@ AWAKE, PASSES = .25, (.375, .25, .125)  # of what a lesson does: at once, then i
 BORN_PASSES, BORN_RATE = 4, .15  # her starter: a lean toward her character, which her prompt already gives her
 BORN_AS = 150  # lessons her starter counts as in `balance`
 BLANK = -3.0  # where every end starts before anything is learned: about .05, a trace
+NATURE = 6  # how far a dial reaches, either way: from BLANK, 3 is about even and 6 is fully
 SLEEPS_AT = (20, 50)  # and every 100 lessons
 
 
@@ -240,8 +241,10 @@ class Net:
     """Her heart and a table for each person she has talked with. Her heart learns from everyone close enough to teach
     her, each lesson by closeness tier, fast while she is young and slowly once grown up. A person's table learns only
     from that person, at a steady pace, from anyone. Young, people change who she is; grown up, mostly how she is with
-    them. `nudge` is her nature tuned by hand: added to every end before it is read, never learned away. `locked`: her
-    heart learns nothing and does not grow up. `hands`: each person as set by hand (`Gut.tune_person`)."""
+    them. `nudge` is her nature tuned by hand: where she stands on each end, added before it is read, which she lives
+    on from as from where she was born (her heart and each person's table learn against it, so it is counted once and
+    what she lives can move her from it). `locked`: her heart learns nothing and does not grow up, so her nature stays
+    as set. `hands`: each person as set by hand (`Gut.tune_person`); a person's own nudge stays on top of all that."""
 
     def __init__(self, tau: float = TAU):
         self.tau, self.heart, self.people = tau, Table(), {}
@@ -325,10 +328,11 @@ class Net:
 
     def _learn(self, lesson: tuple, share: float) -> None:
         x, wanted, known, weight, heart, found = lesson
-        if heart:
-            self.heart.step(x, wanted, known, heart * weight * share)
-        if found:
-            found["table"].step(x, wanted, known, PERSON * weight * share, self.heart.scores(x))
+        if heart:  # against her nature as set: she lives on from it
+            self.heart.step(x, wanted, known, heart * weight * share, self.nudge)
+        if found:  # against her heart and her nature: what is different with them
+            found["table"].step(x, wanted, known, PERSON * weight * share,
+                                [score + nudge for score, nudge in zip(self.heart.scores(x), self.nudge)])
 
     def sleep(self) -> None:
         """What the lessons since her last sleep taught, settled. Nothing older is replayed: nothing snaps back."""
@@ -1084,11 +1088,12 @@ class Gut:
 
     def tune(self, end: str, now: float | None = None, nature: float | None = None) -> None:
         """One end by hand. `now`, -1 to 1: how much more (or less) of it she feels lately than usual; it fades as she
-        lives, at the pace of her slow levels. `nature`, -3 to 3: a nudge to who she is, added before the end is read;
-        learning never takes it away, 0 removes it."""
+        lives, at the pace of her slow levels. `nature`, -6 to 6: where she stands on it, as if she had been born so
+        (her heart starts far down the end at -3, so 3 is about even and 6 is fully); what she lives moves her on from
+        there, slowly once she is grown, and a locked heart keeps it. 0 removes it."""
         if end not in ENDS:
             raise ValueError(f"Not an end of hers: {end}. Hers: {', '.join(ENDS)}.")
-        for value, low, high in ((now, -1, 1), (nature, -3, 3)):
+        for value, low, high in ((now, -1, 1), (nature, -NATURE, NATURE)):
             if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float))
                                       or not low <= value <= high):
                 raise ValueError(f"{value} is not from {low} to {high}")
@@ -1105,8 +1110,8 @@ class Gut:
 
     def tune_person(self, subject: str, end: str | None = None, nature: float | None = None,
                     weight: float | str | None = None, locked: bool | None = None) -> dict:
-        """How she is with one person, by hand. `end` and `nature` (-3 to 3): a nudge to that end with them alone, on
-        top of her own nature; 0 removes it. `weight` (0 to 1): how much what is different with them counts on top of
+        """How she is with one person, by hand. `end` and `nature` (-6 to 6): a nudge to that end with them alone, on
+        top of all she is and has learned with them, never learned away; 0 removes it. `weight` (0 to 1): how much what is different with them counts on top of
         her heart, in place of what she has learned (more as she knows them, at most 0.7, fading without them);
         "learned" goes back to that. `locked`: what they say teaches nothing, neither how she is with them nor her
         heart, and they do not fade; who she is at heart, as others shape it, still reaches them. What is set for them,
@@ -1118,8 +1123,8 @@ class Gut:
         if end is not None and end not in ENDS:
             raise ValueError(f"Not an end of hers: {end}. Hers: {', '.join(ENDS)}.")
         if nature is not None and (isinstance(nature, bool) or not isinstance(nature, (int, float))
-                                   or not -3 <= nature <= 3):
-            raise ValueError(f"{nature} is not from -3 to 3")
+                                   or not -NATURE <= nature <= NATURE):
+            raise ValueError(f"{nature} is not from {-NATURE} to {NATURE}")
         if weight is not None and weight != "learned" and (isinstance(weight, bool) or
                                                            not isinstance(weight, (int, float)) or not 0 <= weight <= 1):
             raise ValueError('a weight is from 0 to 1, or "learned"')

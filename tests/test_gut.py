@@ -43,6 +43,26 @@ class Ends(unittest.TestCase):
         self.assertGreater(min(felt["sweet"], felt["scornful"]), .6)  # both sides of a bar at once: love-hate
         self.assertLess(felt["happy"], .1)
 
+    def test_her_nature_is_where_she_stands_and_she_lives_on_from_it(self):
+        net = G.Net()
+        net.nudge = [6.0 if end == "suspicious" else 0.0 for end in G.ENDS]
+        self.assertGreater(net.vector(FORM, 85)["suspicious"], .9)  # 6: fully, from a blank heart
+        lessons(net, "a", {"suspicious": .9}, 60)  # living as she is set: counted once, not twice
+        net.sleep()
+        self.assertAlmostEqual(net.vector(FORM, 85)["suspicious"], .9, delta=.03)
+        lessons(net, "b", {"trusting": .9, "suspicious": .05}, 300)  # someone close who keeps showing she can trust them
+        net.sleep()
+        with_them = net.vector(FORM, 85, "b")
+        self.assertGreater(with_them["trusting"], with_them["suspicious"])  # she trusts them
+        held = G.Net()
+        held.nudge, held.locked = list(net.nudge), True
+        lessons(held, "b", {"trusting": .9, "suspicious": .05}, 300)
+        held.sleep()
+        self.assertGreater(held.vector(FORM, 85)["suspicious"], .9)  # a locked heart keeps her nature as set
+        held.hands = {"b": {"nudge": {"suspicious": -6.0}}}  # a person's own nudge: on top of all of it, for them
+        self.assertLess(held.vector(FORM, 85, "b")["suspicious"], .2)
+        self.assertGreater(held.vector(FORM, 85)["suspicious"], .9)
+
     def test_born_suspicious_she_can_still_trust_one_person(self):
         net = G.Net()
         lessons(net, "b", {"suspicious": .9}, 60)  # who she became: doubting what anyone means by it
@@ -410,7 +430,7 @@ class Kept(unittest.TestCase):
         with self.assertRaises(ValueError):
             gut.tune("angry", now=.3)
         with self.assertRaises(ValueError):
-            gut.tune("irritable", nature=4)
+            gut.tune("irritable", nature=7)
         self.assertLess(gut.net.vector(FORM, 85)["irritable"], .01)
         self.teach(gut, 3)
         gut.close()
@@ -451,7 +471,7 @@ class Kept(unittest.TestCase):
         self.assertEqual(gut.net.weight("discord:1"), 0.0)
         gut.tune_person("discord:1", weight="learned")
         self.assertAlmostEqual(gut.net.weight("discord:1"), learned)
-        for bad in ({"end": "sweet"}, {"end": "angry", "nature": 1}, {"end": "sweet", "nature": 4}, {"weight": 1.5},
+        for bad in ({"end": "sweet"}, {"end": "angry", "nature": 1}, {"end": "sweet", "nature": 7}, {"weight": 1.5},
                     {"weight": "some"}, {"locked": "yes"}):
             with self.assertRaises(ValueError):
                 gut.tune_person("discord:1", **bad)

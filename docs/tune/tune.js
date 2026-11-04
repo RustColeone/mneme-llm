@@ -49,6 +49,7 @@
   ]
 
   const TAU = 150 // lessons: how fast her heart grows up (`TAU` in gut.py)
+  const NATURE = 6 // how far a dial reaches, either way (`NATURE`)
   const FLOOR = 0.04 // the share of her young pace left once grown (`FLOOR`)
   const COUNTS = 20, MOST = 0.7 // what is different with a person counts half at 20 lessons, never more than MOST
   const GROWS = 6 // how much of her a side that has just grown is (`GROWS`)
@@ -278,11 +279,11 @@
   }
 
   /** `Gut.tune`: one end by hand. `now` (-1 to 1): how much more or less of it she feels lately than usual, fading as
-   * she lives; 0 takes it away. `nature` (-3 to 3): a nudge to who she is; 0 removes it. */
+   * she lives; 0 takes it away. `nature` (-6 to 6): where she stands on it, which she lives on from; 0 removes it. */
   async function tune (db, end, { now, nature } = {}) {
     if (!ENDS.includes(end)) fail('end', { end })
     if (now !== undefined && !within(now, -1, 1)) fail('now')
-    if (nature !== undefined && !within(nature, -3, 3)) fail('nature')
+    if (nature !== undefined && !within(nature, -NATURE, NATURE)) fail('nature')
     const values = {}
     if (now !== undefined) {
       const tone = toneOf(await getState(db, 'feelings'))
@@ -299,13 +300,13 @@
     await putState(db, values)
   }
 
-  /** `Gut.tune_person`: how she is with one person, by hand. `end` with `nature` (-3 to 3; 0 removes it), `weight`
+  /** `Gut.tune_person`: how she is with one person, by hand. `end` with `nature` (-6 to 6; 0 removes it), `weight`
    * (0 to 1, or 'learned'), `locked`. What is set for them, as it is now (a person with nothing set is removed). */
   async function tunePerson (db, subject, { end, nature, weight, locked } = {}) {
     if (typeof subject !== 'string' || !subject.trim()) fail('subject')
     if ((end === undefined) !== (nature === undefined)) fail('nudge')
     if (end !== undefined && !ENDS.includes(end)) fail('end', { end })
-    if (nature !== undefined && !within(nature, -3, 3)) fail('nature')
+    if (nature !== undefined && !within(nature, -NATURE, NATURE)) fail('nature')
     if (weight !== undefined && weight !== 'learned' && !within(weight, 0, 1)) fail('weight')
     if (locked !== undefined && typeof locked !== 'boolean') fail('locked')
     const settings = await settingsOf(db)

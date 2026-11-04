@@ -11,6 +11,12 @@ before 1.0, a minor version may change the Python API, and this file says how.
   did not know starts as nothing), its lessons teach only the 24 ends they knew, and 0.5 still reads the first 24 of a
   file written now. Her note scores all 26; trusting alone, like calm, peaceable or secure, puts nothing in the line.
   The tuner and the star map have the 14th bar and its colour.
+- **Her nature dial is where she stands, and she lives on from it** (`Gut.tune(end, nature=)`, now -6 to 6, `NATURE`):
+  her heart and each person's table learn against it, as if she had been born so. Before, it was kept on top of all she
+  learned, so a dial and lessons saying the same thing counted it twice (a heart dialed to 6 on an end and then living
+  it went to 1.0; now it stays at what she lives, 0.9), and a dial could reach only about even from a blank heart
+  (3 gave 0.5). A locked heart keeps her nature as set. A person's own nudge (`tune_person`, also -6 to 6) stays on
+  top of all of it, for them alone.
 - **The tuner draws her star map**, flat or in 3D, as the DeepSeek Harness plugin draws it: her heart as of her last
   sleep, and a star for each person she knows, as big as how much of how she is with them is theirs. Dropped in beside
   her files, her starter gives the arms (how far she has grown from it); without it, a heart born from a starter has

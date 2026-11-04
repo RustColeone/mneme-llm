@@ -153,7 +153,8 @@ def main(argv: list[str] | None = None) -> int:
     setting.add_argument("--unlock", action="store_true", help="her heart learns again")
     tuning = doing.add_parser("tune", help="one feeling by hand, for everyone or for one person")
     tuning.add_argument("end", help="one of her 26 ends: sad, happy, ... (`gut show` lists them)")
-    tuning.add_argument("--nature", type=float, help="-3 to 3: a nudge to who she is; 0 removes it")
+    tuning.add_argument("--nature", type=float, help="-6 to 6: where she stands on it (with --person: a nudge with them "
+                                                     "alone); 0 removes it")
     tuning.add_argument("--now", type=float, help="-1 to 1: more or less of it lately than usual; it fades")
     tuning.add_argument("--person", help="the nature with this person alone")
     person = doing.add_parser("person", help="how she is with one person: weight, lock, forget")

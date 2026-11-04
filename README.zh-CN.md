@@ -263,7 +263,7 @@ await turn.learn(answer)                                   # 在对话之外进�
 ```python
 gut = Gut("her.gut.db", "starter.json.gz", tau=150, zone=her_zone)   # tau 和 zone：只对新的直觉文件有效
 gut.configure(tau=300, sensitivity=.5)       # 长大得慢一些；敏感（1）到钝感（-1）：每一刻打在她身上有多重
-gut.tune("irritable", nature=-1.5)           # 轻轻推一下她的本性，学习不会把它学掉（0 去掉）
+gut.tune("irritable", nature=-1.5)           # 她在这种感受上站的位置（-6 到 6），她从那里接着生活（0 去掉）
 gut.tune("sad", now=.4)                      # 她近来的样子，会随着生活慢慢回去
 gut.set_age(0)                               # 重新变年轻，什么也不忘
 gut.configure(locked=True)                   # 锁住她的心：不再学，也不再长大，直到解锁
@@ -274,7 +274,7 @@ gut.forget("discord:42")                     # 她对这个人的那一份没了
 每个人也可以单独手调，和她的心分开：
 
 ```python
-gut.tune_person("discord:42", "sweet", 2)    # 只对这个人轻推一下，叠在她的本性上（0 去掉）
+gut.tune_person("discord:42", "sweet", 2)    # 只对这个人轻推一下，叠在这一切之上，一直保留（0 去掉）
 gut.tune_person("discord:42", weight=.3)     # 和这个人不一样的那份算多少（"learned"：按她学到的）
 gut.tune_person("discord:42", locked=True)   # 这个人说的话什么也不教，也不会淡去
 ```

@@ -366,7 +366,7 @@ last sleep taught; nothing older is replayed, so nothing snaps back.
 ```python
 gut = Gut("her.gut.db", "starter.json.gz", tau=150, zone=her_zone)   # tau and zone: for a new gut
 gut.configure(tau=300, sensitivity=.5)       # grow up slower; 敏感 (1) to 钝感 (-1): how hard every moment hits her
-gut.tune("irritable", nature=-1.5)           # a nudge to who she is, never learned away (0 removes it)
+gut.tune("irritable", nature=-1.5)           # where she stands on it (-6 to 6); she lives on from there (0 removes it)
 gut.tune("sad", now=.4)                      # how she is lately, fading back as she lives
 gut.set_age(0)                               # young again, forgetting nothing
 gut.configure(locked=True)                   # her heart learns nothing and does not grow up, until unlocked
@@ -377,7 +377,7 @@ gut.forget("discord:42")                     # how she is with them goes; what t
 Each person can be set by hand too, apart from her heart:
 
 ```python
-gut.tune_person("discord:42", "sweet", 2)    # a nudge with them alone, on top of her nature (0 removes it)
+gut.tune_person("discord:42", "sweet", 2)    # a nudge with them alone, on top of all of it, kept (0 removes it)
 gut.tune_person("discord:42", weight=.3)     # how much what is different with them counts ("learned": as she learned it)
 gut.tune_person("discord:42", locked=True)   # what they say teaches nothing, and they do not fade
 ```
