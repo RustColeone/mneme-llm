@@ -3,7 +3,10 @@
 All notable changes to mneme-llm are listed here. The project follows [semantic versioning](https://semver.org);
 before 1.0, a minor version may change the Python API, and this file says how.
 
-## Unreleased
+## 0.7.0 (2026-11-05)
+
+The Character Card in the system prompt; a look that leaves out what is in front of the model, and
+bars a look with words alone; a language for her to answer in.
 
 - **The first prompt is the Character Card** (角色卡): who the companion is, in a person's own words, kept out of the
   conversation. At first it is the first thing they said, as before; it can be set, and it is used only once it is on.
