@@ -554,6 +554,36 @@ class Kept(unittest.TestCase):
             gut.feel(FORM, vote, 85, 3, "zh")
         self.assertAlmostEqual(gut.tone.lean({"sad": .1})["sad"], .35, delta=.03)
 
+    def test_two_accounts_of_one_person_are_joined_and_her_heart_is_not_touched(self):
+        gut = self.gut()
+        self.teach(gut, 30, "webui:leo", feel=JEALOUS)
+        self.teach(gut, 10, "discord:42", feel={"calm": .9})
+        gut.sleep()
+        gut.tune_person("discord:42", "sweet", 2.0)
+        gut.tune_person("webui:leo", "sad", -1.0)
+        gut.language("discord:42", {"language": "yue"}, "x")
+        gut.set_age(50)
+        heart = gut.net.heart.kept()
+        before = {who: gut.net.vector(FORM, 85, who) for who in ("webui:leo", "discord:42")}
+        self.assertTrue(gut.link("discord:42", "webui:leo"))
+        self.assertNotIn("discord:42", gut.net.people)
+        self.assertEqual(gut.net.people["webui:leo"]["n"], 40)
+        self.assertEqual(gut.net.heart.kept(), heart)  # (her heart and her age are hers, not theirs)
+        self.assertEqual(gut.report()["age"], 50)
+        self.assertEqual(gut.settings["people"]["webui:leo"]["nudge"], {"sweet": 2.0, "sad": -1.0})
+        self.assertEqual(gut.languages, {"webui:leo": "yue"})
+        joined = gut.net.vector(FORM, 85, "webui:leo")["jealous"]
+        self.assertTrue(min(before["webui:leo"]["jealous"], before["discord:42"]["jealous"]) - 1e-9 <= joined
+                        <= max(before["webui:leo"]["jealous"], before["discord:42"]["jealous"]) + .05)
+        self.assertFalse(gut.link("discord:42", "webui:leo"))  # (nothing of it is left)
+        gut.close()
+        again = self.gut()
+        self.assertEqual((set(again.net.people), again.report()["age"]), ({"webui:leo"}, 50))
+        self.assertEqual(again.db.execute("select count(*) from lessons where subject = 'discord:42'").fetchone()[0], 0)
+        self.assertEqual(again.languages, {"webui:leo": "yue"})
+        with self.assertRaises(ValueError):
+            again.link("", "webui:leo")
+
     def test_an_age_can_be_set_young_again_forgetting_nothing(self):
         gut = self.gut()
         self.teach(gut, 300)

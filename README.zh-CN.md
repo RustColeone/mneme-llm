@@ -269,6 +269,7 @@ gut.set_age(0)                               # 重新变年轻，什么也不忘
 gut.configure(locked=True)                   # 锁住她的心：不再学，也不再长大，直到解锁
 gut.report()["people"], gut.report()["SAN"]  # 每个人算多少、她的慢变量
 gut.forget("discord:42")                     # 她对这个人的那一份没了；这个人在她心里留下的影响还在
+gut.link("discord:42", "web:leo")            # 同一个人的另一个账号：从此她的直觉把他们当成一个人
 ```
 
 每个人也可以单独手调，和她的心分开：

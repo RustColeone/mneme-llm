@@ -353,6 +353,22 @@ class Net:
                                  "day": found["day"]} for subject, found in kept["people"].items()}
 
 
+def joined(one: dict, other: dict) -> dict:
+    """Two tables of one person (one account each) as one: each weight and bias weighed by how many lessons it holds;
+    the lessons counted together, the fade of the nearer, the later talking day."""
+    n1, n2 = one["n"], other["n"]
+    total = n1 + n2
+    share = (lambda a, b: (a * n1 + b * n2) / total) if total else (lambda a, b: (a + b) / 2)
+    width = len(ENDS)
+    table = Table(blank=0.0)
+    for key in sorted({*one["table"].w, *other["table"].w}):
+        a, b = one["table"].w.get(key, [0.0] * width), other["table"].w.get(key, [0.0] * width)
+        table.w[key] = [share(x, y) for x, y in zip(a, b)]
+    table.b = [share(x, y) for x, y in zip(one["table"].b, other["table"].b)]
+    days = [day for day in (one["day"], other["day"]) if day is not None]
+    return {"table": table, "n": total, "fade": max(one["fade"], other["fade"]), "day": max(days) if days else None}
+
+
 def balance(net: Net, exchanges: int) -> float:
     """How much the gut counts against her head. What she has lived (a starter counts as BORN_AS lessons) raises it,
     memory of this person lowers it: nothing lived, her head decides alone; memory wiped, the gut leads; both full, about
@@ -1041,6 +1057,42 @@ class Gut:
             self.grown, self.weights = {name: what for name, what, _ in kept}, {name: own for name, _, own in kept if own}
             self._put("heart", self.net.kept())
         return gone
+
+    def link(self, old: str, person: str) -> bool:
+        """`old` is `person` on another account (as `Mneme.link` makes it in her memory): from now on her gut knows one
+        person. The lessons and sightings `old` gave are `person`'s; how she is with them is one table, the two weighed
+        by how many lessons each holds; what was set by hand for `person` stays, and what was set only for `old` comes
+        along; the language she answers them in is `person`'s, else `old`'s. Her heart is not touched. Whether there was
+        anything of `old` to join."""
+        if not isinstance(old, str) or not isinstance(person, str) or not old.strip() or not person.strip():
+            raise ValueError("a person is a subject, such as discord:42")
+        if old == person:
+            return False
+        with self.lock:
+            self._settle()  # (what waits for her sleep is taught to the tables as they were)
+            mine = self.net.people.pop(old, None)
+            if mine is not None:
+                theirs = self.net.people.get(person)
+                self.net.people[person] = mine if theirs is None else joined(theirs, mine)
+            hands = self.settings["people"]
+            if old in hands:
+                given, own = hands.pop(old) or {}, dict(hands.get(person) or {})
+                nudge = {**(given.get("nudge") or {}), **(own.get("nudge") or {})}
+                hands[person] = {**given, **own, **({"nudge": nudge} if nudge else {})}
+                self._put("settings", self.settings)
+            if old in self.languages:
+                self.languages.setdefault(person, self.languages[old])
+                del self.languages[old]
+            self.sightings = [(person if who == old else who, *rest) for who, *rest in self.sightings]
+            self.marks.lessons = [(*row[:5], person if row[5] == old else row[5]) for row in self.marks.lessons]
+            with self._open() as db:
+                moved = db.execute("update lessons set subject = ? where subject = ?", (person, old)).rowcount
+                db.execute("update sightings set subject = ? where subject = ?", (person, old))
+                db.execute("delete from people where subject = ?", (old,))
+                if person in self.languages:
+                    db.execute("insert or replace into people values (?, ?)", (person, self.languages[person]))
+            self._put("heart", self.net.kept())
+        return bool(mine or moved)
 
     def wipe(self) -> int:
         """All she learned of anyone goes, her sides and her slow levels with it, and she is as she was born. Her

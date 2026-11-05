@@ -374,6 +374,7 @@ gut.set_age(0)                               # young again, forgetting nothing
 gut.configure(locked=True)                   # her heart learns nothing and does not grow up, until unlocked
 gut.report()["people"], gut.report()["SAN"]  # how much each person counts, her slow levels
 gut.forget("discord:42")                     # how she is with them goes; what they did to her heart stays
+gut.link("discord:42", "web:leo")            # another account of the same person: one person to her gut from now on
 ```
 
 Each person can be set by hand too, apart from her heart:

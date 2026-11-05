@@ -3,6 +3,15 @@
 All notable changes to mneme-llm are listed here. The project follows [semantic versioning](https://semver.org);
 before 1.0, a minor version may change the Python API, and this file says how.
 
+## 0.7.1 (2026-11-05)
+
+Two accounts of one person are one person to her gut too.
+
+- **`Gut.link(old, person)`**: as `Mneme.link` does in her memory, the gut knows one person from then on. The lessons
+  and sightings `old` gave become `person`'s; how she is with them is one table, the two weighed by how many lessons
+  each holds; what was set by hand for `person` stays and what was set only for `old` comes along; the language she
+  answers them in is `person`'s, else `old`'s. Her heart and her age are not touched.
+
 ## 0.7.0 (2026-11-05)
 
 The Character Card in the system prompt; a look that leaves out what is in front of the model, and

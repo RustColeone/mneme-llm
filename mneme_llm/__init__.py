@@ -39,7 +39,7 @@ from .relations import Relations, Relationship, Role
 from .store import SCHEMA_VERSION, Store
 from .surface import Card, First, Surface, View
 
-__version__ = "0.7.0"
+__version__ = "0.7.1"
 SEARCHED = 5  # exchanges a search adds to a look
 log = logging.getLogger("mneme_llm")
 
