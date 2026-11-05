@@ -57,6 +57,7 @@ PREPARED = 256        # exchanges a prepare embeds at most (the rest the next ti
 BEYOND = 2 ** 63 - 1  # past every id
 CUT = 0.08            # a look's bar: an exchange this much closer to the query than the embedder's floor ...
 CUT_FADED = 0.16      # ... and, fully faded, this much (in between by its retention); a search has no bar
+WORDS = 0.25          # with words alone, the share of the query's weight an exchange must share to be in a look (0: any)
 BUDGET = 6000         # characters a look shows
 DAYS = 30.0           # S an exchange starts with
 STRONGEST = 1e6       # days: stability stops growing here
@@ -386,17 +387,22 @@ class Episodes(Speaks, Resolves):
                           self.talking_days(episode.subject))
 
     def look(self, subject: str, query: str, *, budget: int = BUDGET,
-             cut: tuple[float, float] | None = (CUT, CUT_FADED), more: int = 0, found=None) -> list[Episode]:
+             cut: tuple[float, float] | None = (CUT, CUT_FADED), more: int = 0, found=None,
+             skip=None, words_cut: float = WORDS) -> list[Episode]:
         """What comes to mind for `query` (words only; `alook` adds meaning): the best matches within `budget`
         characters as `render` shows them, in the order they were said. With the query's vector from the embedder, an
         exchange must clear a bar: its cosine with the query at least the embedder's floor as the bundled set placed
         it (the similarity under which a text says nothing about a query, `Meaning.set_floor`) plus `cut[0]` when
         fresh, plus `cut[1]` when fully faded, in between by its retention. One under its bar is left out however much
-        budget is left, so a look may be short, or empty (`cut=None`: no bar; with words alone there is none). `more`
+        budget is left, so a look may be short, or empty (`cut=None`: no bar). With words alone the bar is `words_cut`: the
+        terms an exchange shares with the query carry at least that share of the query's weight (each term by its idf,
+        so a common single character counts for little; 0: no bar). `more`
         adds that many more of the best by relevance alone, however faded, as a search would find them, rehearsing
-        nothing."""
+        nothing. `skip`: ids left out, such as what the conversation in front of the model still shows."""
         subject, query = self.who(subject), texts.query(query)
-        order, cleared = self._ranked(subject, query, found, cut=cut)
+        order, cleared = self._ranked(subject, query, found, cut=cut, words_cut=words_cut)
+        if skip:
+            order = [id for id in order if id not in skip]
         chosen, used = [], 0
         for episode in self._get_many([id for id in order if id in cleared][:SCANNED]):
             size = len(self.shown(episode)) + 2
@@ -472,11 +478,11 @@ class Episodes(Speaks, Resolves):
         return "\n".join(lines)
 
     # ---- ranking ---------------------------------------------------------------------------------
-    def _ranked(self, subject: str, query: str, found, *,
-                cut: tuple[float, float] | None = None) -> tuple[list[int], set[int]]:
+    def _ranked(self, subject: str, query: str, found, *, cut: tuple[float, float] | None = None,
+                words_cut: float = 0.0) -> tuple[list[int], set[int]]:
         """The person's exchanges for `query`, best first (BM25 over the search terms, each term once per exchange, and
-        closeness to the query's vector, fused by reciprocal rank), and which of them clear the bar of `cut` (see
-        `look`); fading changes nothing else."""
+        closeness to the query's vector, fused by reciprocal rank), and which of them clear the bar of `cut`, or of
+        `words_cut` when the query has no vector (see `look`); fading changes nothing else."""
         self.store.reindex()
         rows = self.store.rows("select id, at, day, recalled_at, stability, size from episodes where space = ? and "
                                "subject = ?", (self.space, subject))
@@ -493,11 +499,13 @@ class Episodes(Speaks, Resolves):
             "term", wanted, mine)}
         idf = {term: math.log(1 + (count - n + 0.5) / (n + 0.5)) for term, n in df.items()}
         bm25: dict[int, float] = {}
+        shared: dict[int, float] = {}  # (the weight of the query's terms each exchange has)
         for row in self.store.rows_in("select term, episode_id from episode_terms where space = ? and subject = ? and "
                                       "term in ({})", list(idf), mine):
             id = row["episode_id"]
             if id in sizes:
                 bm25[id] = bm25.get(id, 0.0) + idf[row["term"]] * 2.2 / (1 + 1.2 * (0.25 + 0.75 * sizes[id] / average))
+                shared[id] = shared.get(id, 0.0) + idf[row["term"]]
         fused: dict[int, float] = {}
         for place, id in enumerate(sorted(bm25, key=lambda id: (-bm25[id], -id))):
             fused[id] = 1 / (RRF + place)
@@ -514,6 +522,9 @@ class Episodes(Speaks, Resolves):
                     close[id] = float(similarities[index])
                     place += 1
         order, cleared = sorted(fused, key=lambda id: (-fused[id], -id)), set(fused)
+        if cut is not None and words_cut > 0 and vector is None:
+            whole = sum(idf.values()) or 1.0
+            cleared = {id for id in cleared if shared.get(id, 0.0) / whole >= words_cut}
         if cut is not None and close:
             floor = self.meaning.set_floor
             fresh, faded = floor + cut[0], floor + cut[1]

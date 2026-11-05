@@ -3,6 +3,24 @@
 All notable changes to mneme-llm are listed here. The project follows [semantic versioning](https://semver.org);
 before 1.0, a minor version may change the Python API, and this file says how.
 
+## Unreleased
+
+- **The first prompt is the Character Card** (角色卡): who the companion is, in a person's own words, kept out of the
+  conversation. At first it is the first thing they said, as before; it can be set, and it is used only once it is on.
+  On, a host puts it in its **system prompt**, which every call carries and no compaction reaches, so it is no longer
+  lost as a conversation grows: `Surface.read` no longer puts it in front of the turns. The names are `Surface.card`,
+  `set_card`, `card_on`, `drop_card` and `Card` (with `on`); `first`, `set_first`, `send_first`, `drop_first`, `First`
+  and `send` still work. The file keeps it as before.
+- **A look can leave out what the model already has in front of it** (`skip`, ids of exchanges, on `look` and
+  `alook`), such as what a host's own conversation still shows: none of it comes back, not even as one a search adds.
+- **A bar for a look with words alone** (`memory.said_words`, 0 to 1): with no vector for the message, an exchange
+  comes only if the terms it shares carry at least that share of the message's weight, each by its idf, so a common
+  single character counts for little. What a search adds has no bar. It ships at 0.25 (measured on the 2 Nov
+  recall sets: 46/50 and 19/24 direct questions against 49/50 and 22/24 with none, and a look of 900 to 1,700
+  characters against about 6,700 on any message); 0 keeps every match, as before.
+- **A language for her to answer in** (`Turn(..., language=)`, one of `gut.LANGUAGES`): she answers in it whatever
+  people write in; without it, in the one her reading of the message names, as before.
+
 ## 0.6.0 (2026-11-04)
 
 A 14th feeling, trust, and her nature dial as where she stands; the tuner draws her star map.

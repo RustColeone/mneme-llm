@@ -1208,8 +1208,13 @@ class Gut:
 class Turn:
     """One message on its way to her answer: her reading starts at once, her vote once her memory has been looked up."""
 
-    def __init__(self, gut: Gut, ask: Ask, prompt: str, said: str, subject: str):
+    def __init__(self, gut: Gut, ask: Ask, prompt: str, said: str, subject: str, language: str = ""):
+        """`language`, one of LANGUAGES, is the one she answers in whatever they write in; without it, the one her
+        reading of the message names."""
+        if language and language not in LANGUAGES:
+            raise ValueError(f"language is one of {', '.join(LANGUAGES)}")
         self.gut, self.ask, self.prompt, self.said, self.subject = gut, ask, prompt, said, subject
+        self.speaks = language
         self.began = time.monotonic()
         self.reading = asyncio.ensure_future(ask(reading_messages(said), 300))
         self.told, self.closeness, self.language, self.before = "", 0.0, "", []
@@ -1233,7 +1238,7 @@ class Turn:
         if self.reading.done() and not self.reading.cancelled() and not self.reading.exception():
             form = json_in(self.reading.result())
         self.closeness = closeness
-        self.language = self.gut.language(self.subject, form, self.said)
+        self.language = self.speaks or self.gut.language(self.subject, form, self.said)
         felt = self.gut.feel(form, vote, closeness, exchanges, self.language, self.subject)
         self.told = felt["told"]
         speak = f"Reply in {LANGUAGES[self.language]}." if self.language in LANGUAGES else ""

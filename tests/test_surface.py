@@ -328,88 +328,99 @@ class ClearTests(unittest.TestCase):
         self.assertEqual(m.surface.read("u").messages[0]["content"], "第二句")
 
 
-class FirstPromptTests(unittest.TestCase):
+class CharacterCardTests(unittest.TestCase):
     def test_the_first_thing_said_is_kept_and_nothing_after(self):
         m, clock = companion()
         for said in ("你是我的姐姐", "今天好累"):
             asyncio.run(m.aobserve("u", [("Leo", said), ("小鲸", "好")], mood=False, capture=False, at=clock.now))
-        first = m.surface.first("u")
-        self.assertEqual((first.text, first.by_command, first.send), ("你是我的姐姐", False, False))
+        card = m.surface.card("u")
+        self.assertEqual((card.text, card.by_command, card.on), ("你是我的姐姐", False, False))
 
-    def test_a_speak_up_is_no_first_prompt(self):
+    def test_a_speak_up_is_no_card(self):
         m, clock = companion()
         asyncio.run(m.aobserve("u", [("小鲸", "在吗")], source="speak_up", mood=False, capture=False, at=clock.now))
-        self.assertIsNone(m.surface.first("u"))
+        self.assertIsNone(m.surface.card("u"))
 
     def test_a_person_can_set_replace_and_clear_it(self):
         m, clock = companion()
-        self.assertTrue(m.surface.set_first("u", "说话简短").by_command)
-        self.assertEqual(m.surface.set_first("u", "说话温柔").text, "说话温柔")
-        self.assertTrue(m.surface.drop_first("u"))
-        self.assertIsNone(m.surface.first("u"))
-        self.assertFalse(m.surface.drop_first("u"))
+        self.assertTrue(m.surface.set_card("u", "说话简短").by_command)
+        self.assertEqual(m.surface.set_card("u", "说话温柔").text, "说话温柔")
+        self.assertTrue(m.surface.drop_card("u"))
+        self.assertIsNone(m.surface.card("u"))
+        self.assertFalse(m.surface.drop_card("u"))
 
     def test_dropping_it_is_for_good_until_they_set_one(self):
         m, clock = companion()
         asyncio.run(m.aobserve("u", [("Leo", "你是我的姐姐")], mood=False, capture=False, at=clock.now))
-        m.surface.send_first("u")
-        self.assertTrue(m.surface.drop_first("u"))
+        m.surface.card_on("u")
+        self.assertTrue(m.surface.drop_card("u"))
         asyncio.run(m.aobserve("u", [("Leo", "今天好累")], mood=False, capture=False, at=clock.now))
-        self.assertIsNone(m.surface.first("u"))
-        self.assertFalse(m.surface.send_first("u"))
+        self.assertIsNone(m.surface.card("u"))
+        self.assertFalse(m.surface.card_on("u"))
         self.assertEqual(m.surface.read("u").messages[0]["content"], "你是我的姐姐")  # (only the copy went)
-        self.assertEqual(m.surface.set_first("u", "说话简短").send, False)  # (a new one starts unsent)
-        m.surface.drop_first("u")
+        self.assertEqual(m.surface.set_card("u", "说话简短").on, False)  # (a new one starts off)
+        m.surface.drop_card("u")
         m.erase("u")
         asyncio.run(m.aobserve("u", [("Leo", "重新开始")], mood=False, capture=False, at=clock.now))
-        self.assertEqual(m.surface.first("u").text, "重新开始")
+        self.assertEqual(m.surface.card("u").text, "重新开始")
 
-    def test_a_dropped_first_prompt_stays_dropped_in_another_file(self):
+    def test_a_dropped_card_stays_dropped_in_another_file(self):
         m, clock = companion()
-        m.surface.set_first("u", "说话简短")
-        m.surface.drop_first("u")
+        m.surface.set_card("u", "说话简短")
+        m.surface.drop_card("u")
         other, _ = companion()
         other.import_data(m.export_data())
         other.surface.noticed("u", [("Leo", "你好")])
-        self.assertIsNone(other.surface.first("u"))
+        self.assertIsNone(other.surface.card("u"))
 
-    def test_a_companion_who_spoke_first_is_no_first_prompt(self):
+    def test_a_companion_who_spoke_first_is_no_card(self):
         m, clock = companion()
         asyncio.run(m.aobserve("u", [("小鲸", "在吗"), ("Leo", "你是我的姐姐")], mood=False, capture=False, at=clock.now))
-        self.assertEqual(m.surface.first("u").text, "你是我的姐姐")
+        self.assertEqual(m.surface.card("u").text, "你是我的姐姐")
 
     def test_setting_it_beats_what_was_copied_and_stays(self):
         m, clock = companion()
         m.surface.noticed("u", [("Leo", "你好")])
-        m.surface.set_first("u", "说话简短")
+        m.surface.set_card("u", "说话简短")
         m.surface.noticed("u", [("Leo", "别的")])
-        self.assertEqual(m.surface.first("u").text, "说话简短")
+        self.assertEqual(m.surface.card("u").text, "说话简短")
 
-    def test_a_new_chat_reads_the_first_prompt_then_the_surface_when_asked(self):
+    def test_the_surface_never_carries_it_on_or_off(self):
         m, clock = companion()
         say(m, clock, "第一句", "好的")
-        m.surface.set_first("u", "说话简短")
-        self.assertEqual(m.surface.read("u").messages[0]["content"], "第一句")
-        self.assertTrue(m.surface.send_first("u"))
-        self.assertEqual(m.surface.read("u").messages, [{"role": "user", "content": "说话简短"},
-                                                        {"role": "user", "content": "第一句"},
-                                                        {"role": "assistant", "content": "好的"}])
-        m.surface.set_first("u", "说话温柔")  # (replacing it leaves the choice as it was)
-        self.assertEqual(m.surface.read("u").messages[0]["content"], "说话温柔")
-        m.surface.send_first("u", False)
-        self.assertEqual(m.surface.read("u").messages[0]["content"], "第一句")
+        m.surface.set_card("u", "说话简短")
+        turns = [{"role": "user", "content": "第一句"}, {"role": "assistant", "content": "好的"}]
+        self.assertEqual(m.surface.read("u").messages, turns)
+        self.assertTrue(m.surface.card_on("u"))
+        self.assertEqual(m.surface.read("u").messages, turns)  # (the host puts it in its system prompt)
+        self.assertEqual((m.surface.card("u").text, m.surface.card("u").on), ("说话简短", True))
+        m.surface.set_card("u", "说话温柔")  # (replacing it leaves the choice as it was)
+        self.assertEqual((m.surface.card("u").text, m.surface.card("u").on), ("说话温柔", True))
+        m.surface.card_on("u", False)
+        self.assertFalse(m.surface.card("u").on)
 
-    def test_it_stays_in_front_when_the_surface_is_cleared(self):
+    def test_it_stays_when_the_surface_is_cleared(self):
         m, clock = companion()
         say(m, clock, "第一句")
-        m.surface.set_first("u", "说话简短")
-        m.surface.send_first("u")
+        m.surface.set_card("u", "说话简短")
+        m.surface.card_on("u")
         m.surface.clear("u")
-        self.assertEqual(m.surface.read("u").messages, [{"role": "user", "content": "说话简短"}])
+        self.assertEqual(m.surface.read("u").messages, [])
+        self.assertEqual((m.surface.card("u").text, m.surface.card("u").on), ("说话简短", True))
+
+    def test_its_names_before_0_7_still_work(self):
+        from mneme_llm import Card, First
+        m, clock = companion()
+        self.assertIs(First, Card)
+        self.assertTrue(m.surface.set_first("u", "说话简短").by_command)
+        self.assertTrue(m.surface.send_first("u"))
+        self.assertEqual((m.surface.first("u").text, m.surface.first("u").send), ("说话简短", True))
+        self.assertTrue(m.surface.drop_first("u"))
+        self.assertIsNone(m.surface.card("u"))
 
     def test_there_is_nothing_to_send_when_there_is_none(self):
         m, clock = companion()
-        self.assertFalse(m.surface.send_first("u"))
+        self.assertFalse(m.surface.card_on("u"))
 
 
 class LookTests(unittest.TestCase):
@@ -448,6 +459,28 @@ class LookTests(unittest.TestCase):
         kept = say(m, clock, "我的猫叫年糕")
         asyncio.run(m.alook("u", "猫", search=True))
         self.assertEqual(m.episodes.get(kept.id).recalls, 0)
+
+    def test_with_words_alone_a_bar_leaves_out_what_shares_only_common_words(self):
+        for words, both in ((0.0, True), (0.25, False)):
+            m, clock = companion(config={"memory": {"said_words": words}})
+            say(m, clock, "我妹妹叫小柚，今年上初二")
+            for said in ("今天好累，加班到十点", "今天下雨了", "今天吃了火锅", "今天天气不错", "今天猫又闹了"):
+                clock.now += 60
+                say(m, clock, said)
+            told = m.look("u", "小柚今天考试怎么样")
+            self.assertIn("小柚", told)
+            self.assertEqual("加班" in told, both)  # (今 and 天 alone: not enough to bring it)
+            self.assertIn("加班", m.look("u", "小柚今天考试怎么样", search=True))  # (what a search adds: no bar)
+
+    def test_what_the_model_has_in_front_of_it_is_left_out(self):
+        m, clock = companion()
+        cat = say(m, clock, "我的猫叫年糕")
+        clock.now += 60
+        say(m, clock, "年糕今天吐毛球了")
+        for told in (m.look("u", "年糕", search=True, skip={cat.id}),
+                     asyncio.run(m.alook("u", "年糕", search=True, skip={cat.id}))):
+            self.assertNotIn("我的猫叫年糕", told)  # (not even as one a search adds)
+            self.assertIn("毛球", told)
 
 
 class KeepingTests(unittest.TestCase):

@@ -161,7 +161,9 @@ exchange also fades on a forgetting curve, R = e^(−t/S), counted in the days t
 exchange is about the same thing. Fading decides
 what leaves the look, never the order: with an embedder, an exchange comes to mind only when the message is
 close enough to it, its similarity at least the embedding model's measured floor plus 0.08 while it is fresh and
-plus 0.16 once it has fully faded (`memory.said_cut`, `memory.said_cut_faded`). So small talk usually brings nothing
+plus 0.16 once it has fully faded (`memory.said_cut`, `memory.said_cut_faded`); with words alone the bar is
+`memory.said_words`, the share of the message's weight (each term by its idf) an exchange must share, 0.25 as it
+ships (0: none; what a search adds has no bar), and a host can leave out what its own conversation still shows (`skip`). So small talk usually brings nothing
 (and costs nothing), what is recent or talked about again comes easily, and an old thing comes back on a strong cue,
 while a search finds it however faded it is. When nothing comes and the model can search, the look says only that
 it can. Measured on LoCoMo (704 questions) through the library itself: the look of 6,000 characters with the tools
@@ -457,9 +459,12 @@ model has the `search` and `read` tools (`tools.py`). In a group pass `found=0`:
 private must not come up by itself where others read. Fading decides what comes to mind unprompted, and never what a search
 can find.
 
-**The first prompt.** The first thing a person says, usually who they want her to be, stays apart from the conversation,
-where it does not fade: `m.surface.first`, `set_first`, `drop_first`. `send_first` puts it in front of the surface, so a new
-chat reads {first prompt} + {surface} + {the new message}. That is off by default, since they may have grown away from it.
+**The Character Card.** Who she is, in a person's own words, kept apart from the conversation where it does not fade:
+at first the first thing they said, usually who they want her to be (`m.surface.card`, `set_card`, `drop_card`). It is
+off until `card_on` turns it on, since they may have grown away from what they said first. On, put it in your system
+prompt: every call carries it and no compaction reaches it, so it is not lost as the conversation grows. Whose card you
+use is yours to decide (the DSH plugin uses its owner's). `first`, `set_first`, `send_first` and
+`drop_first`, its names before 0.7, still work.
 
 `m.surface.clear(subject)` starts the surface over and keeps deep memory. `m.wipe(subject)` takes what she remembers of a
 person and keeps who they are to her. `m.erase(subject)` takes everything.
@@ -546,7 +551,7 @@ arms show how far she has grown from it. Everything happens in the browser; the 
 - **Forgetting.** `m.forget` hides a note (it stays in the file and in its key's history until `purge`),
   `m.purge()` erases hidden and replaced notes and their vectors for good, and `m.erase(subject)` removes
   everything about a person: notes, history, vectors, profile card, recall log, every exchange, the surface and their
-  first prompt, mood and timeline, their role, their alias and the links of their other accounts. The recall log keeps
+  Character Card, mood and timeline, their role, their alias and the links of their other accounts. The recall log keeps
   the last 200 queries per person (`mneme-llm recalls`) until then.
 
 ## Tests

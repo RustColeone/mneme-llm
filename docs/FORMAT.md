@@ -99,7 +99,7 @@ linked subject. A link is one step deep: `person` is never itself linked, and ne
 what was kept under `subject` to `person`: its notes, term index rows and recall log (then, as after an import, one
 live note per key, the newest, and no live text twice), its mood timeline, its exchanges with their index and spread;
 of two profile cards, moods (with their event links) or aliases the newer `updated_at` is kept, of two relationships
-the closer one now (the person's own when equal), with the earlier `since`, and of two first prompts the person's
+the closer one now (the person's own when equal), with the earlier `since`, and of two Character Cards the person's
 own. Two surfaces become one (see `surfaces`). A subject without a row is its own person.
 
 ### `note_terms`: the term index
@@ -159,11 +159,12 @@ its turns are the exchanges themselves, read by `id`, newest first, and shown in
 Linking `old` to `person` when `old` has a row or any exchange: the lower `start_id` and `cleared_at` stay (no row
 counts as 0), the summaries are joined and cut to 8,000 characters, and a row with neither a start nor a summary goes.
 
-### `first_prompts`: the first thing a person said
+### `first_prompts`: the Character Card
 
-`(space, subject)` primary key; `text` (at most 8,000 characters; `""` once dropped, so the next message does not take
-its place: the person has no first prompt, but the row stays until `erase`); `at`; `by_command` (1 when the person set
-it themselves); `send` (1 when it goes in front of the surface).
+Named before 0.7, when it was the first prompt. `(space, subject)` primary key; `text` (at most 8,000 characters; at
+first the first thing the person said; `""` once dropped, so the next message does not take its place: there is no card,
+but the row stays until `erase`); `at`; `by_command` (1 when it was set, not only the first thing said); `send` (1 when
+it is on: the host puts it in its system prompt).
 
 ### `recalls`: the recall log
 
@@ -230,7 +231,7 @@ is not added again. A relationship replaces the person's present one, its closen
 An exchange is held to the rules of keeping (its lines as above, `at` a time in seconds, `stability` a positive
 number, else 30; one without a subject, a time or words is skipped) and gets a new id, day and tokens; one already
 there (same person, time, conversation and words) is not added again. A surface starts at the subject's latest
-exchange said before its `cleared_at`, and one that is there already joins it as a link does; a first prompt that is
+exchange said before its `cleared_at`, and one that is there already joins it as a link does; a Character Card that is
 there stays, and a dropped one (`""`) stays dropped.
 Links are added as by linking (a subject the file already links to another person keeps its link), and then what
 the import put under any linked subject joins its person. The config is applied only when the importer asks for it (its prompts are instructions to the importer's models),

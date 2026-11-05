@@ -37,7 +37,7 @@ from .people import People
 from .providers import Unavailable, run
 from .relations import Relations, Relationship, Role
 from .store import SCHEMA_VERSION, Store
-from .surface import First, Surface, View
+from .surface import Card, First, Surface, View
 
 __version__ = "0.6.0"
 SEARCHED = 5  # exchanges a search adds to a look
@@ -141,6 +141,7 @@ class Mneme:
         self.said_budget = own.get("memory.said_budget")
         fresh = own.get("memory.said_cut")  # (a faded exchange's bar is never under a fresh one's; −1: none)
         self.said_cut = (fresh, max(fresh, own.get("memory.said_cut_faded")))
+        self.said_words = own.get("memory.said_words")  # (with words alone)
 
     @property
     def display_language(self) -> str:
@@ -234,7 +235,7 @@ class Mneme:
 
     def erase(self, subject: str) -> int:
         """Everything about a person, gone for good ("forget me"): notes, history, vectors, profile card, recall log,
-        every exchange kept word for word, the surface and their first prompt, mood and its timeline, their role, their
+        every exchange kept word for word, the surface and their Character Card, mood and its timeline, their role, their
         alias and the links of their other accounts. Returns how many notes there were."""
         with self.store.transaction():
             subject = self.people.of(subject)
@@ -253,7 +254,7 @@ class Mneme:
 
     def wipe(self, subject: str) -> int:
         """What she remembers of a person gone for good: notes, profile card, every exchange, the surface and their
-        first prompt. Who they are to her stays: their role, closeness, alias, mood and accounts, and whatever a gut
+        Character Card. Who they are to her stays: their role, closeness, alias, mood and accounts, and whatever a gut
         kept apart learned from them. Returns how many exchanges there were."""
         with self.store.transaction():
             subject = self.people.of(subject)
@@ -291,11 +292,13 @@ class Mneme:
         return "\n\n".join(part for part in parts if part)
 
     def look(self, subject: str, query: str = "", *, user_name: str | None = None, budget: int | None = None,
-             search: bool = False, own: bool = False, found: int = SEARCHED) -> str:
+             search: bool = False, own: bool = False, found: int = SEARCHED, skip=None) -> str:
         """What was said before that bears on `query` (word matching only), ready for a prompt: the best matches word
         for word within `budget` characters (`memory.said_budget`, 6,000, when not given), under a header that asks for
         the person check. With meaning (`alook`), only what is close enough comes, and the more an exchange has faded,
-        the closer it must be (`memory.said_cut`, `memory.said_cut_faded`): often nothing.
+        the closer it must be (`memory.said_cut`, `memory.said_cut_faded`): often nothing. With words alone,
+        `memory.said_words` is the bar: the share of the query's weight an exchange must share (0.25 as it ships; 0:
+        none).
 
         `search`: your model has the search tool (`tools.py`). Then a search comes with the look, `found` exchanges by
         relevance alone however faded, and the model is told to search before it says it does not remember. So a
@@ -305,16 +308,19 @@ class Mneme:
 
         `own`: this is the person's own conversation with the companion, what they said to it in the first place, so no
         data label. Their same question asked before is left out: all it holds is what she said then, and an "I don't
-        remember" found again is said again. "" when nothing bears on it and there is no search."""
+        remember" found again is said again.
+
+        `skip`: ids of exchanges to leave out, such as those the conversation in front of the model still shows. ""
+        when nothing bears on it and there is no search."""
         came = self.episodes.look(subject, query, budget=self._said(budget), cut=self.said_cut,
-                                  more=found if search else 0)
+                                  more=found if search else 0, skip=skip, words_cut=self.said_words)
         return self._came_back(came, query, user_name, search, own)
 
     async def alook(self, subject: str, query: str = "", *, user_name: str | None = None, budget: int | None = None,
-                    search: bool = False, own: bool = False, found: int = SEARCHED) -> str:
+                    search: bool = False, own: bool = False, found: int = SEARCHED, skip=None) -> str:
         """`look` with meaning (the query's embedding, when it comes within a few seconds)."""
         came = await self.episodes.alook(subject, query, budget=self._said(budget), cut=self.said_cut,
-                                         more=found if search else 0)
+                                         more=found if search else 0, skip=skip, words_cut=self.said_words)
         return self._came_back(came, query, user_name, search, own)
 
     def _came_back(self, came: list[Episode], query: str, user_name: str | None, search: bool, own: bool) -> str:
@@ -517,7 +523,7 @@ class Mneme:
         self.close()
 
 
-__all__ = ["Aliases", "Answer", "Choice", "Config", "Embeddings", "Emotion", "Episode", "Episodes", "First", "Gut",
+__all__ = ["Aliases", "Answer", "Card", "Choice", "Config", "Embeddings", "Emotion", "Episode", "Episodes", "First", "Gut",
            "KINDS", "Meaning", "Memory", "Mneme", "Mood", "MoodEvent", "MoodSettings", "Note", "Observation",
            "OpenAIEmbeddings", "People", "Predicate", "Prompt", "Recall", "Relations", "Relationship", "Role", "STORED",
            "Score", "Store", "Surface", "Turn", "Unavailable", "View", "__version__"]

@@ -238,7 +238,7 @@ def _run(m: Mneme, args) -> int:
         print(f"forgot {memory.forget(args.subject, id=args.id, key=args.key)}")
     elif args.command == "erase":
         if not args.yes:
-            print("this deletes every note, every exchange, the surface, the first prompt, the profile, the mood, the "
+            print("this deletes every note, every exchange, the surface, the Character Card, the profile, the mood, the "
                   "role, the alias and the links of the subject; add --yes", file=sys.stderr)
             return 2
         print(f"erased {m.erase(args.subject)} notes")

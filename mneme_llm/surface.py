@@ -13,11 +13,13 @@ the rest says, or 80% of `window` on a smaller model:
 
     keep = min(max(floor, last days), 2/3 cap)      top = min(2 keep, cap)
 
-A person's first prompt is kept here too: the first thing they said, usually who they want the companion to be. A
-conversation can lose it, so a copy stays out of the conversation, where it does not fade. The person can set it
-(`set_first`), and it goes in front of the surface only if they ask (`send_first`), since they may have grown away from
-it. Dropped, its row stays with no text, so the next thing they say does not become it. So a new chat reads {first
-prompt} + {surface} + {the new message}. The surface follows the person into any chat.
+A Character Card is kept here too: who the companion is to be, in a person's own words, kept out of the conversation,
+where it does not fade. At first it is the first thing they said, which is usually that (`noticed`); it can be set
+(`set_card`). It is used only once it is turned on (`card_on`), since what someone said first may be what they have grown
+away from. On, the host puts it in its system prompt (`card`), which every call carries and no compaction reaches, so it
+is not lost as a conversation grows. Whose card a host uses is its own choice: the DSH plugin uses its owner's.
+Dropped, its row stays with no text, so the next thing they say does not become it. The surface follows the person into
+any chat.
 """
 
 from __future__ import annotations
@@ -41,7 +43,8 @@ DAYS = 30           # talking days it keeps
 SLICE = 3000        # tokens of it that what reads a fixed slice reads
 GIVE_UP = 600.0     # seconds after a failed summary before another try
 SUMMARY = 8000      # characters of a summary
-FIRST = 8000        # characters of a first prompt
+CARD = 8000         # characters of a Character Card
+FIRST = CARD        # (its name before 0.7)
 
 
 def bounds(recent: float, floor: int = FLOOR, cap: int = CAP, window: int = WINDOW) -> tuple[int, int]:
@@ -69,13 +72,21 @@ class View:
 
 
 @dataclass(frozen=True)
-class First:
-    """A person's first prompt: `by_command` when they set it themselves, `send` when it goes in front of the
-    surface."""
+class Card:
+    """A Character Card: `by_command` when it was set (`set_card`), not only the first thing said; `on` when the host puts
+    it in its system prompt."""
     text: str
     at: float
     by_command: bool
-    send: bool
+    on: bool
+
+    @property
+    def send(self) -> bool:
+        """`on`, by its name before 0.7."""
+        return self.on
+
+
+First = Card  # (its name before 0.7)
 
 
 class Surface(Speaks, Resolves):
@@ -119,16 +130,16 @@ class Surface(Speaks, Resolves):
                 for who, said in episode.lines]
 
     def read(self, subject: str, *, user_name: str | None = None, here: str = "") -> View:
-        """What goes in front of a new message, in any conversation with this person: their first prompt if they asked
-        for it, what stands for the older part, and at most `top` tokens of the newest turns (always the newest
-        exchange), whole exchanges, in the order they were said. `here` is the chat it goes into: what was left
-        unanswered there stays the host's to show, whatever was said in another chat since."""
+        """What goes in front of a new message, in any conversation with this person: what stands for the older part,
+        and at most `top` tokens of the newest turns (always the newest exchange), whole exchanges, in the order they
+        were said. `here` is the chat it goes into: what was left unanswered there stays the host's to show, whatever
+        was said in another chat since. A Character Card is not in it: it goes in the system prompt (`card`)."""
         subject = self.who(subject)
-        row, first = self._row(subject), self.first(subject)
+        row = self._row(subject)
         start = row["start_id"] if row else 0
         keep, top = self._bounds(subject, start)
         kept = self.episodes.after(subject, start, top)
-        head = [{"role": "user", "content": first.text}] if first and first.send else []
+        head = []
         if row and row["summary"]:
             head.append({"role": "user", "content": say(self.words, "surface.summary", who=user_name or subject,
                                                         summary=row["summary"])})
@@ -197,51 +208,55 @@ class Surface(Speaks, Resolves):
             self.store.execute("delete from surfaces where space = ? and subject = ?", (self.space, subject))
 
     def clear(self, subject: str) -> None:
-        """It starts empty from now on. Deep memory, and the first prompt, stay."""
+        """It starts empty from now on. Deep memory, and the Character Card, stay."""
         with self.writing(subject) as subject:
             last, said = self.episodes.latest(subject)
             self._put(subject, last, math.nextafter(max(said, self.clock()), math.inf), "")
 
-    # ---- the first prompt ------------------------------------------------------------------------
-    def first(self, subject: str) -> First | None:
+    # ---- the Character Card ----------------------------------------------------------------------
+    def card(self, subject: str) -> Card | None:
+        """The Character Card kept of `subject`, on or not; None when there is none."""
         row = self.store.row("select * from first_prompts where space = ? and subject = ? and text != ''",
                              (self.space, self.who(subject)))
-        return First(row["text"], row["at"], bool(row["by_command"]), bool(row["send"])) if row else None
+        return Card(row["text"], row["at"], bool(row["by_command"]), bool(row["send"])) if row else None
 
     def noticed(self, subject: str, lines) -> None:
         """What was said to the companion, as `(who, said)` lines: the first time, a copy of the first line not hers
         stays."""
         said = next((said for who, said in lines if not self._hers(who)), "")
-        text = texts.fit(texts.clean(said).strip(), FIRST)
+        text = texts.fit(texts.clean(said).strip(), CARD)
         if text:
             with self.writing(subject) as subject:
                 self.store.execute("insert or ignore into first_prompts (space, subject, text, at, by_command, send) "
                                    "values (?, ?, ?, ?, 0, 0)", (self.space, subject, text, self.clock()))
 
-    def set_first(self, subject: str, text: str) -> First:
-        """The person's first prompt is `text` from now on, by their own word. Whether it is sent stays as it was."""
-        text = texts.fit(texts.clean(texts.required(text, "a first prompt")).strip(), FIRST)
+    def set_card(self, subject: str, text: str) -> Card:
+        """The Character Card is `text` from now on. Whether it is on stays as it was."""
+        text = texts.fit(texts.clean(texts.required(text, "a Character Card")).strip(), CARD)
         with self.writing(subject) as subject:
             self.store.execute("insert into first_prompts (space, subject, text, at, by_command, send) values (?, ?, "
                                "?, ?, 1, 0) on conflict(space, subject) do update set text = excluded.text, at = "
                                "excluded.at, by_command = 1", (self.space, subject, text, self.clock()))
-        return self.first(subject)
+        return self.card(subject)
 
-    def send_first(self, subject: str, send: bool = True) -> bool:
-        """Whether it goes in front of the surface; False when they have none."""
+    def card_on(self, subject: str, on: bool = True) -> bool:
+        """Whether the host puts it in its system prompt; False when there is none."""
         with self.writing(subject) as subject:
             return self.store.execute("update first_prompts set send = ? where space = ? and subject = ? and text "
-                                      "!= ''", (int(bool(send)), self.space, subject)).rowcount > 0
+                                      "!= ''", (int(bool(on)), self.space, subject)).rowcount > 0
 
-    def drop_first(self, subject: str) -> bool:
-        """They have none from now on: their row stays with no text, so the next message does not become it."""
+    def drop_card(self, subject: str) -> bool:
+        """There is none from now on: its row stays with no text, so the next message does not become it."""
         with self.writing(subject) as subject:
             return self.store.execute("update first_prompts set text = '', by_command = 0, send = 0 where space = ? "
                                       "and subject = ? and text != ''", (self.space, subject)).rowcount > 0
 
+    # (their names before 0.7)
+    first, set_first, send_first, drop_first = card, set_card, card_on, drop_card
+
     # ---- keeping up ------------------------------------------------------------------------------
     def subjects(self) -> list[str]:
-        """Everyone a surface or a first prompt is kept of."""
+        """Everyone a surface or a Character Card is kept of."""
         return [row["subject"] for row in self.store.rows(
             "select subject from surfaces where space = ? union select subject from first_prompts where space = ? "
             "order by subject", (self.space, self.space))]
@@ -253,7 +268,7 @@ class Surface(Speaks, Resolves):
 
     def join(self, old: str, new: str) -> None:
         """`old` is the person `new` now: their surfaces are one, from the lower start (none counts as 0, all of it),
-        with both summaries; their own first prompt stays, or `old`'s when they have none. Before the exchanges move:
+        with both summaries; their own Character Card stays, or `old`'s when they have none. Before the exchanges move:
         an account that holds nothing changes nothing."""
         with self.store.transaction():
             theirs = self._row(old)
@@ -274,7 +289,7 @@ class Surface(Speaks, Resolves):
 
     def import_rows(self, surfaces, firsts) -> None:
         """Add what an export kept, held to the rules of writing, after its exchanges: a surface starts at the last
-        exchange said before its `cleared_at`, and joins one that is here as `join` does; a first prompt that is here
+        exchange said before its `cleared_at`, and joins one that is here as `join` does; a Character Card that is here
         stays."""
         with self.store.transaction():
             for row in surfaces:

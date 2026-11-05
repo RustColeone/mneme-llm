@@ -32,7 +32,7 @@ window.SITE = (() => {
       parts.episodes = file("episodes.py", "Episodes", "what was said, word for word · the look · search · fading", "class");
       parts.mood = file("mood.py", "Mood", "value and feelings · fading · told once", "class");
       chart.group("and", () => {
-        file("surface.py", "Surface", "the newest of what was said, as real turns · the first prompt", "class");
+        file("surface.py", "Surface", "the newest of what was said, as real turns · the Character Card", "class");
         file("relations.py", "Relations", "who each person is to it · closeness", "class");
         file("aliases.py", "Aliases", "what each person calls it", "class");
         file("people.py", "People", "one person under several accounts", "class");

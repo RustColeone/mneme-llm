@@ -55,7 +55,7 @@ whatever model the host has, so that:
 | `migrate.py` | 155 | `python -m mneme_llm.migrate`: a file of schema 1 made current, in one transaction |
 | `memory.py` | 724 | notes: the rules of writing, the term index, recall ranking, rendering, profile card, recall log, notes' export/import |
 | `episodes.py` | 647 | what was said, word for word: keeping exchanges, their term index and vectors, retention and rehearsal, the look and the search, rendering, their export/import |
-| `surface.py` | 290 | what was said lately, as real turns: where it starts, what it keeps, the summary that stands for the rest, a person's first prompt |
+| `surface.py` | 290 | what was said lately, as real turns: where it starts, what it keeps, the summary that stands for the rest, the Character Card |
 | `mood.py` | 371 | mood state, decay, judging questions, guardrails, telling once, moods' export/import |
 | `config.py` | 593 | a companion's config: the defaults, checking each key, TOML in and out, the stored copy per space |
 | `prompts.py` | 70 | every instruction given to a model, by name (the built-in defaults) |
@@ -88,7 +88,7 @@ nothing of it: `Mneme` hands the mood each person's weight); `config` takes the 
 defaults from them, and `Mneme` builds every part from it; `capture` uses `memory`'s rules of writing; `Mneme` wires
 them together and makes the calls to models; `tools`, `mcp` and `cli` sit on `Mneme`, and `migrate` on what it needs
 of the file. Each kind of row has one owner that writes it: notes, profile cards and the recall log are `memory`'s,
-exchanges with their index, vectors and spread `episodes`'s, surfaces and first prompts `surface`'s, moods and
+exchanges with their index, vectors and spread `episodes`'s, surfaces and Character Cards `surface`'s, moods and
 timelines `mood`'s, relationships `relations`'s, aliases `aliases`'s, links `people`'s, the config `config`'s; vectors
 are stored by `meaning`; each `meta` key belongs to the module that names it (the schema version and the tokenizer to
 `store`, each embedder's floor to `meaning/calibrate`). `store` knows the tables but none of their rules: a term index
@@ -191,7 +191,7 @@ through `Store.rows_in`, which runs it in chunks of `IN_LIST` (400).
 
 **Export and import** (`Mneme.export_data`, `import_data`). Each owner exports its own rows and imports them under
 its own rules, in one transaction: notes and profile cards through `Memory` (section 6), exchanges through `Episodes`,
-surfaces and first prompts through `Surface`, moods and timelines through `Mood`, relationships through `Relations`
+surfaces and Character Cards through `Surface`, moods and timelines through `Mood`, relationships through `Relations`
 (section 9), and the config through `Config` (section 12), which an import applies only when asked (`config=True`),
 since its prompts are instructions to the host's models. The export leaves out what is made again: the term indexes,
 the folded text, an exchange's day and tokens, the vectors and the floors. Ids mean nothing in another file, so a
@@ -275,9 +275,9 @@ note without text is skipped).
 
 `forget` hides a note (soft delete; the history keeps it), `purge` erases hidden and replaced notes and their
 vectors, `Memory.erase(subject)` erases a person's notes, history, vectors, profile card and recall log, and
-`Mneme.erase(subject)` adds every exchange, the surface and the first prompt, the mood and its timeline, the role, the
+`Mneme.erase(subject)` adds every exchange, the surface and the Character Card, the mood and its timeline, the role, the
 alias and the links, in one transaction ("forget me"). `Mneme.wipe(subject)` takes what she remembers (notes, profile
-card, exchanges, surface, first prompt) and leaves who they are to her.
+card, exchanges, surface, Character Card) and leaves who they are to her.
 
 **Import** (`import_rows`) holds every exported note to the same rules (`Memory.clean`: `note_fields`, lenient, plus
 the columns an export carries: times in seconds, counts, the source), skips rows that are not objects or have no
@@ -375,8 +375,13 @@ An old thing asked about must stay findable however faded it is, so only the loo
 its cosine with the query reaches the embedder's floor (the similarity under which a text says nothing about a
 query, measured per model by `calibrate.py`: 0.33 for text-embedding-3-small at 256 dimensions) plus a margin: 0.08
 while it is fresh (`memory.said_cut`), 0.16 once it has fully faded (`memory.said_cut_faded`), in between by R. One
-under its bar is left out however much budget is left, so a look is often short and, on small talk, usually empty;
-with words alone there is no bar. The bar stands on the embedder's floor and not on the person's own pairs of
+under its bar is left out however much budget is left, so a look is often short and, on small talk, usually empty.
+With words alone the bar is `memory.said_words`: the terms an exchange shares with the query must carry that share of
+the query's weight, each by its idf, so a common single character counts for little (0.25 as it ships; 0: none). Measured
+words-only on the 2 Nov recall sets (a month of chat and eight weeks, DeepSeek, its tools on): no bar answered 49/50
+and 22/24 direct questions with a look of about 6,700 characters on any message; 0.25 on the look, with what a search
+adds unbarred, answered 46/50 and 19/24 with 900 to 1,700; 0.25 on both, 44/50 and 17/24; 0.35, 32/50 and 14/24. A
+host can also leave out what its own conversation still shows (`skip`). The bar stands on the embedder's floor and not on the person's own pairs of
 exchanges: on short chat two exchanges between the same friends resemble each other far more than a question
 resembles either (on LoCoMo the pairs' 95th percentile was 0.68–0.79, a question and the exchange that answers it
 typically 0.57), so a bar drawn from those pairs leaves 98% of looks empty. Weighing scores by R instead changes only
@@ -445,16 +450,19 @@ checked again afterwards under the write lock: if the person was erased, cleared
 exchange that was to stay has gone, nothing is written. A host that keeps a context of its own compacts that itself
 and never calls `alet_go`.
 
-**The first prompt** is the first thing a person said, usually who they want the companion to be. A conversation can
-lose it, so a copy stays out of the conversation, where it does not fade. A companion who spoke first is not it: it
-is the first line not hers. The person can set it (`set_first`), and it goes in front of the surface only if they ask
-(`send_first`), since they may have grown away from it. Dropped (`drop_first`), its row stays with no text, so the next
-message does not take its place; `erase` removes the row. So a new chat reads {first prompt} + {surface} + {the new
-message}.
+**The Character Card** is who the companion is to be, in a person's own words. At first it is the first thing they
+said, which is usually that; a companion who spoke first is not it: it is the first line not hers. A conversation can
+lose it, so it stays out of the conversation, where it does not fade. It can be set (`set_card`), and it is used only
+once it is on (`card_on`), since what someone said first may be what they have grown away from. On, the host puts it
+in its system prompt (`card`), which every call carries and no compaction reaches; `read` never puts it in front of
+the turns. Whose card a host uses is its own choice: the DSH plugin uses its owner's. Dropped
+(`drop_card`), its row stays with no text, so the next message does not take its place; `erase` removes the row. Its
+table keeps its name from before 0.7, `first_prompts`, and so do the old names of the calls (`first`, `set_first`,
+`send_first`, `drop_first`).
 
 **Linking and moving.** Two surfaces joined start from the lower `start_id` (no row counts as 0, all of it, as a person
 with no row has everything on it) with both summaries; an account that holds nothing changes nothing. The person's own
-first prompt stays. An import works out each surface's start from its `cleared_at`, the last exchange said before it,
+Character Card stays. An import works out each surface's start from its `cleared_at`, the last exchange said before it,
 as ids differ between files.
 
 ## 7. Meaning (`meaning/`)
@@ -762,7 +770,7 @@ full), its prompts and its sentences: 200 keys at this version. Each value is JS
 | A model or a person makes itself someone's creator, or closer | Roles and closeness are the host's code's to set: no tool sets them, and talking grows closeness by a point a day at most, within the role's band. |
 | Secrets end up in memory | The writer is told never to record passwords, keys or codes. A person's own `remember` call is not filtered. |
 | Text leaves the machine | Only through what you turn on: note texts, exchanges and queries to the embeddings API, and whatever your own model is given. `embed=False` with a local model keeps everything local. |
-| A person asks to be forgotten | `Mneme.erase(subject)` removes every row about them (notes, vectors, recall log, profile, every exchange with its index and vectors, the surface, the first prompt, mood, timeline, role, alias, links); `purge` removes hidden and replaced notes and their vectors. By design, a gut keeps what it learned apart from the memory file: `Gut.forget` removes how she is with that person, their name from its lessons and the sides only they wanted; what they did to her heart stays. |
+| A person asks to be forgotten | `Mneme.erase(subject)` removes every row about them (notes, vectors, recall log, profile, every exchange with its index and vectors, the surface, the Character Card, mood, timeline, role, alias, links); `purge` removes hidden and replaced notes and their vectors. By design, a gut keeps what it learned apart from the memory file: `Gut.forget` removes how she is with that person, their name from its lessons and the sides only they wanted; what they did to her heart stays. |
 
 By design, not covered: filtering what a person explicitly asks the companion to remember (a host that wants it
 filters before `remember`), and refusing every instruction a note could carry (the header and the one-line rule
@@ -841,7 +849,7 @@ their size (`MNEME_STRESS=heavy`); then builds the package, runs `twine check --
 | `test_stress.py` | a long history (20,000 notes, 100,000 at heavy size: the oldest found by a rare word, quickly, meaning within its window), random operations (three seeds, then two connections on one file), export and import giving back the same notes, six threads on one memory, three processes on one file, many coroutines at once, a full subject and many subjects, a huge query and a huge MCP line, a writer killed mid-transaction, odd text and odd values at every entry point, chat messages as an exchange, odd tool calls, exports brought back into their own file; after each, `tests/invariants.py` checks every rule of the file |
 | `test_removable.py` | the package with the removable tier and with it deleted runs every kind of call |
 | `test_episodes.py` | keeping exchanges word for word, the shown form, observe keeping what the person started, the look (words, meaning, budget, more by relevance alone, ranked once, the header in both languages), fading and rehearsal (by search and by meaning, once a talking day, the spread), reading back within a budget, batches, the same ranking without numpy, a slow embedder, the tools, forget, erase, links, export and import, another process's vectors |
-| `test_surface.py` | bounds, turns (hers by name or role, a group, in the order said, always the newest), a slice reading little, letting go, an erase, clear or link while the summary is written, a clear and an exchange kept after it, ids never reused, the first prompt (kept, set, sent, dropped for good, a companion who spoke first), the look with its search, everyone, wipe, joins, export and import, its limits |
+| `test_surface.py` | bounds, turns (hers by name or role, a group, in the order said, always the newest), a slice reading little, letting go, an erase, clear or link while the summary is written, a clear and an exchange kept after it, ids never reused, the Character Card (kept, set, on, never in the surface, dropped for good, a companion who spoke first, its names before 0.7), the look with its search, what is in front of the model left out, the bar with words alone, everyone, wipe, joins, export and import, its limits |
 | `test_migrate.py` | a real schema 1 file refused untouched and then made current: days in each space's zone, tokens, surfaces, what nothing reads gone, config keys no version knows, indexes rebuilt at the first search, new ids after the old ones, twice changes nothing, a failure leaves it as it was, a much older file, the command |
 | `test_gut.py` | the gut: her heart and each person's table, growing up, fading, the bars and slow levels, settings, a file from 0.4 or 0.5, its pinned numbers, marks, sides growing and going, the two moments a host calls |
 | `test_architecture.py` | the browsable architecture page matches the code |
@@ -964,8 +972,8 @@ they left. A day turns at 4 in the morning, so a late night is still today, in e
 - **Rehearsal by meaning needs an embedder.** Without one, exchanges still fade, and are rehearsed only by search.
 - **The bar is measured on one embedder.** text-embedding-3-small at 256 dimensions (floor 0.33), on LoCoMo's chats
   of a few months and LongMemEval-M's histories of a month (both aged to half a year by moving the clock); another
-  model may spread its similarities differently above its floor (`memory.said_cut`). Without an embedder there is no
-  bar, and the look fills its budget.
+  model may spread its similarities differently above its floor (`memory.said_cut`). Without an embedder the bar is
+  `memory.said_words` (0.25 as it ships), measured on two chats only.
 - **No encryption at rest.**
 
 ## 19. Versions and compatibility

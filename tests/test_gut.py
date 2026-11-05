@@ -637,6 +637,15 @@ class Turns(unittest.IsolatedAsyncioTestCase):
         self.model.fail = {"read", "vote"}
         self.assertEqual(await self.turn("好").feel([], "", 85, 3), "(Right now your 傲娇 side is showing: 你嘴硬心软。) Reply in English.")
 
+    async def test_she_answers_in_the_language_she_is_given(self):
+        turn = G.Turn(self.gut, self.model, "You are her.", "had lunch with a coworker", "discord:1", language="yue")
+        self.assertIn("Reply in written Cantonese.", await turn.feel([], "", 85, 3))  # the reading said English
+        self.assertNotIn("discord:1", self.gut.languages)  # what they write in is not read for her answers
+        await turn.learn("Oh, a coworker.")
+        self.assertEqual(self.gut.report()["lessons"], 1)
+        with self.assertRaises(ValueError):
+            G.Turn(self.gut, self.model, "You are her.", "hi", "discord:1", language="Klingon")
+
     async def test_a_slow_reading_does_not_hold_her_up_and_still_teaches(self):
         limit, G.TIME_LIMIT = G.TIME_LIMIT, .02
         self.addCleanup(setattr, G, "TIME_LIMIT", limit)
