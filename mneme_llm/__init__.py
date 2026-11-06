@@ -20,7 +20,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import tzinfo
-from typing import Callable
+from typing import Any, Callable, Mapping
 
 from . import dates, exchange as exchanges, providers, text as texts
 from .aliases import Aliases
@@ -151,6 +151,58 @@ class Mneme:
     def display_language(self, language: str) -> None:
         for part in (self.memory, self.mood, self.relations, self.aliases, self.episodes, self.surface):
             part.display_language = language
+
+    def change(self, values: Mapping[str, Any]) -> int:
+        """Write config keys (flat, as `Config.set` takes one), all of them checked before any is written, and use them
+        from now on: each part that keeps a copy of one is given it at once (her name, the language of her sentences
+        and the sentences, her prompts, her zone, how her notes fade, what she reads of what was said and how much the
+        surface holds, how close people grow and fade, the roles and the mood's settings). Only the meaning tier
+        (`companion.memory_language`) waits for the next open. A setting given to `Mneme(...)` is replaced too: the
+        caller asked for this one. Returns how many keys were written."""
+        found = dict(values)
+        with self.store.transaction():
+            count = self.config._apply(found, "set")
+        own, keys = self.config, set(found)
+        if "companion.name" in keys:
+            self.companion_name = self.mood.companion_name = self.surface.companion_name = own.get("companion.name")
+        if "companion.display_language" in keys or any(key.startswith("messages.") for key in keys):
+            language = own.get("companion.display_language") if "companion.display_language" in keys \
+                else self.display_language
+            words = Words(language, own.messages())
+            for part in (self.memory, self.mood, self.relations, self.aliases, self.episodes, self.surface):
+                part.words = words
+        if any(key.startswith("prompts.") for key in keys):
+            self.prompts = self.mood.prompts = self.surface.prompts = own.prompts()
+        if "companion.zone" in keys:
+            self.memory.zone = self.relations.zone = self.episodes.zone = own.zone()
+        memory = {"memory.half_life_days": "half_life_days", "memory.daily_quota": "daily_quota",
+                  "memory.max_notes": "max_notes", "memory.semantic_window": "semantic_window"}
+        for key, name in memory.items():
+            if key in keys:
+                setattr(self.memory, name, own.get(key))
+        if "memory.said_days" in keys:
+            self.episodes.days = own.get("memory.said_days")
+        if "memory.surface_days" in keys:
+            self.surface.span = max(1, own.get("memory.surface_days"))
+        for key in ("floor", "cap", "window"):
+            if f"memory.surface_{key}" in keys:
+                setattr(self.surface, key, own.get(f"memory.surface_{key}"))
+        if "memory.said_budget" in keys:
+            self.said_budget = own.get("memory.said_budget")
+        if keys & {"memory.said_cut", "memory.said_cut_faded"}:
+            fresh = own.get("memory.said_cut")
+            self.said_cut = (fresh, max(fresh, own.get("memory.said_cut_faded")))
+        if "memory.said_words" in keys:
+            self.said_words = own.get("memory.said_words")
+        if "relations.liking" in keys:
+            self.relations.liking = own.get("relations.liking")
+        if "relations.fade_days" in keys:
+            self.relations.fade_days = own.get("relations.fade_days")
+        if "roles" in keys:
+            self.relations.roles = {role.key: role for role in own.roles()}
+        if "emotions" in keys or any(key.startswith("mood.") for key in keys):
+            self.mood.settings = own.mood_settings()
+        return count
 
     def _meaning(self, embed, memory_language, complete) -> Meaning | None:
         embedder = None

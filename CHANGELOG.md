@@ -3,6 +3,14 @@
 All notable changes to mneme-llm are listed here. The project follows [semantic versioning](https://semver.org);
 before 1.0, a minor version may change the Python API, and this file says how.
 
+## Unreleased
+
+- **`Mneme.change(values)`**: writes config keys (flat, as `Config.set` takes one), all of them checked before any is
+  written, and uses them at once: each part that keeps a copy (her name, the language of her sentences and the
+  sentences, her prompts, her zone, how her notes fade, what she reads of what was said, how much the surface holds,
+  how close people grow and fade, the roles and the mood's settings) is given the new value. Only the meaning tier
+  (`companion.memory_language`) waits for the next open. For a settings page that changes a running companion.
+
 ## 0.7.1 (2026-11-05)
 
 Two accounts of one person are one person to her gut too.

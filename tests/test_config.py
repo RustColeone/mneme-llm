@@ -208,6 +208,27 @@ class UseTests(unittest.TestCase):
         self.assertEqual(m.mood.describe("u"), "気分 70/100（good）; feeling: 誇らしい 40")  # the rest in English
         self.assertIn("誇らしい。", m.mood.news("u"))
 
+    def test_a_change_is_used_at_once_and_kept(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = os.path.join(folder, "m.db")
+            m = Mneme(path, "s", embed=False, companion_name="Fei", surface_days=30)
+            self.assertEqual(m.change({"companion.name": "小鲸", "companion.display_language": "zh",
+                                       "memory.surface_days": 7, "memory.surface_cap": 9000,
+                                       "memory.said_budget": 3000, "memory.said_words": 0.4,
+                                       "memory.said_cut_faded": 0.3, "relations.fade_days": 10.0,
+                                       "mood.threshold": 0.8}), 9)
+            self.assertEqual((m.companion_name, m.mood.companion_name, m.surface.companion_name), ("小鲸",) * 3)
+            self.assertEqual((m.surface.span, m.surface.cap, m.said_budget, m.said_words), (7, 9000, 3000, 0.4))
+            self.assertEqual((m.said_cut, m.relations.fade_days, m.mood.settings.threshold), ((0.08, 0.3), 10.0, 0.8))
+            self.assertEqual({m.display_language, m.surface.words.language, m.mood.words.language}, {"zh"})
+            with self.assertRaises(ValueError):  # checked whole: nothing of it is written
+                m.change({"companion.name": "Other", "memory.surface_days": 0})
+            self.assertEqual((m.companion_name, m.config.get("companion.name"), m.surface.span), ("小鲸", "小鲸", 7))
+            m.close()
+            again = Mneme(path, "s", embed=False)
+            self.assertEqual((again.companion_name, again.surface.span, again.said_words), ("小鲸", 7, 0.4))
+            again.close()
+
     def test_export_carries_the_config_and_import_applies_it_only_when_asked(self):
         m = mneme(config={"companion": {"name": "Fei"}})
         data = m.export_data()
