@@ -30,8 +30,8 @@ def sqljs() -> str | None:
         return given if Path(given).is_file() else None
     if not NODE:
         return None
-    found = subprocess.run([NODE, "-e", "console.log(require.resolve('sql.js'))"], capture_output=True, text=True,
-                           cwd=ROOT, timeout=60)
+    found = subprocess.run([NODE, "-e", "console.log(require.resolve('sql.js'))"], capture_output=True,
+                           encoding="utf-8", cwd=ROOT, timeout=60)
     return found.stdout.strip() if found.returncode == 0 else None
 
 
@@ -106,7 +106,7 @@ class TunerPageTests(unittest.TestCase):
         for known in (G.ENDS, G.OLD):
             with self.subTest(ends=len(known)):
                 out = subprocess.run([NODE, "-e", script, "old" if known == G.OLD else "all"], capture_output=True,
-                                     text=True, timeout=60, check=True).stdout
+                                     encoding="utf-8", timeout=60, check=True).stdout
                 page = json.loads(out)
                 rows = [(form, feel if isinstance(feel, dict) else {"calm" if feel == "none" else feel: 1.0}, mood,
                          closeness) for form, feel, mood, closeness in ROWS]
@@ -148,9 +148,9 @@ class TunerPageTests(unittest.TestCase):
                     "gut": {"tau": 300, "sensitivity": .2, "tune": [{"end": "sad", "nature": -2}],
                             "sides": [{"name": "傲娇", "weight": 5}, {"name": "多疑", "what": "你总觉得别人话里有话。"}],
                             "side": {"name": "多疑", "often": .5}}}
-            done = subprocess.run([NODE, "-e", SETTLE, sqljs(), str(TUNE), folder], capture_output=True, text=True,
-                                  timeout=120, env={**os.environ, "REFUSED": json.dumps(refused),
-                                                    "SAVE": json.dumps(save, ensure_ascii=False)})
+            done = subprocess.run([NODE, "-e", SETTLE, sqljs(), str(TUNE), folder], capture_output=True,
+                                  encoding="utf-8", timeout=120, env={**os.environ, "REFUSED": json.dumps(refused),
+                                                    "SAVE": json.dumps(save)})  # (ASCII: any locale)
             self.assertEqual(done.returncode, 0, done.stderr)
             page = json.loads(done.stdout)
             view = page["view"]
