@@ -536,9 +536,13 @@ mneme-llm gut side 病娇 --lock --often 0.5 --what "你离不开对方……"  
 The `gut` command changes the file, so stop her first: a running companion keeps its own copy and writes over it.
 
 The same dials are on a page of the docs site, [the tuner](https://rustcoleone.github.io/mneme-llm/tune/): drag in her
-gut file (and her memory file, for closeness), tune her, and save the files back. It draws her star map too, flat or in
-3D, as the DeepSeek Harness plugin draws it; drop in her starter as well (the `.json.gz` file her host gives her) and the
-arms show how far she has grown from it. Everything happens in the browser; the files are not uploaded anywhere.
+gut file (and her memory file), change her settings, and save the files back. Her settings there are the page a program
+that keeps her can draw too, in four tabs: Her (her name, zone, Character Card and sides), People (who each person is to
+her, closeness and its lock, how she is with them, and how closeness moves), Memory (how much she keeps of lately, and
+what was said before that comes with each message) and Gut (growing up, her heart's lock, sensitivity and each feeling). A save is checked whole before anything
+is written, as `Mneme.change` and the gut's own methods check it. It draws her star map too, flat or in 3D, as the
+DeepSeek Harness plugin draws it; drop in her starter as well (the `.json.gz` file her host gives her) and the arms show
+how far she has grown from it. Everything happens in the browser; the files are not uploaded anywhere.
 
 `MNEME_LLM_DB`, `MNEME_LLM_SPACE`, `MNEME_LLM_CONFIG` and `MNEME_LLM_DISPLAY_LANGUAGE` set the defaults.
 

@@ -5,6 +5,11 @@ before 1.0, a minor version may change the Python API, and this file says how.
 
 ## Unreleased
 
+- **The tuner shows her settings in four tabs**, Her · People · Memory · Gut: the same page a program that keeps her
+  can draw (the DeepSeek Harness plugin's), over the files that are open. Beside her gut's dials and locks it now sets
+  her name, zone and Character Card, who each person is to her (a role given or taken away, as well as closeness), how
+  much she keeps of lately and what was said before that comes with each message, from her memory file. A save is checked whole before anything is written; then the
+  changed files are saved as before.
 - **`Mneme.change(values)`**: writes config keys (flat, as `Config.set` takes one), all of them checked before any is
   written, and uses them at once: each part that keeps a copy (her name, the language of her sentences and the
   sentences, her prompts, her zone, how her notes fade, what she reads of what was said, how much the surface holds,

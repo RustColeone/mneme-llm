@@ -563,12 +563,389 @@
     setConfig(db, space, 'relations.fade_days', value, now)
   }
 
+  // ---- her memory: roles and her Character Card ------------------------------------------------------------------
+  /** `Relations.set`: who someone is to her. `closeness` (null: the role's start, or nothing changes when the role is
+   * already theirs) within the role's band; a role only one person may have is refused when someone else has it. */
+  function setRole (db, space, subject, role, closeness = null, now = nowSeconds()) {
+    if (typeof subject !== 'string' || !subject.trim()) fail('subject')
+    const kind = rolesOf(db, space).find(item => item.key === role)
+    if (!kind) fail('role', { role })
+    const present = relationship(db, space, subject)
+    if (closeness === null && present && present.role === role) return
+    const value = closeness === null ? kind.start : closeness
+    if (!within(value, kind.floor, kind.ceiling)) fail('band', { floor: kind.floor, ceiling: kind.ceiling })
+    if (kind.unique) {
+      const other = row(db, 'select subject from relationships where space = ? and role = ? and subject != ?',
+        [space, role, subject])
+      if (other) fail('unique', { subject: other.subject, role })
+    }
+    const same = Boolean(present && present.role === role)
+    db.run('insert or replace into relationships (space, subject, role, closeness, since, updated_at) values ' +
+      '(?, ?, ?, ?, ?, ?)', [space, subject, role, value, same ? present.since : now,
+      same ? Math.max(now, present.updated_at) : now])
+  }
+
+  /** `Relations.remove`: no role (and no lock) from now on. Whether they had one. */
+  function removeRole (db, space, subject, now = nowSeconds()) {
+    const locks = locksOf(db, space)
+    if (Object.hasOwn(locks, subject)) {
+      delete locks[subject]
+      setConfig(db, space, 'relations.locked', locks, now)
+    }
+    db.run('delete from relationships where space = ? and subject = ?', [space, subject])
+    return db.getRowsModified() > 0
+  }
+
+  const CARD = 8000 // characters of a Character Card (`CARD` in surface.py)
+  const CONTROL = /[\u0000-\u0008\u000e-\u001b\u007f-\u0084\u0086-\u009f]/g // (as `texts.clean` drops them)
+
+  /** The Character Card kept of `subject` (`Surface.card`), or null. */
+  function cardOf (db, space, subject) {
+    const found = row(db, "select * from first_prompts where space = ? and subject = ? and text != ''", [space, subject])
+    return found ? { text: found.text, at: found.at, byCommand: Boolean(found.by_command), on: Boolean(found.send) }
+      : null
+  }
+
+  /** Whose Character Card the page shows: the one that is on (the newest), else `fallback`'s. */
+  function cardHolder (db, space, fallback = '') {
+    const on = row(db, "select subject from first_prompts where space = ? and send = 1 and text != '' order by at desc",
+      [space])
+    return on ? on.subject : fallback || null
+  }
+
+  /** `Surface.set_card`: the card is `text` from now on; whether it is on stays as it was. */
+  function setCard (db, space, subject, text, now = nowSeconds()) {
+    const clean = String(text ?? '').replace(CONTROL, '').trim()
+    if (!clean) fail('card')
+    if ([...clean].length > CARD) fail('cardLong', { most: CARD })
+    db.run('insert into first_prompts (space, subject, text, at, by_command, send) values (?, ?, ?, ?, 1, 0) ' +
+      'on conflict(space, subject) do update set text = excluded.text, at = excluded.at, by_command = 1',
+    [space, subject, clean, now])
+  }
+
+  /** `Surface.card_on`: whether a host puts it in its system prompt. False when there is none. */
+  function cardOn (db, space, subject, on) {
+    db.run("update first_prompts set send = ? where space = ? and subject = ? and text != ''", [on ? 1 : 0, space,
+      subject])
+    return db.getRowsModified() > 0
+  }
+
+  /** `Surface.drop_card`: none from now on (its row stays, with no text). */
+  function dropCard (db, space, subject) {
+    db.run("update first_prompts set text = '', by_command = 0, send = 0 where space = ? and subject = ? and " +
+      "text != ''", [space, subject])
+    return db.getRowsModified() > 0
+  }
+
+  // ---- her settings page: four tabs, Her · People · Memory · Gut ----------------------------------------------------
+  // The page every program that keeps her draws (dsh-mneme-llm's page/settings.js, copied here as settings.js): what it
+  // shows of the files that are open (`settingsView`) and a save from it (`settle`), in the shape the DSH plugin's
+  // panel and an app's own host give and take. Here the host is the files alone: what is not in them (the language she
+  // answers in, your accounts, the role of people she meets, starting over) is null, and the page leaves it out. "You"
+  // is her creator, the one person with a role only one may have.
+
+  // Her memory's settings the Memory tab shows: [lowest, highest, whole numbers only, mneme-llm's default].
+  const MEMORY = { surface_days: [1, 100000, true, 30], surface_floor: [0, 1e12, true, 70000],
+    surface_cap: [1000, 1e12, true, 504000], surface_window: [1000, 1e12, true, 1048576],
+    said_budget: [0, 200000, true, 6000], said_words: [0, 1, false, 0.25] }
+  const NAME = 80 // characters of her name (`companion.name`)
+  const OFFSET = /^UTC(?:([+-])(\d{1,2})(?::?(\d{2}))?)?$/
+  const given = value => value !== undefined && value !== null
+  const listOf = value => (given(value) ? [value].flat() : [])
+  const round = (value, digits) => Math.round(value * 10 ** digits) / 10 ** digits
+  const ROW_LIKING = 'liking', ROW_FADING = 'fade_days' // the page's own rows: how closeness moves and fades
+
+  /** A zone as `companion.zone` keeps it: "" (the machine's), UTC+8 and the like, or an IANA name. */
+  function zoneOf (value) {
+    if (typeof value !== 'string') fail('zone')
+    const name = value.trim()
+    if (!name) return ''
+    const offset = OFFSET.exec(name)
+    if (offset) {
+      const minutes = Number(offset[2] || 0) * 60 + Number(offset[3] || 0)
+      if (Number(offset[3] || 0) > 59 || minutes > 14 * 60) fail('zone')
+      return name
+    }
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone: name }) // eslint-disable-line no-new
+    } catch {
+      fail('zone')
+    }
+    return name
+  }
+
+  /** Every setting the page shows of the open files: `gut` and `memory` are their databases (or null), `space` the
+   * companion in her memory file. */
+  async function settingsView ({ gut = null, memory = null, space = null } = {}, now = nowSeconds()) {
+    const mine = memory && space !== null && space !== undefined
+    const held = mine ? memoryView(memory, space, now) : null
+    const feels = gut ? await gutView(gut, now) : null
+    const creator = held?.people.find(item => roleOf(held.roles, item.role).unique)?.subject || ''
+    const text = key => {
+      const value = mine ? stored(memory, space, key) : undefined
+      return typeof value === 'string' ? value : ''
+    }
+    const her = { name: mine ? text('companion.name') : null, language: null, zone: mine ? text('companion.zone') : null }
+    const holder = mine ? cardHolder(memory, space, creator) : null
+    if (holder) {
+      const card = cardOf(memory, space, holder)
+      her.card = card ? { text: card.text, on: card.on, how: card.byCommand ? 'set' : 'said' } : null
+    }
+    const close = Object.fromEntries((held?.people || []).map(item => [item.subject, { role: item.role,
+      value: round(item.closeness, 2), floor: item.floor, ceiling: item.ceiling, locked: item.locked !== null }]))
+    const taught = new Map((feels?.people || []).map(item => [item.subject, item]))
+    const subjects = [...new Set([...(creator ? [creator] : []), ...taught.keys(), ...Object.keys(close)])]
+    const people = subjects.map(subject => {
+      const found = taught.get(subject)
+      return { subject, you: subject === creator, name: '', role: close[subject]?.role ?? '',
+        closeness: close[subject] ?? null,
+        gut: found ? { lessons: found.lessons, weight: round(found.weight, 3), nudge: { ...found.nudge }, set: found.set,
+          locked: found.locked } : (feels ? { lessons: 0, weight: 0, nudge: {}, set: null, locked: false } : null) }
+    }).sort((one, other) => (other.you - one.you) || ((other.gut?.lessons ?? 0) - (one.gut?.lessons ?? 0)) ||
+      (one.subject < other.subject ? -1 : one.subject > other.subject ? 1 : 0))
+    const number = key => {
+      const value = stored(memory, space, `memory.${key}`)
+      const [low, high, , otherwise] = MEMORY[key]
+      return within(value, low, high) ? value : otherwise
+    }
+    const words = (en, zh) => ({ en, zh })
+    return {
+      version: 1, companion: her.name ?? '', you: creator, her, me: null, others: null,
+      roles: held ? held.roles.map(item => ({ ...item, names: { ...item.names } })) : null, people,
+      memory: mine ? Object.fromEntries(Object.keys(MEMORY).map(key => [key, number(key)])) : null,
+      rows: mine ? [
+        { tab: 'people', key: ROW_LIKING, kind: 'number', min: 0, max: 100, step: 0.05, value: held.liking,
+          group: words('How closeness moves', '亲近度怎么变'), label: words('Points for each level', '每一级移动的点数'),
+          hint: words('How many points closeness moves for each level of how an exchange moved her (0 to 100).',
+            '一次交流让她有多大触动，每一级让亲近度移动多少点（0 到 100）。') },
+        { tab: 'people', key: ROW_FADING, kind: 'number', min: 0, max: 1000000, step: 1, value: held.fadeDays,
+          group: words('How closeness moves', '亲近度怎么变'), label: words('Days for a point to fade', '淡去一点需要的天数'),
+          hint: words('Closeness fades a point for every this many days without them (0: never), in roles that fade.',
+            '在会淡去的角色里，每过这么多天不联系，亲近度就淡去一点（0：永不淡去）。') }
+      ] : [],
+      starts: [],
+      gut: feels ? {
+        stamp: `${feels.lessons}:${round(feels.age, 6)}:${feels.people.length}`,
+        report: { tau: feels.tau, age: Math.round(feels.age), lessons: feels.lessons, grown: feels.grown,
+          learning: feels.learning, sensitivity: feels.sensitivity },
+        locked: feels.locked, people: feels.people.map(item => ({ subject: item.subject, lessons: item.lessons,
+          weight: round(item.weight, 3), nudge: { ...item.nudge }, set: item.set, locked: item.locked })),
+        sides: feels.sides.map(item => ({ name: item.name, what: item.what, given: false, own: item.own,
+          weight: item.own })),
+        side: feels.side, names: [...NAMES],
+        bars: feels.bars.map(item => ({ bar: item.bar, zh: item.zh, ends: [...item.ends], lately: round(item.lately, 3),
+          usual: round(item.usual, 3) })),
+        ends: feels.ends.map(item => ({ end: item.end, zh: item.zh, now: round(item.now, 4), nature: item.nature })),
+        nature: NATURE, grows: GROWS
+      } : null
+    }
+  }
+
+  /** One save from the page, checked whole before any of it is written: { her: { name, zone, card }, people: [{ subject,
+   * role, closeness, hold, tune, weight, locked, forget }], memory: { surface_days, ... }, rows: { liking, fade_days },
+   * gut: { tau, sensitivity, age, locked, tune, sides, side } }, any of them. A value Python would refuse throws a
+   * TuneError first. (What is written to her gut file waits on its compression: a caller that must have all or none
+   * keeps a copy of the files to go back to.) */
+  async function settle ({ gut = null, memory = null, space = null } = {}, asked, now = nowSeconds()) {
+    if (!isTable(asked)) fail('save')
+    const unknown = Object.keys(asked).filter(key => !['her', 'people', 'memory', 'rows', 'gut'].includes(key))
+    if (unknown.length) fail('part', { parts: unknown.join(', ') })
+    const mine = memory && space !== null && space !== undefined
+    const needMemory = () => { if (!mine) fail('noMemory') }
+    const needGut = () => { if (!gut) fail('noGut') }
+    const table = value => {
+      if (!given(value)) return {}
+      if (!isTable(value)) fail('save')
+      return value
+    }
+    const work = [], later = [] // what is written to her memory (at once, together), and to her gut (after)
+    // Her
+    const her = table(asked.her)
+    if (given(her.name)) {
+      needMemory()
+      const name = typeof her.name === 'string' ? her.name.trim() : ''
+      if (!name || [...name].length > NAME || /[\ud800-\udfff]/.test(name.replace(/[\ud800-\udbff][\udc00-\udfff]/g, ''))) {
+        fail('herName', { most: NAME })
+      }
+      work.push(() => setConfig(memory, space, 'companion.name', name, now))
+    }
+    if (given(her.zone)) {
+      needMemory()
+      const zone = zoneOf(her.zone)
+      work.push(() => setConfig(memory, space, 'companion.zone', zone, now))
+    }
+    if (her.card !== undefined) {
+      needMemory()
+      const card = her.card
+      if (card !== null && !isTable(card)) fail('card')
+      if (card && given(card.text) && (typeof card.text !== 'string' || !card.text.trim())) fail('card')
+      if (card && given(card.text) && [...card.text.trim()].length > CARD) fail('cardLong', { most: CARD })
+      if (card && given(card.on) && typeof card.on !== 'boolean') fail('save')
+      const creator = memoryView(memory, space, now).people.find(item =>
+        roleOf(rolesOf(memory, space), item.role).unique)?.subject || ''
+      const holder = cardHolder(memory, space, creator)
+      if (!holder) fail('noHolder')
+      if (card && card.on === true && !given(card.text) && !cardOf(memory, space, holder)) fail('noCard')
+      work.push(() => {
+        if (card === null) dropCard(memory, space, holder)
+        else {
+          if (given(card.text)) setCard(memory, space, holder, card.text, now)
+          if (given(card.on)) cardOn(memory, space, holder, card.on)
+        }
+      })
+    }
+    // People
+    const roles = mine ? rolesOf(memory, space) : []
+    const held = mine ? memoryView(memory, space, now) : null
+    const close = Object.fromEntries((held?.people || []).map(item => [item.subject, item]))
+    const toGut = []
+    for (const person of listOf(asked.people)) {
+      if (!isTable(person) || typeof person.subject !== 'string' || !person.subject.trim()) fail('subject')
+      const subject = person.subject, present = close[subject] || null
+      let role
+      if (given(person.role)) {
+        needMemory()
+        if (person.role !== '' && !roles.some(item => item.key === person.role)) fail('role', { role: person.role })
+        role = person.role
+      }
+      const kind = role === undefined ? (present ? roleOf(roles, present.role) : null) : (role ? roleOf(roles, role) : null)
+      if (given(person.closeness) || given(person.hold)) {
+        needMemory()
+        if (!kind) fail('noRole', { subject })
+      }
+      if (given(person.closeness) && !within(person.closeness, kind.floor, kind.ceiling)) {
+        fail('band', { floor: kind.floor, ceiling: kind.ceiling })
+      }
+      if (given(person.hold) && typeof person.hold !== 'boolean') fail('save')
+      if (kind && kind.unique && role !== undefined && role !== present?.role) {
+        const other = Object.values(close).find(item => item.subject !== subject && item.role === kind.key)
+        if (other) fail('unique', { subject: other.subject, role: kind.key })
+      }
+      for (const dial of listOf(person.tune)) {
+        needGut()
+        if (!isTable(dial) || !ENDS.includes(dial.end)) fail('end', { end: dial?.end })
+        if (!within(dial.nature, -NATURE, NATURE)) fail('nature')
+      }
+      if (given(person.weight)) {
+        needGut()
+        if (person.weight !== 'learned' && !within(person.weight, 0, 1)) fail('weight')
+      }
+      for (const key of ['locked', 'forget']) {
+        if (given(person[key])) {
+          needGut()
+          if (typeof person[key] !== 'boolean') fail('save')
+        }
+      }
+      if (['tune', 'weight', 'locked', 'forget'].some(key => given(person[key]))) toGut.push(person)
+      if (role === undefined && !given(person.closeness) && !given(person.hold)) continue
+      work.push(() => {
+        if (role === '') {
+          removeRole(memory, space, subject, now)
+          return
+        }
+        if (role !== undefined && role !== present?.role) {
+          setRole(memory, space, subject, role, given(person.closeness) ? person.closeness : null, now)
+        }
+        const locked = Object.hasOwn(locksOf(memory, space), subject)
+        if (person.hold === false) unlockCloseness(memory, space, subject, now)
+        const holding = given(person.hold) ? person.hold : locked
+        if (holding) {
+          const found = memoryView(memory, space, now).people.find(item => item.subject === subject)
+          lockCloseness(memory, space, subject, given(person.closeness) ? person.closeness : found.closeness, now)
+        } else if (given(person.closeness)) setCloseness(memory, space, subject, person.closeness, now)
+      })
+    }
+    // Memory
+    for (const [key, value] of Object.entries(table(asked.memory))) {
+      needMemory()
+      if (!Object.hasOwn(MEMORY, key)) fail('memoryKey', { key })
+      const [low, high, whole] = MEMORY[key]
+      if (!within(value, low, high) || (whole && !Number.isInteger(value))) fail('memoryValue', { key, low, high })
+      work.push(() => setConfig(memory, space, `memory.${key}`, value, now))
+    }
+    // Rows: how closeness moves
+    for (const [key, value] of Object.entries(table(asked.rows))) {
+      needMemory()
+      if (key === ROW_LIKING) {
+        if (!within(value, 0, 100)) fail('liking')
+        work.push(() => setLiking(memory, space, value, now))
+      } else if (key === ROW_FADING) {
+        if (!within(value, 0, 1000000)) fail('fadeDays')
+        work.push(() => setFadeDays(memory, space, value, now))
+      } else fail('part', { parts: key })
+    }
+    // Gut
+    const changing = table(asked.gut)
+    if (Object.keys(changing).length) needGut()
+    const { tau, sensitivity, age, locked } = changing
+    if (given(tau) && !(isNumber(tau) && tau > 0)) fail('tau')
+    if (given(sensitivity) && !within(sensitivity, -1, 1)) fail('sensitivity')
+    if (given(age) && !(isNumber(age) && age >= 0)) fail('age')
+    if (given(locked) && typeof locked !== 'boolean') fail('locked')
+    const tunes = listOf(changing.tune)
+    for (const dial of tunes) {
+      if (!isTable(dial) || !ENDS.includes(dial.end)) fail('end', { end: dial?.end })
+      if (given(dial.now) && !within(dial.now, -1, 1)) fail('now')
+      if (given(dial.nature) && !within(dial.nature, -NATURE, NATURE)) fail('nature')
+    }
+    const feels = gut ? await gutView(gut, now) : null
+    if (given(age) && !feels.hasHeart) fail('noHeart')
+    const has = name => feels.sides.some(item => item.name === name)
+    const sides = listOf(changing.sides), written = new Set()
+    for (const side of sides) {
+      if (!isTable(side) || !NAMES.includes(side.name)) fail('name', { name: side?.name })
+      if (given(side.what) && !sentence(side.what)) fail('what')
+      if (given(side.weight) && !within(side.weight, 0, Infinity)) fail('own')
+      if (!side.drop && !given(side.what) && !has(side.name)) fail('notSide', { name: side.name })
+      if (given(side.what)) written.add(side.name)
+    }
+    const side = changing.side
+    if (given(side)) {
+      if (!isTable(side) || !NAMES.includes(side.name)) fail('name', { name: side?.name })
+      if (!within(side.often ?? 1, 0, 1)) fail('often')
+      if (!has(side.name) && !written.has(side.name)) fail('notSide', { name: side.name })
+    }
+    if (given(tau) || given(sensitivity) || given(locked)) {
+      later.push(() => configure(gut, { ...(given(tau) ? { tau } : {}), ...(given(sensitivity) ? { sensitivity } : {}),
+        ...(given(locked) ? { locked } : {}) }))
+    }
+    if (given(age)) later.push(() => setAge(gut, age))
+    for (const dial of tunes) {
+      later.push(() => tune(gut, dial.end, { ...(given(dial.now) ? { now: dial.now } : {}),
+        ...(given(dial.nature) ? { nature: dial.nature } : {}) }))
+    }
+    for (const item of sides) {
+      later.push(async () => {
+        if (item.drop) return dropSide(gut, item.name)
+        if (given(item.what)) writeSide(gut, item.name, item.what)
+        sideWeight(gut, item.name, given(item.weight) ? item.weight : given(item.what) && !has(item.name) ? GROWS
+          : feels.sides.find(found => found.name === item.name)?.own ?? GROWS)
+      })
+    }
+    if (side === null) later.push(() => unlockSide(gut, now))
+    else if (given(side)) later.push(() => lockSide(gut, side.name, side.often ?? 1))
+    for (const person of toGut) {
+      later.push(async () => {
+        if (person.forget) return forget(gut, person.subject)
+        for (const item of listOf(person.tune)) await tunePerson(gut, person.subject, { end: item.end, nature: item.nature })
+        if (given(person.weight) || given(person.locked)) {
+          await tunePerson(gut, person.subject, { ...(given(person.weight) ? { weight: person.weight } : {}),
+            ...(given(person.locked) ? { locked: person.locked } : {}) })
+        }
+      })
+    }
+    // all of it checked: now it is written
+    if (work.length) together(memory, () => { for (const item of work) item() })
+    for (const item of later) await item()
+  }
+
   return {
     BARS, ENDS, CHINESE, NAMES, TAU, FLOOR, MOST, COUNTS, GROWS, HOLD, ROLES, SCHEMA, TuneError,
     unwal, isSqlite, kindOf, open, rows, gzip, gunzip, getState, putState,
     settingsOf, personWeight, level, gutView, configure, setAge, tune, tunePerson, forget, writeSide, sideWeight,
     dropSide, lockSide, unlockSide,
     checkMemory, spaces, rolesOf, roleOf, locksOf, closenessOf, memoryView, setCloseness, lockCloseness,
-    unlockCloseness, setLiking, setFadeDays, setConfig
+    unlockCloseness, setLiking, setFadeDays, setConfig, setRole, removeRole, cardOf, cardHolder, setCard, cardOn,
+    dropCard, zoneOf, settingsView, settle, MEMORY
   }
 })
