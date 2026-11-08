@@ -3,11 +3,13 @@
 // (settings.js: dsh-mneme-llm's page/settings.js, word for word), in four tabs, Her · People · Memory · Gut, over the
 // open files (tune.js `settingsView` and `settle`, which change them as mneme-llm's own Python does): its Save puts
 // the changes in the open files at once, all of them or none; Save the files, below, downloads each changed file, and
-// Discard opens it again as it was. Her star map is drawn above them. One language at a time, English or Chinese.
+// Discard opens it again as it was. Her star map is drawn above them, and her memory sky (memorysky.js: what reminds
+// her of what) under it when her memory file is open. One language at a time, English or Chinese.
 (function () {
   'use strict'
   const T = window.Tune
   const S = window.StarMap
+  const M = window.MemorySky
   const SQL_BASE = 'https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/'
   const KEPT = 'mneme-llm-tune-language'
 
@@ -62,6 +64,18 @@
     'map.unknown': 'She was born from a starter, which is not open here, so each arm is drawn as she was born. Drop her starter (the .json.gz file her host gives her) beside her files to see how far she has grown.',
     'map.blank': 'She was born with no starter: her arms are measured from a blank heart.',
     'map.none': 'Her heart is not in this file yet: wake her once first.',
+    'memsky.title': 'Memory sky: what reminds her of what',
+    'memsky.caption': 'Each star is one exchange she keeps with this person; the brighter, the less it has faded. Each line joins two that came to mind together, or one that reminded her of the other: the more often, the brighter the line, and a line she stops using fades. Linked stars are drawn near each other, and the largest groups are tinted. Click a star to read it.',
+    'memsky.person': 'With',
+    'memsky.counts': '{stars} exchanges · {lines} links · {groups} groups',
+    'memsky.newest': 'the newest {stars} of {total} exchanges',
+    'memsky.play': 'Play',
+    'memsky.pause': 'Pause',
+    'memsky.time': 'Time',
+    'memsky.upTo': 'Up to {date} · {shown} of {stars}',
+    'memsky.links': '{count} links',
+    'memsky.none': 'She keeps no exchanges in this memory file yet.',
+    'memsky.noLinks': 'No links yet: they grow between exchanges that come to mind together as she talks.',
     saved: 'Saved {files}. Put each in place of the old file before she starts again.',
     discardConfirm: 'Discard every unsaved change?',
     'settings.page': 'Her settings',
@@ -140,6 +154,18 @@
     'map.unknown': '她生来带着一份 starter 文件，但它没有在这里打开，所以每条臂都画成她出生时的长度。把她的 starter 文件（宿主程序给她的那个 .json.gz）也拖进来，就能看到她长大了多少。',
     'map.blank': '她出生时没有 starter 文件：她的臂是拿一颗空白的心来比的。',
     'map.none': '她的心还不在这个文件里：先让她醒来一次。',
+    'memsky.title': '记忆星空：什么会让她想起什么',
+    'memsky.caption': '每颗星是她和这个人之间的一段对话，越亮表示忘得越少。每条线连着两段一起浮现在她心里的对话，或者一段让她想起了另一段：一起浮现得越多，线就越亮；不再用到的线会慢慢变淡。连在一起的星星会靠得近，最大的几群染上了颜色。点一颗星星就能看那段对话。',
+    'memsky.person': '和谁',
+    'memsky.counts': '{stars} 段对话 · {lines} 条连线 · {groups} 群',
+    'memsky.newest': '共 {total} 段对话中最新的 {stars} 段',
+    'memsky.play': '播放',
+    'memsky.pause': '暂停',
+    'memsky.time': '时间',
+    'memsky.upTo': '到{date}为止 · {stars} 段中的 {shown} 段',
+    'memsky.links': '{count} 条连线',
+    'memsky.none': '这个记忆文件里还没有她保存的对话。',
+    'memsky.noLinks': '还没有连线：她说话时，一起浮现在她心里的对话之间会长出连线。',
     saved: '已保存 {files}。她再次启动之前，用它们替换旧文件。',
     discardConfirm: '放弃所有未保存的改动吗？',
     'settings.page': '她的设置',
@@ -604,6 +630,101 @@
       hint(t('map.caption')))
   }
 
+  // ---- her memory sky: what reminds her of what (memorysky.js) ------------------------------------------------------
+  const PLAY_MS = 12000 // a whole sky grows in this long when played
+  const memory = { subject: null, made: null, upTo: null, chosen: null, stop: null }
+
+  /** The sky of the person chosen, made once for each open file, space and person (its layout takes a moment). */
+  function memorySky (db, space, subject) {
+    const made = memory.made
+    if (made && made.db === db && made.space === space && made.subject === subject) return made.sky
+    memory.made = { db, space, subject, sky: M.memorySky(db, space, subject) }
+    memory.upTo = null
+    memory.chosen = null
+    return memory.made.sky
+  }
+
+  function memoryCard () {
+    const db = state.files.memory?.db
+    if (!db || state.space === null || !M) return null
+    const people = M.people(db, state.space)
+    if (!people.length) return card(t('memsky.title'), hint(t('memsky.none')))
+    if (!people.some(person => person.subject === memory.subject)) memory.subject = people[0].subject
+    const sky = memorySky(db, state.space, memory.subject)
+    const total = sky.stars.length
+    const upTo = () => memory.upTo ?? total
+    const canvas = el('canvas', { class: 'sky memory-sky', role: 'img', 'aria-label': t('memsky.caption') })
+    const said = el('p', { class: 'memory-said', 'aria-live': 'polite' })
+    const when = el('span', { class: 'memory-when' })
+    const day = seconds => new Date(seconds * 1000).toLocaleDateString(chinese() ? 'zh-CN' : 'en-GB',
+      { year: 'numeric', month: 'short', day: 'numeric' })
+    const look = () => ({ dark: Boolean(darkScheme?.matches), ink: getComputedStyle(canvas).color })
+    const paint = () => {
+      if (!canvas.isConnected) return
+      M.draw(canvas, sky, look(), upTo(), memory.chosen)
+      const star = memory.chosen === null ? null : sky.stars[memory.chosen]
+      said.textContent = star ? `${day(star.at)} · ${star.who}: ${star.said}` + (star.links
+        ? ` (${t('memsky.links', { count: star.links })})` : '') : ''
+      const last = sky.stars[Math.max(0, upTo() - 1)]
+      when.textContent = last ? t('memsky.upTo', { date: day(last.at), shown: upTo(), stars: total }) : ''
+      slider.value = String(upTo())
+    }
+    const slider = el('input', { type: 'range', min: '1', max: String(total), value: String(upTo()),
+      'aria-label': t('memsky.time'),
+      oninput: event => { halt(); memory.upTo = Number(event.target.value); paint() } })
+    let frame = null
+    const halt = () => {
+      if (frame !== null) cancelAnimationFrame(frame)
+      frame = null
+      play.textContent = t('memsky.play')
+    }
+    const play = button(t('memsky.play'), () => {
+      if (frame !== null) return halt()
+      const from = upTo() >= total ? 1 : upTo(), began = performance.now()
+      play.textContent = t('memsky.pause')
+      const step = at => {
+        memory.upTo = Math.min(total, from + Math.round((total - from) * (at - began) / (PLAY_MS * (total - from) / total)))
+        paint()
+        if (memory.upTo >= total) return halt()
+        frame = requestAnimationFrame(step)
+      }
+      frame = requestAnimationFrame(step)
+    }, { kind: 'quiet' })
+    canvas.addEventListener('click', event => {
+      const box = canvas.getBoundingClientRect()
+      memory.chosen = M.starAt(canvas, sky, event.clientX - box.left, event.clientY - box.top, upTo())
+      paint()
+    })
+    const resized = typeof ResizeObserver === 'function' ? new ResizeObserver(paint) : null
+    resized?.observe(canvas)
+    if (!resized) requestAnimationFrame(paint)
+    memory.stop = () => { halt(); resized?.disconnect() }
+    const choose = people.length > 1
+      ? el('label', { class: 'memory-person' }, `${t('memsky.person')} `,
+        el('select', { onchange: event => { memory.subject = event.target.value; redrawMemory() } },
+          people.map(person => el('option', { value: person.subject, selected: person.subject === memory.subject },
+            `${person.name} (${person.exchanges})`))))
+      : null
+    const counts = t('memsky.counts', { stars: total, lines: sky.lines.length, groups: sky.groups.length }) +
+      (sky.total > total ? ` · ${t('memsky.newest', { stars: total, total: sky.total })}` : '')
+    return el('section', { class: 'card sky-card' },
+      el('div', { class: 'sky-head' }, el('h2', null, t('memsky.title')), choose),
+      canvas,
+      el('div', { class: 'memory-time' }, play, slider, when),
+      said,
+      hint(sky.lines.length ? counts : t('memsky.noLinks')),
+      hint(t('memsky.caption')))
+  }
+
+  /** Her memory sky again, in its place (another person chosen), leaving the rest of the page as it is. */
+  function redrawMemory () {
+    if (!memoryHolder || !memoryHolder.isConnected) return render()
+    memory.stop?.()
+    memory.stop = null
+    memoryHolder.replaceChildren(memoryCard() || '')
+  }
+  let memoryHolder = null
+
   /** Her star map again, in its place (after a save, or a change of view), leaving the rest of the page as it is. */
   function redrawMap () {
     if (!mapHolder || !mapHolder.isConnected) return render()
@@ -698,9 +819,14 @@
     header()
     sky.stop?.()
     sky.stop = null
+    memory.stop?.()
+    memory.stop = null
     const parts = [intro(), files()]
     mapHolder = state.gut ? el('div', { class: 'sky-holder' }, starMap()) : null
     if (mapHolder) parts.push(mapHolder)
+    const remembered = memoryCard()
+    memoryHolder = remembered ? el('div', { class: 'sky-holder' }, remembered) : null
+    if (memoryHolder) parts.push(memoryHolder)
     parts.push(state.gut || state.memory ? settingsCard() : el('p', { class: 'hint center' }, t('settings.needFile')))
     $('#main').replaceChildren(...parts.filter(Boolean))
     savebar()
@@ -732,6 +858,6 @@
     }
   })
   sqlReady.catch(error => { say(t('error.sql', { error: errorText(error) }), true); render() })
-  window.tuner = { open: openFile, state, sky } // (for a script, or a look from the console)
+  window.tuner = { open: openFile, state, sky, memory } // (for a script, or a look from the console)
   render()
 })()

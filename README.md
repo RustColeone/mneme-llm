@@ -173,6 +173,13 @@ the search as well lost 18 points). On LongMemEval-M (60 questions, histories of
 the tools answered 51 with no bar and 49 with it, within the noise. Exchanges are never pruned (about 6 KB each with their index and
 vector); `erase` removes them with everything else.
 
+Exchanges that come to mind together are linked (`links.py`): one a new exchange reminds her of, those her own look
+brings for one message, and what was on her mind as something was said. Links fade as exchanges do and grow with use,
+and never join two people. The tuner draws them as her memory sky, a star for each exchange and a line for each link,
+and plays it as it grew. A look can follow them (`memory.said_follow`, 0 as it ships); on LoCoMo they found nothing
+that taking the next exchanges by rank did not find better, so it follows none unless told to
+([design](docs/DESIGN.md#links-what-reminds-her-of-what-linkspy)).
+
 **Dates** are written the way people say them (*today*, *3 days ago*, *in 2 days*, *去年 09-17*, *明天*), so the
 model never has to do date arithmetic.
 

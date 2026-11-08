@@ -142,6 +142,7 @@ class Mneme:
         fresh = own.get("memory.said_cut")  # (a faded exchange's bar is never under a fresh one's; −1: none)
         self.said_cut = (fresh, max(fresh, own.get("memory.said_cut_faded")))
         self.said_words = own.get("memory.said_words")  # (with words alone)
+        self.said_follow = own.get("memory.said_follow")  # (links a look follows: `links.py`; 0: none)
 
     @property
     def display_language(self) -> str:
@@ -194,6 +195,8 @@ class Mneme:
             self.said_cut = (fresh, max(fresh, own.get("memory.said_cut_faded")))
         if "memory.said_words" in keys:
             self.said_words = own.get("memory.said_words")
+        if "memory.said_follow" in keys:
+            self.said_follow = own.get("memory.said_follow")
         if "relations.liking" in keys:
             self.relations.liking = own.get("relations.liking")
         if "relations.fade_days" in keys:
@@ -363,16 +366,21 @@ class Mneme:
         remember" found again is said again.
 
         `skip`: ids of exchanges to leave out, such as those the conversation in front of the model still shows. ""
-        when nothing bears on it and there is no search."""
+        when nothing bears on it and there is no search.
+
+        It is her own look: what comes to mind together is linked, and to the exchange kept next (`links.py`), and
+        with `memory.said_follow` above 0 (0 as it ships) it follows that many links of the best that came."""
         came = self.episodes.look(subject, query, budget=self._said(budget), cut=self.said_cut,
-                                  more=found if search else 0, skip=skip, words_cut=self.said_words)
+                                  more=found if search else 0, skip=skip, words_cut=self.said_words,
+                                  follow=self.said_follow, use=True)
         return self._came_back(came, query, user_name, search, own)
 
     async def alook(self, subject: str, query: str = "", *, user_name: str | None = None, budget: int | None = None,
                     search: bool = False, own: bool = False, found: int = SEARCHED, skip=None) -> str:
         """`look` with meaning (the query's embedding, when it comes within a few seconds)."""
         came = await self.episodes.alook(subject, query, budget=self._said(budget), cut=self.said_cut,
-                                         more=found if search else 0, skip=skip, words_cut=self.said_words)
+                                         more=found if search else 0, skip=skip, words_cut=self.said_words,
+                                         follow=self.said_follow, use=True)
         return self._came_back(came, query, user_name, search, own)
 
     def _came_back(self, came: list[Episode], query: str, user_name: str | None, search: bool, own: bool) -> str:

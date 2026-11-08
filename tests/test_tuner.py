@@ -19,6 +19,7 @@ import mneme_llm.gut as G
 
 TUNE = Path(__file__).resolve().parents[1] / "docs" / "tune" / "tune.js"
 STARMAP = TUNE.with_name("starmap.js")
+MEMORYSKY = TUNE.with_name("memorysky.js")
 NODE = shutil.which("node")
 ROOT = TUNE.parents[2]
 
@@ -186,6 +187,59 @@ class TunerPageTests(unittest.TestCase):
                                  ({"傲娇": "你嘴硬心软。", "多疑": "你总觉得别人话里有话。"}, {"傲娇": 5, "多疑": 6}))
             finally:
                 gut.close()
+
+
+# Her memory sky, in node, from her memory file as Python left it.
+SKY = """
+const fs = require('fs')
+const [sqljs, sky, file, now] = process.argv.slice(1)
+const M = require(sky)
+require(sqljs)().then(SQL => {
+  const db = new SQL.Database(fs.readFileSync(file))
+  const one = M.memorySky(db, 'her', 'u', Number(now)), again = M.memorySky(db, 'her', 'u', Number(now))
+  console.log(JSON.stringify({ people: M.people(db, 'her'), stars: one.stars, lines: one.lines, groups: one.groups,
+    same: JSON.stringify(one) === JSON.stringify(again) }))
+})
+"""
+
+
+@unittest.skipUnless(MEMORYSKY.is_file() and sqljs(), "no node with sql.js, or the memory sky is not in this copy")
+class MemorySkyTests(unittest.TestCase):
+    def test_her_memory_sky_reads_her_exchanges_and_links_as_python_keeps_them(self):
+        with tempfile.TemporaryDirectory() as folder:
+            now = [1_767_268_800.0]  # (noon, 1 January 2026, UTC)
+            memory = mneme_llm.Mneme(str(Path(folder, "her.db")), "her", embed=False, memory_language=None,
+                                     clock=lambda: now[0])
+            kept = []
+            for day in range(12):
+                now[0] += 86400
+                kept.append(memory.episodes.keep("u", [("Leo", f"day {day}"), ("Her", "yes")]))
+            memory.episodes.keep("someone else", [("Ann", "hello")])
+            links = memory.episodes.links
+            links.born("u", [(kept[0].id, kept[5].id, 0.4), (kept[1].id, kept[2].id, 0.0)], kept[0].at)
+            links.used("u", followed=[(kept[1].id, kept[2].id)], at=kept[3].at)
+            memory.episodes._rehearse([kept[4].id], kept[8].at)
+            python = {(link.a, link.b): link for link in links.all("u", at=now[0])}
+            faded = {episode.id: memory.episodes.retention(episode, now[0]) for episode in
+                     (memory.episodes.get(item.id) for item in kept)}
+            memory.close()
+            done = subprocess.run([NODE, "-e", SKY, sqljs(), str(MEMORYSKY), str(Path(folder, "her.db")), str(now[0])],
+                                  capture_output=True, encoding="utf-8", timeout=120, env={**os.environ, "TZ": "UTC"})
+            self.assertEqual(done.returncode, 0, done.stderr)
+            page = json.loads(done.stdout)
+        self.assertTrue(page["same"])  # (the same file draws the same sky)
+        self.assertEqual([(item["subject"], item["exchanges"], item["links"]) for item in page["people"]],
+                         [("u", 12, 2), ("someone else", 1, 0)])
+        self.assertEqual([star["id"] for star in page["stars"]], [item.id for item in kept])
+        for star in page["stars"]:
+            self.assertAlmostEqual(star["kept"], faded[star["id"]], places=9)
+            self.assertTrue(-1 <= star["x"] <= 1 and -1 <= star["y"] <= 1)
+        ids = [star["id"] for star in page["stars"]]
+        for line in page["lines"]:
+            link = python[(ids[line["from"]], ids[line["to"]])]
+            self.assertAlmostEqual(line["strength"], link.strength, places=9)
+            self.assertEqual(line["uses"], link.uses)
+        self.assertEqual(len(page["lines"]), len(python))
 
 
 if __name__ == "__main__":

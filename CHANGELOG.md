@@ -3,6 +3,25 @@
 All notable changes to mneme-llm are listed here. The project follows [semantic versioning](https://semver.org);
 before 1.0, a minor version may change the Python API, and this file says how.
 
+## Unreleased
+
+What reminds her of what: links between exchanges, and her memory sky on the tuner.
+
+- **Links** (`links.py`): two exchanges of one person are linked when they come to mind together: a new exchange and
+  the earlier ones it reminds her of, the best three of her own look (`Mneme.look`, `alook`; `Episodes.look` with
+  `use=True`), and an exchange kept within ten minutes of that look with what it brought. No model is called. Links fade
+  as exchanges do (R = e^(−t/S) over talking days), grow with each use, are kept to an exchange's eight heaviest, are
+  dropped at a talking day's first exchange once faded under 0.05, and never join two people. `forget`, `erase` and a
+  link of accounts take them along; export and import leave them out (they grow again).
+- **`memory.said_follow`** (0 to 20, 0 as it ships): how many more exchanges a look may bring by following links of
+  the best that came. Off, because on LoCoMo (`bench/association.py`) following them brought no more of the exchanges
+  an answer rests on than taking the next ones by rank.
+- **Her memory sky on the tuner** (`docs/tune/memorysky.js`): with her memory file open, each exchange with a person is
+  a star, as bright as it is kept, each link a line; linked stars are drawn near each other and the largest groups are
+  tinted. Play it as it grew, or click a star to read it. English and Chinese.
+- **A file of this schema gets any table added since** when it is opened: the `links` table, within schema 2, so no
+  migration is needed and a program that does not know links leaves it alone.
+
 ## 0.7.2 (2026-11-05)
 
 A running companion's settings changed at once, and her settings in four tabs on the tuner.

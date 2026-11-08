@@ -415,9 +415,46 @@ are held in memory once read (`Matrix`, for the 16 people looked at last), and o
 again; with numpy installed they are compared in one step, otherwise in pure Python (about 10 ms per thousand
 exchanges on a Raspberry Pi 5).
 
-**Lifecycle.** `forget(subject, id)` and `erase` delete exchanges outright, with their index rows and vectors; a link
+**Lifecycle.** `forget(subject, id)` and `erase` delete exchanges outright, with their index rows, vectors and links (below); a link
 moves them to the person and joins the two spreads; export and import carry them (section 4). An id is never used
 twice, even after its exchange is gone, because the surface counts from one.
+
+### Links: what reminds her of what (`links.py`)
+
+A link joins two exchanges of one person because they came to mind together. Nothing but what already happens makes
+one, and no model is called:
+
+- **reminded**: a new exchange, as it gets its vector, rehearses the earlier ones it is about (above); each is linked
+  to it, with how close the two are in meaning;
+- **on her mind**: an exchange kept within ten minutes of her own look for its message is linked to the best three
+  that look brought;
+- **together**: the best three of her own look are linked to each other, and an exchange a link brought to the one
+  that brought it.
+
+Her own look is the one `Mneme.look` and `alook` make before a reply; `Episodes.look` makes one only with `use=True`.
+Where a link is already there, each of these is a use of it instead. A link fades as an exchange does, R = e^(−t/S)
+over the person's talking days since it was born or last used, with S starting at 30 days and growing with each use,
+at most one a talking day, the more the further it had faded. Its weight is R × (1 + its uses), so what came to mind
+together again and again outweighs a coincidence. An exchange keeps its eight heaviest links. At the first exchange
+of a talking day (her sleep), links faded under R 0.05 are dropped, and so are links to an exchange no longer there.
+
+A link never joins two people: what one person said must not bring back what another told her. `forget` and `erase`
+take an exchange's links with it, and a link of accounts moves them to the person. Export and import do not carry
+them (an imported exchange gets a new id); they grow again. The table was added within schema 2: this version gives
+an older file of the same schema the table when it opens it, and a program that does not know links leaves it alone.
+
+**Following them.** A look can follow links one step (`memory.said_follow`, 0 as it ships): the heaviest links of
+the best five that came bring up to that many more, each at most 0.1 under the bar its closeness to the message is
+held to, in place of the weakest of the rest when the budget is full. Measured on LoCoMo with each conversation lived
+again in order (her own look before every exchange, links growing as above), on the turns each answer rests on, so
+no model was asked (`bench/association.py`; settings chosen on two conversations, measured on the other eight, 1,676
+questions): the look as it ships brought 78.4% of the needed exchanges, following one link (the setting the first two
+chose) 78.3%, following three 78.9%, and adding the next three by rank alone, at the same size, 81.1%, with no
+question worse off. On questions whose evidence spans two
+sessions or more, where links might help most, the same order held (51.3%, 53.1%, 53.6%). Links find nothing rank
+does not find better, so a look follows none unless told to. What they are for is showing her: the tuner draws them as
+her memory sky (`docs/tune/memorysky.js`), each exchange a star as bright as it is kept, each link a line, linked
+stars drawn near each other, and the sky can be played as it grew.
 
 ### The surface (`surface.py`)
 

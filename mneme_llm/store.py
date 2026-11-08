@@ -131,6 +131,13 @@ create table if not exists episode_spread (
     space text not null, subject text not null, embedder text not null, bins text not null, pairs integer not null,
     primary key (space, subject, embedder)
 );
+create table if not exists links (
+    space text not null, subject text not null, a integer not null, b integer not null, closeness real not null,
+    day integer not null, stability real not null, uses integer not null default 0,
+    primary key (space, a, b)
+) without rowid;
+create index if not exists links_b on links(space, b);
+create index if not exists links_subject on links(space, subject);
 """
 IN_LIST = 400  # values in one `in (...)`: SQLite takes 999 parameters in all on older builds
 
@@ -165,8 +172,9 @@ class Store:
                 raise
 
     def _open(self) -> None:
-        """A new file gets the schema; one of another schema is refused before anything changes. Under the write lock,
-        so two processes opening one file at once take turns."""
+        """A new file gets the schema, and one of this schema any table added since it was made (`links`: a reader of
+        the same schema without them leaves them alone); one of another schema is refused before anything changes.
+        Under the write lock, so two processes opening one file at once take turns."""
         self._db.execute("begin immediate")
         try:
             found = self._version()
@@ -180,6 +188,8 @@ class Store:
             elif found < SCHEMA_VERSION:
                 raise RuntimeError(f"{self.path} has schema {found}, this mneme-llm reads schema {SCHEMA_VERSION}: run "
                                    f"`python -m mneme_llm.migrate {self.path}`")
+            else:
+                create(self._db)  # a table added within this schema (one an older reader leaves alone): links
             self._db.execute("commit")
         except BaseException:
             if self._db.in_transaction:  # (SQLite may have rolled it back itself, on a full disk say)

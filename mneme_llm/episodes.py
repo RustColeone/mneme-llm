@@ -36,6 +36,7 @@ from typing import Callable, Iterable, Iterator
 
 from . import dates, exchange as exchanges, text as texts
 from .i18n import Speaks, Words, say
+from .links import FOLLOW, FROM, LIFT, TOP, Links
 from .meaning.vectors import Matrix, numpy, pack, raw
 from .people import People, Resolves
 from .store import Store, dumps
@@ -63,6 +64,7 @@ DAYS = 30.0           # S an exchange starts with
 STRONGEST = 1e6       # days: stability stops growing here
 EXCHANGE = 2.4        # tokens two messages cost beyond their words
 NEWEST = 64           # exchanges read at a time, the newest first
+MIND = 600            # seconds what a look brought stays on her mind for the exchange kept after it
 
 
 @dataclass(frozen=True)
@@ -154,6 +156,8 @@ class Episodes(Speaks, Resolves):
         self.zone, self.meaning, self.clock = zone, meaning, clock
         self._matrices: OrderedDict[tuple[str, str], Matrix] = OrderedDict()
         self._queries: OrderedDict[str, object] = OrderedDict()  # recent queries' vectors (a turn asks again)
+        self.links = Links(store, space, zone=zone, clock=clock)  # what reminds her of what (`links.py`)
+        self._mind: dict[str, tuple[float, list[int]]] = {}  # what her last own look brought, by person, and when
         store.index("episode_terms", self._reindex)
 
     # ---- writing ---------------------------------------------------------------------------------
@@ -173,6 +177,12 @@ class Episodes(Speaks, Resolves):
         with self.writing(subject) as subject:
             id = self._insert(subject, {"at": when, "conversation": texts.clip(conversation, 200), "lines": lines,
                                         "stability": self.days, "recalled_at": None, "recalls": 0})
+            if self.store.row("select 1 from episodes where space = ? and subject = ? and day = ? and id != ? limit 1",
+                              (self.space, subject, dates.talking_day(when, self.zone), id)) is None:
+                self.links.sleep(subject, when)  # the first of a talking day: she has slept (`links.py`)
+            looked, mind = self._mind.pop(subject, (0.0, []))
+            if mind and 0 <= when - looked <= MIND:  # what was on her mind as it was said (`links.py`)
+                self.links.born(subject, [(id, other, 0.0) for other in mind], when)
         return self.get(id)
 
     async def akeep(self, subject: str, exchange, **options) -> Episode | None:
@@ -244,7 +254,11 @@ class Episodes(Speaks, Resolves):
                     pairs += tally(bins, similarities)
                     line = threshold(bins, pairs)
                     if line is not None:
-                        self._rehearse(matrix.nearest(similarities, episode.at, line, NEAREST), episode.at)
+                        near = matrix.nearest(similarities, episode.at, line, NEAREST)
+                        self._rehearse(near, episode.at)
+                        # what it reminded her of, linked to it (`links.py`)
+                        self.links.born(subject, [(episode.id, id, float(similarities[matrix.ids.index(id)]))
+                                                  for id in near], episode.at)
                     matrix.add(episode.id, vector, episode.at)
                     added += 1
                 self._put_spread(subject, name, bins, pairs)
@@ -301,6 +315,7 @@ class Episodes(Speaks, Resolves):
             ids = [row["id"] for row in self.store.rows("select id from episodes where space = ? and subject = ?",
                                                         (self.space, subject))]
             self._delete(ids)
+            self.links.erase(subject)
             self.store.execute("delete from episode_spread where space = ? and subject = ?", (self.space, subject))
         self._matrices.clear()
         return len(ids)
@@ -308,6 +323,7 @@ class Episodes(Speaks, Resolves):
     def _delete(self, ids: list[int]) -> None:
         for table in ("episode_terms", "episode_vectors"):
             self.store.rows_in(f"delete from {table} where episode_id in ({{}})", ids)
+        self.links.forget(ids)
         self.store.rows_in("delete from episodes where id in ({})", ids)
 
     def join(self, old: str, new: str) -> None:
@@ -323,6 +339,7 @@ class Episodes(Speaks, Resolves):
                 theirs = json.loads(row["bins"])
                 self._put_spread(new, row["embedder"], [a + b for a, b in zip(bins, theirs)], pairs + row["pairs"])
             self.store.execute("delete from episode_spread where space = ? and subject = ?", (self.space, old))
+            self.links.join(old, new)
         self._matrices.clear()
 
     # ---- reading ---------------------------------------------------------------------------------
@@ -388,7 +405,8 @@ class Episodes(Speaks, Resolves):
 
     def look(self, subject: str, query: str, *, budget: int = BUDGET,
              cut: tuple[float, float] | None = (CUT, CUT_FADED), more: int = 0, found=None,
-             skip=None, words_cut: float = WORDS) -> list[Episode]:
+             skip=None, words_cut: float = WORDS, follow: int = FOLLOW, lift: float = LIFT, use: bool = False,
+             brought: dict | None = None) -> list[Episode]:
         """What comes to mind for `query` (words only; `alook` adds meaning): the best matches within `budget`
         characters as `render` shows them, in the order they were said. With the query's vector from the embedder, an
         exchange must clear a bar: its cosine with the query at least the embedder's floor as the bundled set placed
@@ -398,11 +416,57 @@ class Episodes(Speaks, Resolves):
         terms an exchange shares with the query carry at least that share of the query's weight (each term by its idf,
         so a common single character counts for little; 0: no bar). `more`
         adds that many more of the best by relevance alone, however faded, as a search would find them, rehearsing
-        nothing. `skip`: ids left out, such as what the conversation in front of the model still shows."""
+        nothing. `skip`: ids left out, such as what the conversation in front of the model still shows.
+
+        `follow` follows links one step (`links.py`): the heaviest links of the best `FROM` that came bring up to
+        `follow` more, in place of the weakest of the rest, each within `lift` of the bar its closeness is held to
+        (with meaning only: with words alone nothing is followed). `brought` (a dict) is filled with each that came so,
+        and the exchange that brought it. `use`: this look is her own: the best `TOP` that came, and each with what
+        brought it, came to mind together (`Links.born`), and they are on her mind for the exchange kept next."""
         subject, query = self.who(subject), texts.query(query)
-        order, cleared = self._ranked(subject, query, found, cut=cut, words_cut=words_cut)
+        misses: dict[int, float] | None = {} if follow > 0 else None
+        order, cleared = self._ranked(subject, query, found, cut=cut, words_cut=words_cut, misses=misses)
         if skip:
             order = [id for id in order if id not in skip]
+        chosen = self._fill(order, cleared, budget)  # (the best first)
+        followed: dict[int, int] = {}
+        if misses is not None and (misses or cleared) and getattr(found, "vector", None) is not None:
+            taken = {episode.id for episode in chosen}
+            near = self.links.neighbours(subject, [episode.id for episode in chosen[:FROM]])
+            for id in sorted(near, key=lambda id: (-near[id][0], id)):
+                if len(followed) >= follow:
+                    break
+                if id not in taken and not (skip and id in skip) and (id in cleared or misses.get(id, 1.0) <= lift):
+                    followed[id] = near[id][1]
+            if followed:
+                extra, room = [], budget
+                for episode in self._get_many(list(followed)):
+                    size = len(self.shown(episode)) + 2
+                    if size <= room:
+                        extra.append(episode)
+                        room -= size
+                kept, used = [], 0
+                for episode in chosen:  # the best first: the weakest give way
+                    size = len(self.shown(episode)) + 2
+                    if used + size <= room:
+                        kept.append(episode)
+                        used += size
+                chosen = kept + extra
+                followed = {episode.id: followed[episode.id] for episode in extra}
+        if brought is not None:
+            brought.update(followed)
+        if use and chosen:
+            best = [episode.id for episode in chosen if episode.id not in followed][:TOP]
+            pairs = [(one, other, 0.0) for index, one in enumerate(best) for other in best[index + 1:]]
+            with self.store.transaction():
+                self.links.born(subject, pairs + [(id, via, 0.0) for id, via in followed.items()], self.clock())
+            self._mind[subject] = (self.clock(), best)
+        taken = {episode.id for episode in chosen}
+        chosen += self._get_many([id for id in order if id not in taken][:max(0, more)])
+        return sorted(chosen, key=lambda episode: (episode.at, episode.id))
+
+    def _fill(self, order: list[int], cleared: set[int], budget: int) -> list[Episode]:
+        """The best of `order` that are in `cleared`, as many as `budget` characters show."""
         chosen, used = [], 0
         for episode in self._get_many([id for id in order if id in cleared][:SCANNED]):
             size = len(self.shown(episode)) + 2
@@ -411,9 +475,7 @@ class Episodes(Speaks, Resolves):
                 used += size
             if used > budget - 60:
                 break
-        taken = {episode.id for episode in chosen}
-        chosen += self._get_many([id for id in order if id not in taken][:max(0, more)])
-        return sorted(chosen, key=lambda episode: (episode.at, episode.id))
+        return chosen
 
     async def alook(self, subject: str, query: str, **options) -> list[Episode]:
         """`look` with meaning: the query's vector, if it comes within LOOK_WAIT seconds."""
@@ -479,10 +541,11 @@ class Episodes(Speaks, Resolves):
 
     # ---- ranking ---------------------------------------------------------------------------------
     def _ranked(self, subject: str, query: str, found, *, cut: tuple[float, float] | None = None,
-                words_cut: float = 0.0) -> tuple[list[int], set[int]]:
+                words_cut: float = 0.0, misses: dict | None = None) -> tuple[list[int], set[int]]:
         """The person's exchanges for `query`, best first (BM25 over the search terms, each term once per exchange, and
         closeness to the query's vector, fused by reciprocal rank), and which of them clear the bar of `cut`, or of
-        `words_cut` when the query has no vector (see `look`); fading changes nothing else."""
+        `words_cut` when the query has no vector (see `look`); fading changes nothing else. `misses` (a dict) is filled
+        with how far each one under the bar of `cut` is under it."""
         self.store.reindex()
         rows = self.store.rows("select id, at, day, recalled_at, stability, size from episodes where space = ? and "
                                "subject = ?", (self.space, subject))
@@ -532,8 +595,11 @@ class Episodes(Speaks, Resolves):
             for row in rows:
                 id = row["id"]
                 if id in close:  # (one with no vector yet is not judged)
-                    if close[id] < fresh + (1 - self._kept(row, today, days)) * (faded - fresh):
+                    bar = fresh + (1 - self._kept(row, today, days)) * (faded - fresh)
+                    if close[id] < bar:
                         cleared.discard(id)
+                        if misses is not None:
+                            misses[id] = bar - close[id]
         return order, cleared
 
     async def _found(self, query: str, *, wait: float | None = None):

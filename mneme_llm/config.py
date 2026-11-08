@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from . import episodes, surface, text as texts
+from . import episodes, links, surface, text as texts
 from .i18n import MESSAGES, placeholders
 from .mood import EMOTIONS, Emotion, MoodSettings
 from .prompts import PROMPTS
@@ -59,7 +59,7 @@ def _defaults() -> dict[str, Any]:
         "memory.half_life_days": 30.0, "memory.daily_quota": 8, "memory.max_notes": 50_000,
         "memory.semantic_window": 5000, "memory.said_days": episodes.DAYS, "memory.said_budget": episodes.BUDGET,
         "memory.said_cut": episodes.CUT, "memory.said_cut_faded": episodes.CUT_FADED,
-        "memory.said_words": episodes.WORDS,
+        "memory.said_words": episodes.WORDS, "memory.said_follow": links.FOLLOW,
         "memory.surface_days": surface.DAYS, "memory.surface_floor": surface.FLOOR, "memory.surface_cap": surface.CAP,
         "memory.surface_window": surface.WINDOW,
         **{f"mood.{f.name}": _plain(getattr(mood, f.name)) for f in fields(MoodSettings) if f.name != "emotions"},
@@ -276,6 +276,7 @@ RULES = {
     "memory.semantic_window": _number(10, 1_000_000, integer=True),
     "memory.said_days": _number(0.01, 100_000), "memory.said_budget": _number(0, 200_000, integer=True),
     "memory.said_cut": _number(-1, 1), "memory.said_cut_faded": _number(-1, 1), "memory.said_words": _number(0, 1),
+    "memory.said_follow": _number(0, 20, integer=True),
     "memory.surface_days": _number(1, 100_000, integer=True), "memory.surface_floor": _number(0, MOST, integer=True),
     "memory.surface_cap": _number(1000, MOST, integer=True), "memory.surface_window": _number(1000, MOST, integer=True),
     "mood.baseline": _number(0, 100), "mood.floor": _number(0, 100), "mood.ceiling": _number(0, 100),
