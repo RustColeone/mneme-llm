@@ -144,6 +144,19 @@ episode_id)`，对话中每个不同的检索词一行，并在 `episode_id` 上
 `−1 + i/100` 起的相似度）和 `pairs`（它们的总和）。一对对话在两者中后一段得到向量时计入；一个对象要
 积累到 100 对之后，才会按意义重温。
 
+### `links`：什么会让她想起什么
+
+同一个对象的两段对话，曾一起浮现在她心里。主键 `(space, a, b)`，`a < b`：两段对话的 `episodes.id`；`subject`
+（它们属于谁：连线从不连接两个对象）；`closeness`（连线因为一段让她想起另一段而生成时，两者向量的余弦；以其他方式
+生成时为 0）；`day`（生成或最后一次使用时的说话日，计法同 `episodes.day`）；`stability`（S，以说话日计：初始为
+30，最多 1,000,000）；`uses`（被使用的次数）。它的强度为 R = e^(−t/S)，t 是这个对象在 `day` 之后到今天为止的
+说话日数（今天算一天）；它的权重为 R × (1 + `uses`)。一个说话日里最多算一次使用：`day` 变为今天，`uses` 加 1，
+S 变为 S × (1.5 + 3 × (1 − R))。一段对话最多保留 8 条连线，留下最重的。每个说话日里这个对象的第一段对话到来时，
+R 低于 0.05 的连线，以及连到已不存在的对话的连线，都会被删除。删除一段对话会删除它的连线；抹去一个对象会删除
+他的连线；把 `old` 关联到 `person` 时，`subject` 改为这个人。导出不包含连线。这张表是在 schema 2 之内加入的：
+创建这些表的写入进程会建好它，不认识它的读取进程不去动它。删除对话的写入进程也应删除它们在这里的行，抹去
+一个对象的写入进程也应删除他的行：连到已不存在的对话的连线，要到这个对象的下一个说话日才会被删除。
+
 ### `surfaces`：对话最新部分的起点
 
 `(space, subject)` 主键；`start_id`（表层就是这个对象 `id` 大于它的那些对话）；`cleared_at`（最后一次清空的
@@ -253,4 +266,5 @@ superseded_by)`）、`memories_key`（`(space, subject, key)`）、`memories_fol
 `recalls_subject`（`(space, subject, at)`）、`mood_events_subject`（`(space, subject, at)`）、`people_person`
 （`(space, person)`）、`note_terms_memory`（`memory_id`）、`episodes_subject`（`(space, subject, at)`）、
 `episodes_conversation`（`(space, subject, conversation, at)`）、`episodes_day`（`(space, subject, day)`）、
-`episodes_newest`（`(space, subject, id)`）和 `episode_terms_episode`（`episode_id`）。
+`episodes_newest`（`(space, subject, id)`）、`episode_terms_episode`（`episode_id`）、`links_b`（`(space, b)`）
+和 `links_subject`（`(space, subject)`）。

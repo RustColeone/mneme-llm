@@ -148,6 +148,22 @@ vector: `bins` (JSON list of 200 counts; bin `i` holds similarities from `−1 +
 pair is counted when the second of the two gets its vector; a subject rehearses by meaning only once it has 100
 pairs.
 
+### `links`: what reminds her of what
+
+Two exchanges of one subject that came to mind together. `(space, a, b)` primary key, `a < b`: the two `episodes.id`;
+`subject` (whose they are: a link never joins two subjects); `closeness` (the cosine of their vectors when the link
+was born of one reminding her of the other; 0 when it was born otherwise); `day` (the talking day it was born or last
+used, counted as `episodes.day` is); `stability` (S, in talking days: 30 to start, at most 1,000,000); `uses` (how many
+times it was used). Its strength is R = e^(−t/S), t the subject's talking days after `day` up to today (today counting
+as one); its weight R × (1 + `uses`). A use counts at most once a talking day: `day` becomes today, `uses` grows by 1
+and S becomes S × (1.5 + 3 × (1 − R)). An exchange keeps at most 8 links, the heaviest. At a subject's first exchange
+of a talking day, their links with R under 0.05, and any link to an exchange that is gone, are deleted. Deleting an
+exchange deletes its links; erasing a subject, theirs; linking `old` to `person` sets `subject` to the person. The
+export leaves links out. The table came within schema 2: a writer creating the tables makes it, and a reader that
+does not know it leaves it alone. A writer that deletes exchanges should delete their rows here too, and one that
+erases a subject, the subject's: a link left to an exchange that is gone is deleted only at that subject's next
+talking day.
+
 ### `surfaces`: where the newest part of the exchanges starts
 
 `(space, subject)` primary key; `start_id` (the surface is the subject's exchanges with an `id` above it);
@@ -264,4 +280,5 @@ None of them changes what a file means; a writer creating the tables makes them 
 `(space, subject, importance, id)`, `recalls_subject` on `(space, subject, at)`, `mood_events_subject` on
 `(space, subject, at)`, `people_person` on `(space, person)`, `note_terms_memory` on `memory_id`, `episodes_subject` on
 `(space, subject, at)`, `episodes_conversation` on `(space, subject, conversation, at)`, `episodes_day` on
-`(space, subject, day)`, `episodes_newest` on `(space, subject, id)` and `episode_terms_episode` on `episode_id`.
+`(space, subject, day)`, `episodes_newest` on `(space, subject, id)`, `episode_terms_episode` on `episode_id`,
+`links_b` on `(space, b)` and `links_subject` on `(space, subject)`.
