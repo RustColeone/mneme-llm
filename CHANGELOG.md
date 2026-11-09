@@ -3,7 +3,7 @@
 All notable changes to mneme-llm are listed here. The project follows [semantic versioning](https://semver.org);
 before 1.0, a minor version may change the Python API, and this file says how.
 
-## Unreleased
+## 0.7.3 (2026-11-08)
 
 What reminds her of what: links between exchanges, and her memory sky on the tuner.
 
